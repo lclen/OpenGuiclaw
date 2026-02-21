@@ -191,9 +191,6 @@ class Agent:
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
 
-        # ── Startup: check if yesterday's journal needs processing ──
-        self._startup_evolution()
-
     def _load_persona(self, path: str) -> str:
         p = Path(path)
         if p.exists():
