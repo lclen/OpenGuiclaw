@@ -1,8 +1,8 @@
 """
 MCP (Model Context Protocol) 客户端网关
 
-允许大模型连接并调用符合标准的本机 MCP Server（Stdio传输协议）。
-支持配置文件加载和常用 MCP 服务器快捷方式。
+使用官方 MCP SDK 连接 MCP 服务器。
+支持从配置文件加载 MCP 服务器。
 
 配置文件格式 (config/mcp_servers.json):
 {
@@ -17,130 +17,207 @@ MCP (Model Context Protocol) 客户端网关
 """
 
 import json
+import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, Optional
 
-# Cache for active MCP clients to reuse the expensive handshake process
-# Key: server_command definition
+# 官方 MCP SDK
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    MCP_SDK_AVAILABLE = True
+except ImportError:
+    MCP_SDK_AVAILABLE = False
+    logging.warning("MCP SDK not installed. Run: pip install mcp")
+
+# MCP 配置文件路径
+MCP_CONFIG_PATH = Path(__file__).parent.parent / "config" / "mcp_servers.json"
+
+logger = logging.getLogger("mcp_gateway")
+
+# Cache for active MCP clients
 _ACTIVE_CLIENTS: Dict[str, Any] = {}
 
-# We use atexit to ensure child processes are terminated when main.py stops
+import threading
+import asyncio
 import atexit
+
+_mcp_loop = None
+_mcp_thread = None
+
+def _start_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+def _get_mcp_loop():
+    global _mcp_loop, _mcp_thread
+    if _mcp_loop is None:
+        _mcp_loop = asyncio.new_event_loop()
+        _mcp_thread = threading.Thread(target=_start_background_loop, args=(_mcp_loop,), daemon=True)
+        _mcp_thread.start()
+    return _mcp_loop
+
+def _run_async(coro, timeout=None):
+    """Run coroutine in the persistent background MCP thread."""
+    loop = _get_mcp_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    try:
+        import concurrent.futures
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return None
 
 
 def cleanup_all_clients():
     """清理所有 MCP 客户端进程"""
-    print("Cleaning up MCP Server subprocesses...")
-    import asyncio
-    for cmd, client in _ACTIVE_CLIENTS.items():
+    logger.info("Cleaning up MCP Server subprocesses...")
+    
+    # 复制一份 keys 避免迭代时修改
+    names = list(_ACTIVE_CLIENTS.keys())
+    for name in names:
         try:
-            if hasattr(client, 'process') and client.process and client.process.returncode is None:
-                # 在新的事件循环中清理
-                asyncio.run(client.cleanup())
+            _run_async(_disconnect_server(name), timeout=1.5)
         except Exception:
             pass
     _ACTIVE_CLIENTS.clear()
+    
+    global _mcp_loop
+    if _mcp_loop:
+        _mcp_loop.call_soon_threadsafe(_mcp_loop.stop)
 
 
 atexit.register(cleanup_all_clients)
 
 
-# 预定义的常用 MCP 服务器模板
-MCP_SERVER_TEMPLATES = {
-    "filesystem": {
-        "package": "@modelcontextprotocol/server-filesystem",
-        "description": "文件系统操作 - 读写指定目录的文件",
-        "example_args": ["D:/test_dir"]
-    },
-    "github": {
-        "package": "@modelcontextprotocol/server-github",
-        "description": "GitHub API - 搜索仓库、获取 Issue、PR 等",
-        "example_args": [],
-        "env_required": ["GITHUB_TOKEN"]
-    },
-    "brave-search": {
-        "package": "@modelcontextprotocol/server-brave-search",
-        "description": "Brave 搜索 - 网络搜索",
-        "example_args": [],
-        "env_required": ["BRAVE_API_KEY"]
-    },
-    "sequential-thinking": {
-        "package": "@modelcontextprotocol/server-sequential-thinking",
-        "description": "顺序思考 - 帮助 AI 进行逐步推理",
-        "example_args": []
-    },
-    "puppeteer": {
-        "package": "@modelcontextprotocol/server-puppeteer",
-        "description": "浏览器自动化 - 使用 Puppeteer 控制浏览器",
-        "example_args": []
-    },
-    "sqlite": {
-        "package": "@modelcontextprotocol/server-sqlite",
-        "description": "SQLite 数据库 - 执行 SQL 查询",
-        "example_args": ["./database.db"]
-    },
-}
+async def _disconnect_server(server_name: str):
+    """断开服务器连接"""
+    if server_name in _ACTIVE_CLIENTS:
+        conn = _ACTIVE_CLIENTS.pop(server_name)
+        try:
+            stack = conn.get("stack")
+            if stack:
+                import asyncio
+                # Give it at most 2 seconds to close cleanly, otherwise forcefully drop it to prevent hanging at exit
+                await asyncio.wait_for(stack.aclose(), timeout=2.0)
+        except Exception as e:
+            logger.debug(f"[MCP] Force closed {server_name} due to timeout/error: {e}")
 
 
-def get_template_info(template_name: str = None) -> Dict[str, Any]:
-    """获取 MCP 服务器模板信息"""
-    if template_name:
-        return MCP_SERVER_TEMPLATES.get(template_name, {})
-    return MCP_SERVER_TEMPLATES
-
-
-def build_server_command(template: str, *args) -> str:
-    """
-    根据模板构建 MCP 服务器启动命令
+def load_servers_from_config(config_path: Path = None) -> Dict[str, Dict[str, Any]]:
+    """从配置文件加载 MCP 服务器配置"""
+    if config_path is None:
+        config_path = MCP_CONFIG_PATH
     
-    Args:
-        template: 服务器模板名称 (filesystem, github, etc.)
-        *args: 额外的参数
-        
-    Returns:
-        完整的启动命令字符串
-    """
-    if template not in MCP_SERVER_TEMPLATES:
-        raise ValueError(f"Unknown template: {template}. Available: {list(MCP_SERVER_TEMPLATES.keys())}")
-    
-    template_info = MCP_SERVER_TEMPLATES[template]
-    package = template_info["package"]
-    
-    # 构建命令
-    cmd_parts = ["npx", "-y", package] + list(args) + template_info.get("example_args", [])
-    return " ".join(cmd_parts)
-
-
-def load_servers_from_config(config_path: Path) -> Dict[str, Dict[str, Any]]:
-    """
-    从配置文件加载 MCP 服务器配置
-    
-    Args:
-        config_path: 配置文件路径
-        
-    Returns:
-        服务器配置字典
-    """
     if not config_path.exists():
+        logger.warning(f"[MCP] Config file not found: {config_path}")
         return {}
     
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
         servers = data.get("mcpServers", {})
-        print(f"Loaded {len(servers)} MCP servers from {config_path}")
+        logger.info(f"[MCP] Loaded {len(servers)} servers from {config_path}")
         return servers
     except Exception as e:
-        print(f"Failed to load MCP config: {e}")
+        logger.error(f"[MCP] Failed to load config: {e}")
         return {}
+
+
+async def _connect_server(server_name: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """连接到 MCP 服务器"""
+    if not MCP_SDK_AVAILABLE:
+        return None
+    
+    command = config.get("command", "npx")
+    args = config.get("args", [])
+    env = config.get("env", {})
+    
+    # 设置环境变量
+    full_env = os.environ.copy()
+    for key, value in env.items():
+        # 替换 ${VAR} 为实际环境变量值
+        if value.startswith("${") and value.endswith("}"):
+            var_name = value[2:-1]
+            full_env[key] = os.environ.get(var_name, "")
+        else:
+            full_env[key] = value
+    
+    # 创建服务器参数
+    server_params = StdioServerParameters(
+        command=command,
+        args=args,
+        env=full_env if env else None,
+    )
+    
+    import contextlib
+    
+    # 使用 AsyncExitStack 来管理 AnyIO/MCP 苛刻的上下文作用域
+    stack = contextlib.AsyncExitStack()
+    
+    try:
+        # 启动客户端
+        stdio_cm = stdio_client(server_params)
+        read, write = await stack.enter_async_context(stdio_cm)
+        
+        client_cm = ClientSession(read, write)
+        client = await stack.enter_async_context(client_cm)
+        await client.initialize()
+        
+        # 获取工具列表
+        tools_result = await client.list_tools()
+        tool_names = [t.name for t in tools_result.tools]
+        
+        return {
+            "client": client,
+            "stack": stack,
+            "tools": tool_names,
+        }
+    except Exception as e:
+        await stack.aclose()
+        logger.error(f"MCP Connection failed: {e}")
+        return None
+
+
+async def _call_tool(server_name: str, tool_name: str, arguments: Dict[str, Any]) -> str:
+    """调用 MCP 工具"""
+    if server_name not in _ACTIVE_CLIENTS:
+        return f"❌ 未连接到服务器: {server_name}"
+    
+    conn = _ACTIVE_CLIENTS[server_name]
+    client = conn.get("client")
+    
+    if not client:
+        return f"❌ 服务器连接无效: {server_name}"
+    
+    try:
+        result = await client.call_tool(tool_name, arguments)
+        
+        # 解析结果
+        content = []
+        for item in result.content:
+            if hasattr(item, "text"):
+                content.append(item.text)
+            elif hasattr(item, "data"):
+                content.append(item.data)
+        
+        if not content:
+            return "⚠️ 工具返回空结果"
+        
+        return "\n".join(content)
+    except Exception as e:
+        # 获取完整的错误信息
+        import traceback
+        error_msg = str(e) or type(e).__name__
+        logger.error(f"[MCP] Tool call error: {error_msg}\n{traceback.format_exc()}")
+        return f"❌ 调用失败: {error_msg}"
 
 
 def register(skills_manager):
     """注册 MCP 技能到 SkillsManager"""
     
     @skills_manager.skill(
-        name="mcp_list_templates",
-        description="列出所有可用的 MCP 服务器模板。返回预定义的服务器类型及其描述，帮助用户选择合适的 MCP 服务。",
+        name="mcp_list_servers",
+        description="列出所有已配置的 MCP 服务器。从 config/mcp_servers.json 读取。",
         parameters={
             "type": "object",
             "properties": {},
@@ -148,174 +225,160 @@ def register(skills_manager):
         },
         category="system"
     )
-    def mcp_list_templates() -> str:
-        """列出可用的 MCP 服务器模板"""
-        out = ["📦 可用的 MCP 服务器模板:\n"]
-        for name, info in MCP_SERVER_TEMPLATES.items():
-            out.append(f"### {name}")
-            out.append(f"- 描述: {info['description']}")
-            out.append(f"- 包名: {info['package']}")
-            if 'env_required' in info:
-                out.append(f"- 需要环境变量: {', '.join(info['env_required'])}")
+    def mcp_list_servers() -> str:
+        """列出已配置的 MCP 服务器"""
+        servers = load_servers_from_config()
+        
+        if not servers:
+            return "📭 未找到 MCP 服务器配置。请在 config/mcp_servers.json 中添加配置。"
+        
+        out = [f"📦 已配置的 MCP 服务器 ({len(servers)} 个):\n"]
+        for name, config in servers.items():
+            cmd = config.get("command", "")
+            args = config.get("args", [])
+            desc = config.get("description", "无描述")
+            active = "✅ 已连接" if name in _ACTIVE_CLIENTS else "⚪ 未连接"
+            
+            out.append(f"### {name} ({active})")
+            out.append(f"- 描述: {desc}")
+            out.append(f"- 命令: {cmd} {' '.join(args)}")
+            
+            # 如果已连接，显示可用工具
+            if name in _ACTIVE_CLIENTS:
+                tools = _ACTIVE_CLIENTS[name].get("tools", [])
+                out.append(f"- 工具: {', '.join(tools[:5])}{'...' if len(tools) > 5 else ''}")
             out.append("")
+        
         return "\n".join(out)
     
     @skills_manager.skill(
         name="call_mcp_tool",
-        description="""调用外挂的 MCP (Model Context Protocol) 服务的工具。适用于文件系统、检索、GitHub、网络搜索等三方扩展。
+        description="""调用 MCP (Model Context Protocol) 服务的工具。
 
 📋 使用步骤：
-1. 如果不确定有哪些工具，传入 tool_name="discover" 查看所有可用工具
-2. 根据返回的工具列表，选择合适的工具传入
+1. 先使用 mcp_list_servers 查看已配置的服务器
+2. 如果服务器未连接，会自动连接
+3. 如果不确定有哪些工具，传入 tool_name="discover"
 
-💡 常用服务器命令示例：
-- 文件系统: npx -y @modelcontextprotocol/server-filesystem D:/path/to/dir
-- GitHub: npx -y @modelcontextprotocol/server-github (需要 GITHUB_TOKEN 环境变量)
-- Brave 搜索: npx -y @modelcontextprotocol/server-brave-search (需要 BRAVE_API_KEY)
+⚠️ Context7 特殊用法（两阶段调用）：
+1. 先调用 resolve-library-id，必须包含两个参数：{"libraryName": "库名", "query": "你的查询问题描述"} 获取库 ID
+2. 再调用 query-docs，参数 {"libraryId": "上一步返回的ID", "query": "问题"}
 
-🔧 快捷模板（推荐）:
-使用 build_server_command("template_name", ...arg) 构建命令，例如：
-- build_server_command("filesystem", "D:/qwen_autogui")
-- build_server_command("github")""",
+💡 常用 MCP 服务器配置示例 (config/mcp_servers.json):
+{
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@latest"]
+    }
+  }
+}""",
         parameters={
             "type": "object",
             "properties": {
-                "server_command": {
+                "server_name": {
                     "type": "string",
-                    "description": "启动 MCP 服务的完整 Shell 命令，或使用模板快捷方式。模板格式: template:arg1:arg2，例如 'filesystem:D:/test'"
+                    "description": "服务器名称，对应 config/mcp_servers.json 中的键名"
                 },
                 "tool_name": {
                     "type": "string",
-                    "description": "如果不知道具体工具名，传入 'discover'，系统将返回所有可用工具。如果知道，传入工具在服务器上的真实名称。"
+                    "description": "工具名称。如果不知道，传入 'discover' 查看所有工具"
                 },
                 "arguments": {
                     "type": "string",
-                    "description": "传递给该工具的参数列表（合法的 JSON 字符串）。如果是 discover 则可传 '{}'"
+                    "description": "工具参数（JSON 字符串）"
                 }
             },
-            "required": ["server_command", "tool_name", "arguments"]
+            "required": ["server_name", "tool_name", "arguments"]
         },
         category="system"
     )
-    def call_mcp_tool(server_command: str, tool_name: str, arguments: str) -> str:
+    def call_mcp_tool(server_name: str, tool_name: str, arguments: str) -> str:
         """调用 MCP 工具"""
-        # 解析模板快捷方式
-        if ":" in server_command and not server_command.startswith("npx") and not server_command.startswith("python"):
-            parts = server_command.split(":")
-            template = parts[0]
-            template_args = parts[1:]
-            try:
-                server_command = build_server_command(template, *template_args)
-            except ValueError as e:
-                return f"❌ {e}"
+        if not MCP_SDK_AVAILABLE:
+            return "❌ MCP SDK 未安装。请运行: pip install mcp"
         
+        # 解析参数
         try:
-            args_dict = json.loads(arguments)
+            # We must ensure `arguments` becomes a proper python dict
+            if not arguments or arguments.strip() == "{}":
+                args_dict = {}
+            else:
+                args_dict = json.loads(arguments)
+                # Ensure it's a dict representing the arguments object expected by the tool schema
+                if not isinstance(args_dict, dict):
+                    return "❌ arguments 必须是一个合法的 JSON 对象 (字典形式)"
         except json.JSONDecodeError:
-            return "❌ `arguments` 必须是合法的 JSON 字符串。"
-
+            return "❌ arguments 必须是合法的 JSON 字符串"
+        
         import asyncio
-        from core.mcp_client import MCPStdioClient
-
-        # We must run asynchronous client code within a synchronous function.
-        # This wrapper handles setting up a temporary event loop.
-        async def _run_mcp():
-            client = _ACTIVE_CLIENTS.get(server_command)
+        
+        async def _run():
+            nonlocal server_name
             
-            # 1. Provision & Handshake
-            if not client:
-                import shlex
-                parts = shlex.split(server_command)
-                if not parts:
-                    return f"❌ 无效的启动命令: {server_command}"
-                
-                client = MCPStdioClient(parts[0], parts[1:])
-                _ACTIVE_CLIENTS[server_command] = client
+            # 加载配置
+            servers = load_servers_from_config()
+            
+            # 自动连接（如果未连接）
+            if server_name not in _ACTIVE_CLIENTS:
+                config = servers.get(server_name)
+                if not config:
+                    return f"❌ 未找到服务器配置: {server_name}"
                 
                 try:
-                    await client.connect()
-                    # Handshake
-                    await client.initialize()
+                    logger.info(f"[MCP] Connecting to {server_name}...")
+                    conn = await _connect_server(server_name, config)
+                    if conn:
+                        _ACTIVE_CLIENTS[server_name] = conn
+                        logger.info(f"[MCP] Connected to {server_name}, tools: {conn.get('tools')}")
+                    else:
+                        return "❌ MCP SDK 不可用"
                 except Exception as e:
-                    _ACTIVE_CLIENTS.pop(server_command, None)
-                    return f"❌ MCP 建立连接或握手失败: {e}"
+                    import traceback
+                    logger.error(f"[MCP] Connection failed: {e}\n{traceback.format_exc()}")
+                    return f"❌ 连接失败: {e}"
             
-            # 2. Tool Discovery branch
+            # discover 模式
             if tool_name.lower() == "discover":
-                try:
-                    tools = await client.list_tools()
-                    # Formatting tools array to a readable string for the LLM
-                    out = [f"✅ MCP 服务已上线。提供的工具共 {len(tools)} 个:"]
-                    for t in tools:
-                        name = t.get("name")
-                        desc = t.get("description", "无描述")
-                        schema = json.dumps(t.get("inputSchema", {}), ensure_ascii=False)
-                        out.append(f" - [{name}]: {desc}\n   Schema: {schema}")
-                    return "\n".join(out)
-                except Exception as e:
-                    return f"❌ MCP 获取工具列表失败: {e}"
-
-            # 3. Execution branch
-            try:
-                result = await client.call_tool(tool_name, args_dict)
-                return f"[MCP Result] {tool_name}:\n{result}"
-            except Exception as e:
-                return f"❌ MCP 工具 '{tool_name}' 调用失败: {e}"
-
-        # Standard asyncio wrap
-        return asyncio.run(_run_mcp())
+                if server_name in _ACTIVE_CLIENTS:
+                    tools = _ACTIVE_CLIENTS[server_name].get("tools", [])
+                    return f"✅ 可用工具 ({len(tools)}):\n- " + "\n- ".join(tools)
+                return "❌ 未连接服务器"
+            
+            # 调用工具
+            return await _call_tool(server_name, tool_name, args_dict)
+        
+        return _run_async(_run())
 
     @skills_manager.skill(
         name="mcp_disconnect",
-        description="断开并清理指定的 MCP 服务器连接。如果不再需要使用某个 MCP 服务，调用此函数可以释放资源。",
+        description="断开指定的 MCP 服务器连接。",
         parameters={
             "type": "object",
             "properties": {
-                "server_command": {
-                    "type": "string",
-                    "description": "启动 MCP 服务的命令（与 call_mcp_tool 中使用的一致）"
-                }
+                "server_name": {"type": "string", "description": "服务器名称"}
             },
-            "required": ["server_command"]
+            "required": ["server_name"]
         },
         category="system"
     )
-    def mcp_disconnect(server_command: str) -> str:
+    def mcp_disconnect(server_name: str) -> str:
         """断开 MCP 服务器连接"""
-        import asyncio
-        
-        async def _disconnect():
-            client = _ACTIVE_CLIENTS.get(server_command)
-            if client:
-                try:
-                    await client.cleanup()
-                except Exception as e:
-                    return f"❌ 清理失败: {e}"
-                _ACTIVE_CLIENTS.pop(server_command, None)
-                return f"✅ 已断开 MCP 服务器: {server_command}"
-            return f"⚠️ 未找到活跃的 MCP 服务器: {server_command}"
-        
-        return asyncio.run(_disconnect())
+        return _run_async(_disconnect_server(server_name)) or f"✅ 已断开: {server_name}"
 
     @skills_manager.skill(
         name="mcp_list_active",
-        description="列出当前所有活跃的 MCP 服务器连接。",
-        parameters={
-            "type": "object",
-            "properties": {},
-            "required": []
-        },
+        description="列出当前活跃的 MCP 服务器连接。",
+        parameters={"type": "object", "properties": {}, "required": []},
         category="system"
     )
     def mcp_list_active() -> str:
-        """列出活跃的 MCP 服务器"""
+        """列出活跃连接"""
         if not _ACTIVE_CLIENTS:
-            return "📭 当前没有活跃的 MCP 服务器连接"
+            return "📭 没有活跃的 MCP 连接"
         
-        out = [f"🔌 活跃的 MCP 服务器 ({len(_ACTIVE_CLIENTS)} 个):"]
-        for cmd, client in _ACTIVE_CLIENTS.items():
-            tool_count = len(client.available_tools) if hasattr(client, 'available_tools') else 0
-            status = "已连接" if client.process and client.process.returncode is None else "已断开"
-            out.append(f"- 命令: {cmd[:60]}..." if len(cmd) > 60 else f"- 命令: {cmd}")
-            out.append(f"  状态: {status}, 工具数: {tool_count}")
+        out = [f"🔌 活跃连接 ({len(_ACTIVE_CLIENTS)}):"]
+        for name, conn in _ACTIVE_CLIENTS.items():
+            tools = conn.get("tools", [])
+            out.append(f"- {name}: {len(tools)} 个工具")
         return "\n".join(out)

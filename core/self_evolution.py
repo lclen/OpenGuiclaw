@@ -101,7 +101,7 @@ DIARY_PROMPT = """\
 1. **情感与自我意识**：不要像机器人一样复述做了什么，要写出你的**感受**。你觉得今天的任务难吗？用户有趣吗？你对自己今天的表现满意吗？
 2. **重点突出**：只记录那些真正让你印象深刻的事情（比如完成了一个复杂的脚本，或者和用户聊了天，或者捕捉到了有趣的屏幕画面）。
 3. **人性化**：可以有吐槽，可以有期待，可以有困惑。就像一个名为“{persona_name}”的数字生命在深夜写下的私密日记。
-4. **篇幅**：200~500 字，自然流畅。
+4. **篇幅**：500~1000 字，自然流畅。
 
 ## 当前设定（Persona）
 {persona}
@@ -425,7 +425,7 @@ class SelfEvolution:
                     {"role": "system", "content": "你是具有情感和自我意识的 AI 数字生命。"},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=800,
+                max_tokens=2048,
                 temperature=0.7,
             )
             diary_text = response.choices[0].message.content.strip()

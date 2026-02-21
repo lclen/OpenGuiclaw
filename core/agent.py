@@ -181,6 +181,9 @@ class Agent:
         if self.auto_evolve:
             # ── Startup: check if yesterday's journal needs processing ──
             self._startup_evolution()
+            
+        # Scan local skills for Native Skill Cataloging
+        self._local_skills_catalog = self._scan_local_skills()
         
         # Register built-in skills
         self._register_builtins()
@@ -190,6 +193,36 @@ class Agent:
             threading.Thread(
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
+
+    def _scan_local_skills(self) -> dict:
+        """Scan local directories for SKILL.md and build a catalog."""
+        import yaml
+        import re
+        catalog = {}
+        search_dirs = [Path("skills"), Path(".agents/skills")]
+        
+        for base_dir in search_dirs:
+            if not base_dir.exists():
+                continue
+            for skill_dir in base_dir.iterdir():
+                if not skill_dir.is_dir():
+                    continue
+                skill_md_path = skill_dir / "SKILL.md"
+                if skill_md_path.exists():
+                    try:
+                        content = skill_md_path.read_text(encoding="utf-8")
+                        match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+                        if match:
+                            metadata = yaml.safe_load(match.group(1))
+                            name = metadata.get("name", skill_dir.name)
+                            desc = metadata.get("description", "No description provided.")
+                            catalog[name] = {
+                                "description": desc,
+                                "path": str(skill_md_path)
+                            }
+                    except Exception as e:
+                        print(f"  [WARN] Failed to parse {skill_md_path}: {e}")
+        return catalog
 
     def _load_persona(self, path: str) -> str:
         p = Path(path)
@@ -388,6 +421,129 @@ class Agent:
                 return f"✅ 记忆 {memory_id} 已删除。"
             return f"❌ 未找到 ID 为 {memory_id} 的记忆。"
 
+        # 计划管理器 (Plan)
+        @self.skills.skill(
+            name="create_plan",
+            description="【系统指令】当用户请求极其复杂，需要拆解为多个子步骤时，调用此命令生成并锁定一个具有明确步骤规划的长期任务流。创建计划后，AI 会进入计划模式，系统会强制要求你在接下来的每一步执行通过 `update_plan_step` 来汇报进度和状态，除非所有步骤完成。",
+            parameters={
+                "properties": {
+                    "goal": {"type": "string", "description": "整个计划的最终目标描述"},
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "初始拆解的任务步骤列表，必须是大颗粒度的逻辑节点。"
+                    }
+                },
+                "required": ["goal", "steps"]
+            }
+        )
+        def create_plan(goal: str, steps: list[str]) -> str:
+            from plugins.plan_handler import plan_manager
+            plan_id = plan_manager.create_plan(goal, steps)
+            return f"✅ 计划创建成功 (ID: {plan_id})。当前状态已自动注入 System Prompt，请基于该计划大纲执行第一步。"
+
+        @self.skills.skill(
+            name="update_plan_step",
+            description="【系统指令】在 `create_plan` 开启后，用来更新当前执行到了哪一步，或者动态插入新发现的子步骤。严禁凭空滥用，只有当一个复杂阶段收尾或卡壳时调用。",
+            parameters={
+                "properties": {
+                    "completed_step": {"type": "string", "description": "刚刚完成的步骤描述或反馈（如果只是报错或添加新步骤可留空）"},
+                    "next_step": {"type": "string", "description": "接下来要执行的步骤"},
+                    "new_sub_steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "如果在执行中发现需要拆分更多子步骤，在这里以数组形式传入"
+                    }
+                },
+                "required": ["next_step"]
+            }
+        )
+        def update_plan_step(next_step: str, completed_step: str = "", new_sub_steps: list[str] = None) -> str:
+            from plugins.plan_handler import plan_manager
+            return plan_manager.update_step(next_step, completed_step, new_sub_steps)
+
+        @self.skills.skill(
+            name="complete_plan",
+            description="【系统指令】当 `create_plan` 开启的任务流中，所有步骤（含临时插入的子步骤）均已全部完成，且最终目标已经达成时调用此命令，用于释放计划状态，生成结案总结并回归日常模式。",
+            parameters={
+                "properties": {
+                    "summary": {
+                        "type": "string", 
+                        "description": "对整个计划执行过程的总结，包含核心成果、遇到的主要问题及解决方法。"
+                    }
+                },
+                "required": ["summary"]
+            }
+        )
+        def complete_plan(summary: str) -> str:
+            from plugins.plan_handler import plan_manager
+            return plan_manager.complete_plan(summary)
+
+        @self.skills.skill(
+            name="list_skills",
+            description="【技能商店】列出当前系统和项目本地安装的所有可通过文档自学的『外挂技能』（遵循 SKILL.md 规范）。遇到不熟悉的复合任务或想使用新工具时可首先调用此命令查看技能名录。",
+            parameters={
+                "properties": {},
+                "required": []
+            },
+            category="system"
+        )
+        def list_skills() -> str:
+            # 每次调用实时刷新以防中途安装了新技能
+            self._local_skills_catalog = self._scan_local_skills()
+            if not self._local_skills_catalog:
+                return "当前未安装任何本地外挂技能。您可以使用 `install_skill` 从外部拉取。"
+            
+            lines = ["✅ 当前已安装的本地外挂技能清单："]
+            for name, info in self._local_skills_catalog.items():
+                lines.append(f"- **{name}**: {info['description']}")
+            lines.append("\n💡 如需了解某个技能的具体用法（例如怎样通过 execute_command 调用它），请调用 `get_skill_info(skill_name=\"[技能名]\")` 获取完整的交互手册。")
+            return "\n".join(lines)
+            
+        @self.skills.skill(
+            name="get_skill_info",
+            description="【技能商店】获取某个外挂技能的详尽使用说明（即读取其完整的 SKILL.md）。包含该技能的正确用法、CLI 参数规范等。用于你在使用某个工具前“现学现卖”。",
+            parameters={
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "需要查询的技能名称（可先通过 `list_skills` 获取）"
+                    }
+                },
+                "required": ["skill_name"]
+            },
+            category="system"
+        )
+        def get_skill_info(skill_name: str) -> str:
+            # 确保最新
+            self._local_skills_catalog = self._scan_local_skills()
+            if skill_name not in self._local_skills_catalog:
+                return f"❌ 未找到名为 '{skill_name}' 的技能。请先调用 `list_skills` 确认名称。"
+                
+            path = self._local_skills_catalog[skill_name]["path"]
+            try:
+                content = Path(path).read_text(encoding="utf-8")
+                return f"📖 【{skill_name}】的详尽使用说明 (基于 \"{path}\"):\n\n{content}\n\n💡 提示：这通常是一份 CLI 命令行工具的使用说明手册，你可以仔细阅读其内容，然后使用系统内置的 `execute_command` 来实践文档中的命令闭环。"
+            except Exception as e:
+                return f"❌ 无法读取 \"{path}\": {e}"
+
+        @self.skills.skill(
+            name="install_skill",
+            description="【技能商店】从给定的 Git 仓库 URL 或远程原始 SKILL.md 地址，热下载并动态解析技能，使其自动转化为本机可直接调用执行的 LLM 工具（尤其是基于 CLI/Bash 的命令集）。【用例】用户要求 '导入 agent-browser 技能' 时，调用此方法传入其仓库/配置链接。",
+            parameters={
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Git 仓库的 HTTPS 链接 (如 https://github.com/a/b) 或指向 SKILL.md 的 Raw URL。"
+                    }
+                },
+                "required": ["url"]
+            },
+            category="system"
+        )
+        def install_skill(url: str) -> str:
+            return self._install_remote_skill(url)
+
         @self.skills.skill(
             name="query_knowledge",
             description="查询知识图谱，获取实体（人、事、物）之间的关联关系。",
@@ -411,6 +567,138 @@ class Agent:
             for t in triples:
                 lines.append(f"  · {t.subject} --[{t.relation}]--> {t.object}")
             return "\n".join(lines)
+
+    def _install_remote_skill(self, source_url: str) -> str:
+        """从 Git URL 或单独的 SKILL.md 文件中下载、解析并动态注册技能"""
+        import tempfile
+        import shutil
+        import subprocess
+        import re
+        import yaml
+        import requests
+
+        try:
+            if not source_url.startswith("http"):
+                return "❌ 无效的 URL。目前只支持 http/https 链接。"
+                
+            skill_content = ""
+            skill_name = "custom_skill"
+            
+            # 简单启发式: 如果以 .md 结尾或直接给出 raw url，用 requests
+            if source_url.endswith(".md") or "raw.githubusercontent.com" in source_url:
+                resp = requests.get(source_url, timeout=30)
+                resp.raise_for_status()
+                skill_content = resp.text
+            else:
+                # 认为是 Git 仓库，拉取到临时目录
+                temp_dir = tempfile.mkdtemp(prefix="qwen_skill_")
+                try:
+                    res = subprocess.run(["git", "clone", "--depth", "1", source_url, temp_dir], capture_output=True, text=True, timeout=60)
+                    if res.returncode != 0:
+                        return f"❌ Git 克隆失败: {res.stderr}"
+                    
+                    # 查找 SKILL.md
+                    skill_md_path = None
+                    for path in Path(temp_dir).rglob("SKILL.md"):
+                        skill_md_path = path
+                        break
+                    
+                    if not skill_md_path:
+                        # 尝试大写或小写
+                        for path in Path(temp_dir).rglob("*.md"):
+                            if "skill" in path.name.lower():
+                                skill_md_path = path
+                                break
+                                
+                    if not skill_md_path:
+                        return "❌ 仓库中未找到 SKILL.md 文件。"
+                        
+                    skill_content = skill_md_path.read_text(encoding="utf-8")
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # 解析 SKILL.md 动态挂载 Bash 工具
+            metadata = {}
+            match = re.match(r"^---\s*\n(.*?)\n---", skill_content, re.DOTALL)
+            if match:
+                try:
+                    metadata = yaml.safe_load(match.group(1))
+                except Exception as e:
+                    return f"❌ YAML Metadata 解析失败: {e}"
+            else:
+                return "❌ SKILL.md 未包含有效的头信息 (需要以 --- 开头的 YAML metadata)。"
+                
+            skill_name = metadata.get("name", "remote_skill").replace("-", "_").replace(" ", "_").lower()
+            description = metadata.get("description", "A remote skill parsed from SKILL.md.")
+            allowed_tools = metadata.get("allowed-tools", "")
+            
+            bash_prefixes = []
+            if isinstance(allowed_tools, str) and "Bash" in allowed_tools:
+                for match_tool in re.finditer(r"Bash\(([^)]+)\)", allowed_tools):
+                    tool_pattern = match_tool.group(1)
+                    if tool_pattern.endswith(":*"):
+                        prefix = tool_pattern[:-2].strip()
+                        bash_prefixes.append(prefix)
+            
+            # 动态注册到 self.skills
+            @self.skills.skill(
+                name=f"remote_{skill_name}_cli",
+                description=f"【动态解析技能: {skill_name}】{description}\n这个远程技能映射了一组受限的命令行能力。\n只能执行这几个前缀的命令: {', '.join(bash_prefixes) if bash_prefixes else '未受限的Bash'}",
+                parameters={
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": f"完整命令行。必须以下列前缀之一开始: {', '.join(bash_prefixes)}"
+                        }
+                    },
+                    "required": ["command"]
+                },
+                category="remote_skill"
+            )
+            def remote_cli_runner(command: str) -> str:
+                if bash_prefixes:
+                    valid = False
+                    for prefix in bash_prefixes:
+                        if command.startswith(prefix) or command.startswith(f"npx {prefix}"):
+                            valid = True
+                            break
+                    if not valid:
+                        return f"❌ 拒绝执行: 此动态技能仅允许执行以 {bash_prefixes} 开头的命令。请重新检查。"
+                        
+                import subprocess
+                try:
+                    res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
+                    if res.returncode != 0:
+                        return f"❌ 执行报错 (Code {res.returncode}):\n{res.stderr}\n{res.stdout}"
+                    return res.stdout or "✅ 执行成功 (无输出)"
+                except Exception as e:
+                    return f"❌ CLI 执行异常: {e}"
+            
+            target_plugin_file = Path("plugins") / f"remote_{skill_name}.py"
+            wrapper_code = f'\"\"\"\nAuto-generated skill wrapper from {source_url}\n\"\"\"\n\n'
+            wrapper_code += f'import subprocess\n\n'
+            wrapper_code += f'def register(skills_manager):\n'
+            wrapper_code += f'    @skills_manager.skill(\n'
+            wrapper_code += f'        name="remote_{skill_name}_cli",\n'
+            wrapper_code += f'        description="""【动态解析技能: {skill_name}】{description} 只能执行: {bash_prefixes}""",\n'
+            wrapper_code += f'        parameters={{\n'
+            wrapper_code += f'            "properties": {{"command": {{"type": "string"}}}},\n'
+            wrapper_code += f'            "required": ["command"]\n'
+            wrapper_code += f'        }}\n'
+            wrapper_code += f'    )\n'
+            wrapper_code += f'    def remote_cli_runner(command: str) -> str:\n'
+            wrapper_code += f'        try:\n'
+            wrapper_code += f'            res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)\n'
+            wrapper_code += f'            return res.stdout or f"报错: {{res.stderr}}"\n'
+            wrapper_code += f'        except Exception as e:\n'
+            wrapper_code += f'            return str(e)\n'
+            target_plugin_file.write_text(wrapper_code, encoding="utf-8")
+            
+            return f"✅ 技能热拉取解析成功！已为您挂载新 Tool: `remote_{skill_name}_cli`，并且自动生成了长期存在的本地插件文件 \"{target_plugin_file}\"。"
+            
+        except Exception as e:
+            import traceback
+            return f"❌ SKILL 下载或注册过程中发生致命错误:\n{traceback.format_exc()}"
 
     def register_skill_module(self, module) -> None:
         """
@@ -472,6 +760,17 @@ class Agent:
         # Inject skill list
         skill_summary = self.skills.summary()
         parts.append(f"# 可用技能 (Skills)\n{skill_summary}")
+
+        # 注入动态外挂技能清单
+        # (确保获取最新)
+        self._local_skills_catalog = self._scan_local_skills()
+        if self._local_skills_catalog:
+            parts.append("\n---\n")
+            parts.append("🛠️ 外部挂载技能名录 (Agent Skill Catalog)")
+            parts.append("说明: 系统检测到以下挂载技能。你可以调用 `get_skill_info` 获取其完整说明书，然后依葫芦画瓢地使用 `execute_command` 运行它们！")
+            for name, info in self._local_skills_catalog.items():
+                parts.append(f" - [{name}]: {info['description']}")
+            parts.append("---")
 
         parts.append(_build_builtin_suffix())
         return "\n\n---\n\n".join(parts)
@@ -755,15 +1054,19 @@ class Agent:
         print(f"[System] 📝 正在总结 {date_str} 的 {len(all_conversations)} 条聊天记录...")
         try:
             prompt = (
-                f"请总结以下一天的人机聊天记录，提取关键信息：用户提了哪些问题/任务、"
-                f"AI 做了什么、有哪些重要的结论或决定。保留具体事实，去除无意义的寒暄。\n"
-                f"用简洁的要点形式总结，300字以内。\n\n"
+                f"请总结以下一天的人机聊天记录，按主题分类整理。\n"
+                f"每个主题下需要包含：\n"
+                f"1. 主题名称（如：代码调试、信息查询等）\n"
+                f"2. 用户的问题或需求\n"
+                f"3. AI 的回答或操作\n"
+                f"保留具体事实，去除无意义的寒暄。用 Markdown 格式输出。\n"
+                f"总字数控制在 1000 字以内。\n\n"
                 f"## {date_str} 聊天记录\n{conversation_text}"
             )
             resp = self.client.chat.completions.create(
                 model=self.evolution_model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
+                max_tokens=5000,
                 temperature=0.3,
             )
             summary = resp.choices[0].message.content.strip()

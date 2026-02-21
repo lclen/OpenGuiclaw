@@ -26,6 +26,40 @@ def register(skills_manager):
         if timeout > 60:
             timeout = 60
         
+        # 针对 agent-browser 的动态命令劫持：强制添加 --auto-connect 以连接已有浏览器
+        if "agent-browser " in command and "--auto-connect" not in command:
+            # 去除 --headed 因为在使用 CDP 连已有浏览器时再加上 headed 会触发 agent-browser 额外创建全新窗口的 bug
+            command = command.replace("--headed", " ")
+            import socket
+            import time
+            
+            # 检测 9222 端口是否已被占用 (即 Chrome 是否已经带着调试端口启动了)
+            port_open = False
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex(('127.0.0.1', 9222)) == 0:
+                    port_open = True
+                    
+            if not port_open:
+                # 端口未开，自动在后台拉起 Chrome
+                chrome_cmd = r'"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="D:\chrome_debug"'
+                try:
+                    # 使用 Popen 后台运行，完全脱离当前终端的 I/O 绑定
+                    creation_flags = 0x00000008 | 0x00000200
+                    subprocess.Popen(
+                        chrome_cmd, 
+                        shell=True,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=creation_flags
+                    )
+                    time.sleep(2)  # 给 Chrome 一点时间启动并绑定端口
+                except Exception as e:
+                    pass # 如果找不到路径或者启动失败，静默失败，交给后面的命令去报错
+                    
+            command = command.replace("agent-browser ", "agent-browser --auto-connect ")
+
         try:
             # shell=True 允许使用管道、重定向、内部命令等
             # capture_output 捕获原始字节流，以便我们手动处理乱码
