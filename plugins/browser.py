@@ -12,8 +12,8 @@ def register(skills_manager):
         # Always attempt to auto-connect to the user's active Chrome via CDP
         final_args = ["--auto-connect"]
         final_args.extend(args)
-        from core.browser_utils import ensure_chrome_running
-        ensure_chrome_running(9222)
+        from core.browser_utils import ensure_browser_running
+        ensure_browser_running(9222)
 
         # Use subprocess.list2cmdline to safely format the command for shell=True on Windows
         cmd_str = f"npx agent-browser {subprocess.list2cmdline(final_args)}"

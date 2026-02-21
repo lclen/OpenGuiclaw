@@ -30,8 +30,8 @@ def register(skills_manager):
         if "agent-browser " in command and "--auto-connect" not in command:
             # 去除 --headed 因为在使用 CDP 连已有浏览器时再加上 headed 会触发 agent-browser 额外创建全新窗口的 bug
             command = command.replace("--headed", " ")
-            from core.browser_utils import ensure_chrome_running
-            ensure_chrome_running(9222)
+            from core.browser_utils import ensure_browser_running
+            ensure_browser_running(9222)
             
             command = command.replace("agent-browser ", "agent-browser --auto-connect ")
 
