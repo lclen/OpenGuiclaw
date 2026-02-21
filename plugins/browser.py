@@ -12,33 +12,8 @@ def register(skills_manager):
         # Always attempt to auto-connect to the user's active Chrome via CDP
         final_args = ["--auto-connect"]
         final_args.extend(args)
-        import socket
-        import time
-        import os
-        
-        # Check if port 9222 is open
-        port_open = False
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
-            if s.connect_ex(('127.0.0.1', 9222)) == 0:
-                port_open = True
-                
-        if not port_open:
-            chrome_cmd = r'"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="D:\chrome_debug"'
-            try:
-                # Use DETACHED_PROCESS so it completely breaks free of the LLM terminal process
-                creation_flags = 0x00000008 | 0x00000200 # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-                subprocess.Popen(
-                    chrome_cmd, 
-                    shell=True, 
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=creation_flags
-                )
-                time.sleep(2)
-            except Exception:
-                pass
+        from core.browser_utils import ensure_chrome_running
+        ensure_chrome_running(9222)
 
         # Use subprocess.list2cmdline to safely format the command for shell=True on Windows
         cmd_str = f"npx agent-browser {subprocess.list2cmdline(final_args)}"
