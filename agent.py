@@ -195,6 +195,7 @@ class ScreenAgent:
         print(f"{'='*60}\n")
 
         iteration = 0
+        last_result = ""
         while iteration < self.max_iterations:
             iteration += 1
             print(f"\n--- Iteration {iteration}/{self.max_iterations} ---")
@@ -202,10 +203,12 @@ class ScreenAgent:
             screenshot_base64 = self.capture_screen()
             print("Captured screenshot")
 
-            user_message = {
+            # 上一轮的执行结果拼入本轮提示
+            prev_result_text = f"\n上一步执行结果：{last_result}" if last_result else ""
+            user_message_with_image = {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"当前任务：{task}\n请分析屏幕并决定下一步操作。"},
+                    {"type": "text", "text": f"当前任务：{task}{prev_result_text}\n请分析屏幕并决定下一步操作。"},
                     {
                         "type": "image_url",
                         "image_url": {
@@ -215,7 +218,7 @@ class ScreenAgent:
                 ]
             }
 
-            messages = self.conversation_history + [user_message]
+            messages = self.conversation_history + [user_message_with_image]
 
             print("Sending to AI...")
             response = self.client.chat.completions.create(
@@ -228,7 +231,11 @@ class ScreenAgent:
             ai_response = response.choices[0].message.content
             print(f"AI response:\n{ai_response}\n")
 
-            self.conversation_history.append(user_message)
+            # 历史只存文字，不存截图，避免上下文无限膨胀
+            self.conversation_history.append({
+                "role": "user",
+                "content": f"当前任务：{task}{prev_result_text}\n请分析屏幕并决定下一步操作。[截图已发送]"
+            })
             self.conversation_history.append({
                 "role": "assistant",
                 "content": ai_response
@@ -243,6 +250,7 @@ class ScreenAgent:
             print(f"Executing action: {action.action_type}")
 
             result = self.execute_action(action)
+            last_result = result
             print(f"Result: {result}")
 
             if action.action_type.lower() == "task_complete":

@@ -888,4 +888,27 @@ async def reload_skills():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reload skills: {str(e)}")
 
+@app.get("/api/token-stats")
+async def get_token_stats():
+    """Return cumulative token usage statistics."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    return agent.token_stats
+
+@app.post("/api/token-stats/reset")
+async def reset_token_stats():
+    """Reset token usage counters to zero."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=500, detail="Agent not initialized")
+    agent.token_stats = {
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_tokens": 0,
+        "request_count": 0,
+        "by_model": {},
+    }
+    return {"status": "ok"}
+
 # To run: uvicorn core.server:app --host 127.0.0.1 --port 8000

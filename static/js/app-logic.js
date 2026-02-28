@@ -102,6 +102,15 @@
         skillCategoryFilter: 'all',
         skillStatusFilter: 'all',
 
+        // Token stats
+        tokenStats: {
+            total_prompt_tokens: 0,
+            total_completion_tokens: 0,
+            total_tokens: 0,
+            request_count: 0,
+            by_model: {},
+        },
+
         async init() {
             await this.checkStatus();
             setInterval(() => this.checkStatus(), 15000);
@@ -241,6 +250,7 @@
             if (panel === 'persona' && Object.keys(this.personas).length === 0) this.loadPersona();
             if (panel === 'skills' && this.skills.length === 0) this.loadSkills();
             if (panel === 'config' && this.vrmModels.length === 0) this.loadModels();
+            if (panel === 'tokens') this.loadTokenStats();
             if (panel === 'debug') {
                 this.$nextTick(() => {
                     const d = document.getElementById('debug-container');
@@ -1422,6 +1432,29 @@
             }
         },
 
+        // ═══════════════ Token Stats ═══════════════
+        async loadTokenStats() {
+            try {
+                const res = await fetch('/api/token-stats');
+                if (res.ok) this.tokenStats = await res.json();
+            } catch (e) { console.error('Failed to load token stats:', e); }
+        },
+
+        async resetTokenStats() {
+            if (!confirm('确定要重置 Token 统计数据吗？')) return;
+            try {
+                await fetch('/api/token-stats/reset', { method: 'POST' });
+                await this.loadTokenStats();
+            } catch (e) { console.error('Failed to reset token stats:', e); }
+        },
+
+        formatNum(n) {
+            if (n == null) return '—';
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return String(n);
+        },
+
         get filteredSkills() {
             let filtered = this.skills;
 
@@ -1446,6 +1479,16 @@
             }
 
             return filtered;
+        },
+
+        get groupedSkills() {
+            const groups = {};
+            for (const skill of this.filteredSkills) {
+                const cat = skill.category || 'general';
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(skill);
+            }
+            return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
         }
     };
 }

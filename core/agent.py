@@ -242,6 +242,15 @@ class Agent:
         # ContextManager (set by main.py after init)
         self.context = None  # type: Optional[Any]
         self.event_queue = None # type: Optional[Any] (set by lifespan in server.py)
+
+        # Token usage statistics
+        self.token_stats = {
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+            "request_count": 0,
+            "by_model": {},  # model -> {prompt, completion, total, count}
+        }
           # Start built-in background tasks ONLY if auto_evolve is True
         self.last_interaction_date = time.strftime("%Y-%m-%d")
         # Background tasks should be started manually via `start_background_tasks()` 
@@ -261,6 +270,23 @@ class Agent:
             threading.Thread(
                 target=self._backfill_vectors, daemon=True, name="VectorBackfill"
             ).start()
+
+    def _record_usage(self, usage, model: str) -> None:
+        """Accumulate token usage from an API response."""
+        if usage is None:
+            return
+        p = getattr(usage, "prompt_tokens", 0) or 0
+        c = getattr(usage, "completion_tokens", 0) or 0
+        t = getattr(usage, "total_tokens", 0) or (p + c)
+        self.token_stats["total_prompt_tokens"] += p
+        self.token_stats["total_completion_tokens"] += c
+        self.token_stats["total_tokens"] += t
+        self.token_stats["request_count"] += 1
+        m = self.token_stats["by_model"].setdefault(model, {"prompt": 0, "completion": 0, "total": 0, "count": 0})
+        m["prompt"] += p
+        m["completion"] += c
+        m["total"] += t
+        m["count"] += 1
 
     def start_background_tasks(self):
         """启动后台任务（如进化循环）。必须在插件加载完成后调用，以避免模块导入死锁，并增加延迟以避开启动时的 API 高峰。"""
@@ -1093,6 +1119,7 @@ class Agent:
                 temperature=self.temperature,
                 extra_body={"enable_search": True},  # Qwen built-in web search
             )
+            self._record_usage(getattr(response, "usage", None), current_model)
 
             msg = response.choices[0].message
 
@@ -1382,6 +1409,8 @@ class Agent:
             except Exception as e:
                 yield _yield_event({"type": "error", "content": f"模型调用报错: {e}"})
                 break
+
+            self._record_usage(getattr(response, "usage", None), current_model)
 
             # Process Process Non-Streaming Response
             msg = response.choices[0].message
