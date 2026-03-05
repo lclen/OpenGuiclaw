@@ -19,6 +19,9 @@ import httpx
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("qwen_autogui.server")
 
+# APP_BASE_DIR 由 bootstrap.run() 在启动时设置；fallback 到 server.py 的上两级目录（开发模式）
+_APP_BASE = Path(os.environ.get("APP_BASE_DIR", str(Path(__file__).resolve().parent.parent)))
+
 import queue
 import threading
 
@@ -72,10 +75,10 @@ async def lifespan(app: FastAPI):
         bootstrap.run()
         
         # 1. Load config
-        config_path = "config.json"
+        config_path = str(_APP_BASE / "config.json")
         
         # 2. Init Agent
-        agent = Agent(config_path=config_path, data_dir="data", auto_evolve=True)
+        agent = Agent(config_path=config_path, data_dir=str(_APP_BASE / "data"), auto_evolve=True)
         agent.event_queue = _ctx_event_queue  # Thread-safe queue for broadcasting system events
         
         # 3. Load core skills
@@ -98,7 +101,7 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"  [WARN] 技能加载失败 [{mod_name}]: {e}")
 
         # 4. Init Plugins
-        plugin_manager = PluginManager(skill_manager=agent.skills, plugins_dir="plugins")
+        plugin_manager = PluginManager(skill_manager=agent.skills, plugins_dir=str(_APP_BASE / "plugins"))
         plugin_manager.load_all()
         
         # Start background threads AFTER all plugins and their modules are fully loaded
@@ -215,7 +218,11 @@ async def lifespan(app: FastAPI):
             issues = []
 
             # 1. 数据目录检查
-            required_dirs = ["data", "data/sessions", "data/memory", "data/scheduler", "data/diary"]
+            required_dirs = [str(_APP_BASE / d) for d in [
+                "data", "data/sessions", "data/memory", "data/scheduler",
+                "data/diary", "data/journals", "data/identities", "data/identity",
+                "data/plans", "data/consolidation"
+            ]]
             for d in required_dirs:
                 if not os.path.exists(d):
                     try:
@@ -315,7 +322,7 @@ async def lifespan(app: FastAPI):
             # ── 收集近 7 天的会话文件 ──────────────────────────────────────
             cutoff = datetime.now() - timedelta(days=7)
             session_files = sorted(
-                Path("data/sessions").glob("*.json"),
+                (_APP_BASE / "data" / "sessions").glob("*.json"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True
             )
@@ -407,7 +414,7 @@ async def lifespan(app: FastAPI):
             return True, status
 
         task_scheduler = TaskScheduler(
-            storage_path=Path("data/scheduler"),
+            storage_path=_APP_BASE / "data" / "scheduler",
             executor=_scheduled_task_runner
         )
         await task_scheduler.start()
@@ -514,12 +521,12 @@ app.add_middleware(
 )
 
 # Mount static files and templates
-os.makedirs("static", exist_ok=True)
-os.makedirs("templates", exist_ok=True)
-os.makedirs("data/screenshots", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/screenshots", StaticFiles(directory="data/screenshots"), name="screenshots")
-templates = Jinja2Templates(directory="templates")
+os.makedirs(_APP_BASE / "static", exist_ok=True)
+os.makedirs(_APP_BASE / "templates", exist_ok=True)
+os.makedirs(_APP_BASE / "data" / "screenshots", exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_APP_BASE / "static")), name="static")
+app.mount("/screenshots", StaticFiles(directory=str(_APP_BASE / "data" / "screenshots")), name="screenshots")
+templates = Jinja2Templates(directory=str(_APP_BASE / "templates"))
 
 # ─── UI Routes ────────────────────────────────────────────────────────────────
 @app.get("/", response_class=FileResponse)
@@ -569,10 +576,11 @@ async def sse_events(request: Request):
 @app.get("/api/config")
 async def get_config():
     """Get the current configuration from config.json."""
-    if not os.path.exists("config.json"):
+    _config_path = _APP_BASE / "config.json"
+    if not _config_path.exists():
         raise HTTPException(status_code=404, detail="config.json not found")
     try:
-        with open("config.json", "r", encoding="utf-8") as f:
+        with open(_config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
         return config
     except Exception as e:
@@ -604,7 +612,7 @@ async def update_config(request: Request):
                     raise HTTPException(status_code=400, detail=f"proactive.{field} must be a number or null")
 
         # Save to file
-        with open("config.json", "w", encoding="utf-8") as f:
+        with open(_APP_BASE / "config.json", "w", encoding="utf-8") as f:
             json.dump(new_config, f, indent=4, ensure_ascii=False)
 
         # Dynamically reload proactive config

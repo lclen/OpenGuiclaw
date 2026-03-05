@@ -1,28 +1,156 @@
 """
-Bootstrap: 启动前自动检查并安装所有依赖。
+Bootstrap: 启动前自动检查并安装所有依赖，初始化运行时目录和配置。
 
+- 设置 APP_BASE_DIR 环境变量（frozen 时为 exe 所在目录，开发时为项目根目录）
+- 创建所有必要的 data/ 子目录
+- config.json 不存在时从 config.json.example 自动复制
 - Python 依赖：读取 requirements.txt，用 pip 安装缺失的包
 - npm 全局包：读取 npm-requirements.txt，用 npm install -g 安装缺失的包
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 _already_run = False  # 防止 uvicorn reload 时重复执行
 
+# 所有必要的 data 子目录（与实际运行时一致）
+_REQUIRED_DATA_DIRS = [
+    "data",
+    "data/sessions",
+    "data/memory",
+    "data/diary",
+    "data/journals",
+    "data/identities",
+    "data/identity",
+    "data/plans",
+    "data/scheduler",
+    "data/screenshots",
+    "data/consolidation",
+]
+
+
+def get_app_base_dir() -> Path:
+    """
+    返回程序的"家目录"：
+    - frozen（PyInstaller）：exe 所在目录（可写）
+    - 开发模式：项目根目录（bootstrap.py 的上两级）
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+
+def setup_node_env() -> None:
+    """将内置便携版 Node.js 路径前推至 PATH 顶部，同时设置 npm global 目录为用户目录下的隔离路径"""
+    app_base = get_app_base_dir()
+    os.environ["APP_BASE_DIR"] = str(app_base)
+
+    # frozen 时 bin-node 在 _MEIPASS 里（只读资源），开发时在项目根
+    if getattr(sys, "frozen", False):
+        node_bin = Path(sys._MEIPASS) / "bin-node"  # type: ignore
+    else:
+        node_bin = app_base / "bin-node"
+
+    if node_bin.exists():
+        # 将 bin-node 置顶
+        os.environ["PATH"] = f"{node_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    # 隔离用户级 NPM 安装目录（解决装在 Program Files 下被 UAC 拦截的问题）
+    user_app_dir = Path(os.environ.get("USERPROFILE", "~")).expanduser() / ".openGuiclaw"
+    npm_global = user_app_dir / "npm-global"
+    npm_global.mkdir(parents=True, exist_ok=True)
+
+    os.environ["NPM_CONFIG_PREFIX"] = str(npm_global)
+    # 将 npm global bin 也加到 PATH，这样能直接执行 npx 和全局安装的命令
+    os.environ["PATH"] = f"{npm_global}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+def ensure_data_dirs() -> None:
+    """在 APP_BASE_DIR 下创建所有必要的 data 子目录。幂等操作，可多次调用。"""
+    base = get_app_base_dir()
+    for rel in _REQUIRED_DATA_DIRS:
+        target = base / rel
+        target.mkdir(parents=True, exist_ok=True)
+    print("[Bootstrap] [OK] data 子目录已就绪")
+
+
+def ensure_config() -> None:
+    """config.json 不存在时，从 config.json.example 自动复制。"""
+    base = get_app_base_dir()
+    config = base / "config.json"
+    example = base / "config.json.example"
+
+    if config.exists():
+        return
+
+    if example.exists():
+        import shutil
+        shutil.copy2(example, config)
+        print("[Bootstrap] [OK] 已从 config.json.example 创建 config.json，请填写 API Key")
+    else:
+        print("[Bootstrap] [WARN] config.json 和 config.json.example 均不存在，请手动创建配置文件")
+
+
+def _parse_pkg_name(pkg: str) -> str:
+    """从 'pkg@ver' 或 '@scope/pkg@ver' 中提取包名（不含版本号）。
+
+    Examples:
+        "@pixiv/three-vrm@2.1.0" -> "@pixiv/three-vrm"
+        "@scope/pkg"              -> "@scope/pkg"
+        "agent-browser@0.16.3"   -> "agent-browser"
+        "agent-browser"           -> "agent-browser"
+    """
+    if pkg.startswith("@"):
+        # scoped: "@scope/pkg@ver" → "@scope/pkg"
+        rest = pkg[1:]           # "scope/pkg@ver"
+        name_part = rest.split("@")[0]  # "scope/pkg"
+        return "@" + name_part
+    else:
+        return pkg.split("@")[0]
+
+
+def _is_npm_pkg_installed(pkg_name: str, npm_global_prefix: str) -> bool:
+    """通过扫描 node_modules 目录判断包是否已安装（替代 npm ls 解析，更可靠）。
+
+    Args:
+        pkg_name: 不含版本号的包名，如 "agent-browser" 或 "@scope/pkg"
+        npm_global_prefix: NPM_CONFIG_PREFIX 路径
+    """
+    node_modules = Path(npm_global_prefix) / "node_modules"
+    if not node_modules.exists():
+        return False
+
+    if pkg_name.startswith("@"):
+        # scoped: "@scope/pkg" → node_modules/@scope/pkg/
+        rest = pkg_name[1:]  # "scope/pkg"
+        if "/" not in rest:
+            return False
+        scope, name = rest.split("/", 1)
+        return (node_modules / f"@{scope}" / name).is_dir()
+    else:
+        return (node_modules / pkg_name).is_dir()
+
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     """在 Windows 上必须 shell=True 才能找到 npm/npx 等命令。"""
-    return subprocess.run(cmd, capture_output=True, text=True, shell=True, **kwargs)
+    return subprocess.run(cmd, capture_output=True, text=True, shell=True, env=os.environ.copy(), **kwargs)
 
 
 def check_python_deps(requirements_file: str = "requirements.txt") -> None:
-    req_path = Path(requirements_file)
+    # frozen 状态下依赖已由 PyInstaller 打包，sys.executable 是 exe 本身，无法跑 pip
+    if getattr(sys, "frozen", False):
+        return
+    base = get_app_base_dir()
+    req_path = base / requirements_file
     if not req_path.exists():
         return
     print("[Bootstrap] 检查 Python 依赖...")
-    result = _run([sys.executable, "-m", "pip", "install", "-r", str(req_path), "--quiet"])
+    result = _run([sys.executable, "-m", "pip", "install", "-r", str(req_path),
+                   "-i", "https://mirrors.aliyun.com/pypi/simple/",
+                   "--trusted-host", "mirrors.aliyun.com",
+                   "--quiet"])
     if result.returncode != 0:
         print(f"[Bootstrap] [WARN] pip install 出现问题:\n{result.stderr.strip()}")
     else:
@@ -30,7 +158,8 @@ def check_python_deps(requirements_file: str = "requirements.txt") -> None:
 
 
 def check_npm_deps(npm_requirements_file: str = "npm-requirements.txt") -> None:
-    req_path = Path(npm_requirements_file)
+    base = get_app_base_dir()
+    req_path = base / npm_requirements_file
     if not req_path.exists():
         return
 
@@ -46,21 +175,12 @@ def check_npm_deps(npm_requirements_file: str = "npm-requirements.txt") -> None:
 
     print("[Bootstrap] 检查 npm 全局包...")
 
-    # 用 parseable 格式获取已安装全局包，比 --json 快且不易出错
-    result = _run(["npm", "ls", "-g", "--depth=0", "--parseable"])
-    installed_names: set[str] = set()
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            # Windows 路径可能用 \ 或 /，兼容两种
-            name = line.strip().replace("\\", "/").split("/")[-1]
-            if name:
-                installed_names.add(name)
+    npm_global_prefix = os.environ.get("NPM_CONFIG_PREFIX", "")
 
     missing = []
     for pkg in packages:
-        # 提取包名（去掉版本号，如 agent-browser@0.16.3 → agent-browser）
-        pkg_name = pkg.split("@")[0] if not pkg.startswith("@") else pkg
-        if pkg_name not in installed_names:
+        pkg_name = _parse_pkg_name(pkg)
+        if not _is_npm_pkg_installed(pkg_name, npm_global_prefix):
             missing.append(pkg)
 
     if not missing:
@@ -76,12 +196,42 @@ def check_npm_deps(npm_requirements_file: str = "npm-requirements.txt") -> None:
             print(f"[Bootstrap] [OK] {pkg} 安装成功")
 
 
+def print_environment_diagnostics() -> None:
+    """输出当前环境变量和重要配置目录，供故障排查用"""
+    import shutil
+    print("=" * 50)
+    print("[环境诊断] OpenGuiclaw 启动预检")
+    print("=" * 50)
+
+    # Python 路径
+    print(f" - [Python] Executable: {sys.executable}")
+
+    # APP_BASE_DIR
+    print(f" - [App Base] APP_BASE_DIR: {os.environ.get('APP_BASE_DIR', '未设置')}")
+
+    # 查找并确认 Node 有效性
+    node_exe = shutil.which("node")
+    npm_exe = shutil.which("npm")
+    print(f" - [Node.js] node path: {node_exe if node_exe else '未找到'}")
+    print(f" - [Node.js] npm path: {npm_exe if npm_exe else '未找到'}")
+
+    # 打印沙盒依赖存放点
+    npm_global = os.environ.get("NPM_CONFIG_PREFIX", "")
+    print(f" - [沙盒隔离] NPM 全局包路径: {npm_global}")
+    print("=" * 50)
+
+
 def run(skip_python: bool = False, skip_npm: bool = False) -> None:
-    """执行全部依赖检查。内置防重复执行保护，多次调用只跑一次。"""
+    """执行全部依赖检查与初始化。内置防重复执行保护，多次调用只跑一次。"""
     global _already_run
     if _already_run:
         return
     _already_run = True
+
+    setup_node_env()            # 1. 设置 APP_BASE_DIR 和 PATH
+    ensure_data_dirs()          # 2. 创建 data 子目录
+    ensure_config()             # 3. 确保 config.json 存在
+    print_environment_diagnostics()
 
     if not skip_python:
         check_python_deps()

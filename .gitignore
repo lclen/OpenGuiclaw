@@ -1,5 +1,8 @@
 config.json
 
+# Hypothesis test data
+.hypothesis/
+
 # Python
 __pycache__/
 *.pyc
@@ -13,12 +16,27 @@ build/
 venv/
 env/
 
+# Node.js 便携版（二进制不提交，仅提交安装脚本）
+bin-node/node_modules/
+bin-node/node.exe
+bin-node/node_modules/
+
 # Runtime data (user-specific, not source)
 data/sessions/
-data/scene_memory*.jsonl
+data/memory/
+data/diary/
 data/journals/
+data/identities/
+data/plans/
+data/scheduler/
 data/screenshots/
+data/consolidation/
+data/token_usage.db
+data/scene_memory*.jsonl
 data/vrm_preferences.json
+
+# Build output
+output/
 
 # Workspace files
 *.code-workspace
