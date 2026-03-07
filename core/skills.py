@@ -143,10 +143,11 @@ class SkillManager:
         except Exception as e:
             return f"[SkillManager] Error executing '{name}': {e}"
 
-    def get_tool_definitions(self) -> List[Dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format."""
+    def get_tool_definitions(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> List[Dict[str, Any]]:
+        """Return tool definitions in OpenAI function-calling format. All tools are returned globally (No Isolation)."""
         tools = []
         for skill in self.list_enabled():
+            # User relaxed strict isolation: all agents get all tools.
             tools.append({
                 "type": "function",
                 "function": {
@@ -161,9 +162,23 @@ class SkillManager:
             })
         return tools
 
-    def summary(self) -> str:
-        """Return a text summary of all enabled skills (for System Prompt)."""
+    def summary(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> str:
+        """Return a text summary of all enabled skills. Highlights specialized skills."""
         lines = []
         for skill in self.list_enabled():
-            lines.append(f"- **{skill.name}** ({skill.category}): {skill.description}")
+            is_specialized = False
+            # Check if this skill is the agent's core specialized ability
+            if allowed_skills is not None and allowed_skills:
+                if skills_mode == "inclusive":
+                    if skill.name in allowed_skills or skill.category in allowed_skills:
+                        is_specialized = True
+                elif skills_mode == "exclusive":
+                    if skill.name not in allowed_skills and skill.category not in allowed_skills:
+                        is_specialized = True
+
+            if is_specialized:
+                lines.append(f"- **{skill.name}** ({skill.category}) [✨优先核心技能]: {skill.description}")
+            else:
+                lines.append(f"- **{skill.name}** ({skill.category}): {skill.description}")
+                
         return "\n".join(lines) if lines else "(No skills registered)"

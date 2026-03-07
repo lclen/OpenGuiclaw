@@ -34,6 +34,7 @@ import importlib
 import importlib.util
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -79,6 +80,10 @@ class PluginManager:
         self.plugins_dir = Path(plugins_dir)
         self.plugins_dir.mkdir(exist_ok=True)
         self._plugins: Dict[str, PluginInfo] = {}  # stem -> PluginInfo
+        self._watcher_thread: Optional[threading.Thread] = None
+        self._watcher_stop = threading.Event()
+        self._file_mtimes: Dict[str, float] = {}  # stem -> last mtime
+        self._load_lock = threading.Lock()  # BUG#4: protect _load_plugin/_unload_plugin vs skill enable/disable
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -94,7 +99,67 @@ class PluginManager:
             name = self._load_plugin(path)
             if name:
                 loaded.append(name)
+            # Record mtime regardless of load success so watcher doesn't re-trigger
+            self._file_mtimes[path.stem] = path.stat().st_mtime
         return loaded
+
+    def start_watcher(self, interval: float = 1.0) -> None:
+        """Start background thread that auto-reloads plugins on file changes."""
+        if self._watcher_thread and self._watcher_thread.is_alive():
+            return
+        self._watcher_stop.clear()
+        self._watcher_thread = threading.Thread(
+            target=self._watch_loop,
+            args=(interval,),
+            daemon=True,
+            name="PluginWatcher",
+        )
+        self._watcher_thread.start()
+        print(f"[Plugin] 🔍 文件监视已启动（轮询间隔 {interval}s）")
+
+    def stop_watcher(self) -> None:
+        """Stop the background watcher thread."""
+        self._watcher_stop.set()
+
+    def _watch_loop(self, interval: float) -> None:
+        """Poll plugins_dir for changes and hot-reload as needed."""
+        while not self._watcher_stop.wait(interval):
+            try:
+                current_files = {
+                    p.stem: p
+                    for p in self.plugins_dir.glob("*.py")
+                    if not p.stem.startswith("_")
+                }
+
+                # New or modified files
+                for stem, path in current_files.items():
+                    mtime = path.stat().st_mtime
+                    old_mtime = self._file_mtimes.get(stem)
+                    if old_mtime is None:
+                        # New file — wait briefly to ensure write is complete
+                        time.sleep(0.5)
+                        if path.stat().st_mtime == mtime:
+                            print(f"[Plugin] ✨ 检测到新插件: {stem}.py，自动加载...")
+                            self._load_plugin(path)
+                            self._file_mtimes[stem] = mtime
+                    elif mtime > old_mtime:
+                        # Modified file — wait briefly to ensure write is complete
+                        time.sleep(0.5)
+                        if path.stat().st_mtime == mtime:
+                            print(f"[Plugin] 🔄 检测到插件变更: {stem}.py，自动热重载...")
+                            self._unload_plugin(stem)
+                            self._load_plugin(path)
+                            self._file_mtimes[stem] = mtime
+
+                # Deleted files
+                for stem in list(self._file_mtimes.keys()):
+                    if stem not in current_files:
+                        print(f"[Plugin] 🗑️ 检测到插件删除: {stem}.py，自动卸载...")
+                        self._unload_plugin(stem)
+                        del self._file_mtimes[stem]
+
+            except Exception as e:
+                print(f"[Plugin] [WARN] 文件监视异常: {e}")
 
     def load(self, filename: str) -> Optional[str]:
         """
@@ -170,46 +235,52 @@ class PluginManager:
         stem = path.stem
         module_name = f"plugins.{stem}"
 
-        try:
-            # Force reload from disk by removing cached module
-            if module_name in sys.modules:
-                del sys.modules[module_name]
+        with self._load_lock:
+            try:
+                # Force reload from disk by removing cached module
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
 
-            spec = importlib.util.spec_from_file_location(module_name, path)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
+                spec = importlib.util.spec_from_file_location(module_name, path)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
 
-            # Must expose a register() function
-            if not hasattr(module, "register"):
-                print(f"[Plugin] [WARN] '{stem}.py' 缺少 register(manager) 函数，跳过。")
-                del sys.modules[module_name]
+                # Must expose a register() function
+                if not hasattr(module, "register"):
+                    print(f"[Plugin] [WARN] '{stem}.py' 缺少 register(manager) 函数，跳过。")
+                    del sys.modules[module_name]
+                    return None
+
+                # Refresh skill enabled/config state from disk before re-registering,
+                # so any enable/disable changes made at runtime are preserved after reload.
+                self.skill_manager._load_config()
+
+                # Call register — diff registry to find which skills were added
+                before_skills = set(self.skill_manager._registry.keys())
+                module.register(self.skill_manager)
+                after_skills = set(self.skill_manager._registry.keys())
+                registered = list(after_skills - before_skills)
+
+                info = PluginInfo(stem, path, module, registered_skills=registered)
+                self._plugins[stem] = info
+                print(f"  [OK] 插件加载: {info.display_name} v{info.version} ({stem}.py)")
+                return stem
+
+            except Exception as e:
+                print(f"[Plugin] [ERR] 加载 '{stem}.py' 失败: {e}")
                 return None
-
-            # Call register — diff registry to find which skills were added
-            before_skills = set(self.skill_manager._registry.keys())
-            module.register(self.skill_manager)
-            after_skills = set(self.skill_manager._registry.keys())
-            registered = list(after_skills - before_skills)
-
-            info = PluginInfo(stem, path, module, registered_skills=registered)
-            self._plugins[stem] = info
-            print(f"  [OK] 插件加载: {info.display_name} v{info.version} ({stem}.py)")
-            return stem
-
-        except Exception as e:
-            print(f"[Plugin] [ERR] 加载 '{stem}.py' 失败: {e}")
-            return None
 
     def _unload_plugin(self, name: str) -> None:
         """Remove plugin from registry and sys.modules, and clean its skills."""
-        info = self._plugins.get(name)
-        if info:
-            # Remove all skills registered by this plugin from SkillManager
-            for skill_name in info.skills:
-                self.skill_manager._registry.pop(skill_name, None)
-            if info.skills:
-                print(f"[Plugin] 🧹 已清除插件 '{name}' 注册的 {len(info.skills)} 个技能: {info.skills}")
-        module_name = f"plugins.{name}"
-        sys.modules.pop(module_name, None)
-        self._plugins.pop(name, None)
+        with self._load_lock:
+            info = self._plugins.get(name)
+            if info:
+                # Remove all skills registered by this plugin from SkillManager
+                for skill_name in info.skills:
+                    self.skill_manager._registry.pop(skill_name, None)
+                if info.skills:
+                    print(f"[Plugin] 🧹 已清除插件 '{name}' 注册的 {len(info.skills)} 个技能: {info.skills}")
+            module_name = f"plugins.{name}"
+            sys.modules.pop(module_name, None)
+            self._plugins.pop(name, None)

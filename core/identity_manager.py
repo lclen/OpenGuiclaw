@@ -21,11 +21,10 @@ class IdentityManager:
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.identity_dir = self.data_dir / "identity"
-        self.identity_dir.mkdir(parents=True, exist_ok=True)
-
+        self.identity_dir.mkdir(parents=True, exist_ok=True) # Hardcoded filenames based on your design
         self.user_path = self.identity_dir / "USER.md"
         self.habits_path = self.identity_dir / "HABITS.md"
-        self.memory_path = self.identity_dir / "MEMORY.md"
+        self.agent_path = self.identity_dir / "AGENT.md"
 
         self._ensure_files()
 
@@ -55,11 +54,6 @@ class IdentityManager:
             self._write(
                 self.habits_path,
                 f"# 交互习惯与约束规则 (HABITS)\n<!-- updated: {self._today()} -->\n\n",
-            )
-        if not self.memory_path.exists():
-            self._write(
-                self.memory_path,
-                f"# 进度记忆摘要 (MEMORY)\n<!-- updated: {self._today()} | 字数: 0/800 -->\n\n",
             )
 
     def _update_timestamp(self, path: Path) -> None:
@@ -128,31 +122,6 @@ class IdentityManager:
         return self._read(self.habits_path)
 
     # ------------------------------------------------------------------
-    # MEMORY.md
-    # ------------------------------------------------------------------
-
-    def write_memory(self, content: str) -> None:
-        """Write content to MEMORY.md, truncating to 800 chars."""
-        truncated = False
-        if len(content) > MEMORY_LIMIT:
-            content = content[:MEMORY_LIMIT]
-            truncated = True
-
-        char_count = len(content)
-        header = (
-            f"# 进度记忆摘要 (MEMORY)\n"
-            f"<!-- updated: {self._today()} | 字数: {char_count}/800 -->\n\n"
-        )
-        body = content
-        if truncated:
-            body += "\n<!-- 内容已截断 -->"
-
-        self._write(self.memory_path, header + body + "\n")
-
-    def get_memory(self) -> str:
-        """Return the full content of MEMORY.md."""
-        return self._read(self.memory_path)
-
     # ------------------------------------------------------------------
     # System prompt
     # ------------------------------------------------------------------
@@ -160,6 +129,10 @@ class IdentityManager:
     def build_prompt(self) -> str:
         """Build the text block to inject into the system prompt."""
         parts = []
+
+        agent_text = self._read(self.agent_path).strip()
+        if agent_text:
+            parts.append(agent_text)
 
         user_text = self._read(self.user_path).strip()
         if user_text:
@@ -169,7 +142,44 @@ class IdentityManager:
         if habits_text:
             parts.append(habits_text)
 
-        return "\n\n".join(parts)
+        scene_memory_path = self.data_dir / "memory" / "scene_memory.jsonl"
+        if scene_memory_path.exists():
+            try:
+                import json
+                from collections import defaultdict
+                memories_by_type = defaultdict(list)
+                with open(scene_memory_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip(): continue
+                        try:
+                            item = json.loads(line)
+                            mtype = item.get("type", "fact")
+                            memories_by_type[mtype].append(item.get("content", ""))
+                        except json.JSONDecodeError:
+                            continue
+                
+                if memories_by_type:
+                    type_zh = {
+                        "preference": "偏好",
+                        "rule": "规则",
+                        "fact": "事实",
+                        "experience": "经验",
+                        "skill": "技能",
+                        "error": "教训"
+                    }
+                    memory_sections = ["# 核心记忆"]
+                    # Optionally force an order if preferred, but iterating over dict directly is fine
+                    for mtype, contents in memories_by_type.items():
+                        if not contents: continue
+                        zh_name = type_zh.get(mtype, mtype)
+                        memory_sections.append(f"\\n## {zh_name}")
+                        for content in contents:
+                            memory_sections.append(f"- {content}")
+                    parts.append("\\n".join(memory_sections))
+            except Exception as e:
+                print(f"[IdentityManager] Failed to read scene_memory.jsonl: {e}")
+
+        return "\\n\\n".join(parts)
 
     # ------------------------------------------------------------------
     # Migration from legacy files

@@ -1,6 +1,7 @@
 import json
 import base64
 import time
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
@@ -9,6 +10,9 @@ import mss
 import mss.tools
 import pyautogui
 from openai import OpenAI
+
+from core.profiles import AgentProfile
+from core.knowledge_graph import KnowledgeGraph
 
 
 @dataclass
@@ -19,9 +23,11 @@ class Action:
 
 
 class ScreenAgent:
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path: str = "config.json", profile: Optional[AgentProfile] = None):
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = json.load(f)
+
+        self.profile = profile
 
         api_config = self.config["api"]
         self.client = OpenAI(
@@ -29,16 +35,28 @@ class ScreenAgent:
             api_key=api_config["api_key"]
         )
         self.model = api_config["model"]
-        self.max_tokens = api_config["max_tokens"]
-        self.temperature = api_config["temperature"]
+        self.max_tokens = api_config.get("max_tokens", 2048)
+        self.temperature = api_config.get("temperature", 0.7)
 
-        self.max_iterations = self.config["agent"]["max_iterations"]
-        self.delay = self.config["agent"]["delay_between_actions"]
+        self.max_iterations = self.config.get("agent", {}).get("max_iterations", 15)
+        self.delay = self.config.get("agent", {}).get("delay_between_actions", 2.0)
 
         self.screen_width, self.screen_height = pyautogui.size()
         print(f"Screen resolution: {self.screen_width}x{self.screen_height}")
 
         self.conversation_history: List[Dict[str, Any]] = []
+
+        # Load shared memory (Knowledge Graph)
+        self.kg = KnowledgeGraph(data_dir="data")
+        
+        # Load user identity if exists
+        self.user_identity = ""
+        identity_path = Path("data/identity/USER.md")
+        if identity_path.exists():
+            try:
+                self.user_identity = identity_path.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"Failed to load user identity: {e}")
 
     def capture_screen(self) -> str:
         """截取屏幕并返回 base64 编码的图片"""
@@ -148,7 +166,25 @@ class ScreenAgent:
 
     def run(self, task: str) -> str:
         """运行 Agent 完成用户任务"""
-        system_prompt = f"""你是一个电脑操作助手。你的任务是根据用户的指令，通过一系列操作来完成用户的任务。
+        profile_prompt = self.profile.custom_prompt if self.profile else "你是一个电脑操作助手。"
+        identity_prompt = f"\n\n【用户认知】\n你的使用者信息如下：\n{self.user_identity}" if self.user_identity else ""
+        
+        # 初步查询知识图谱（简单提取关键词，这里用最简单的粗暴方法取 task 前几个字，或者全查）
+        # 实际更专业的做法是用 LLM 提取实体，这里作为基础结合
+        kg_context = ""
+        # 以 task 为查询尝试命中一点相关的 KG
+        matched_triples = []
+        for word in task.split()[:5]: # simple keyword extraction
+             if len(word) > 1:
+                 matched_triples.extend(self.kg.query(word))
+        
+        if matched_triples:
+            unique_triples = {f"{t.subject} -> {t.relation} -> {t.object}" for t in matched_triples[:10]}
+            kg_context = "\n\n【相关知识/历史记忆】\n" + "\n".join(unique_triples)
+
+        system_prompt = f"""{profile_prompt}{identity_prompt}{kg_context}
+        
+你的任务是根据用户的指令，通过一系列操作来完成用户的任务。
 
 每次响应必须返回一个 JSON 对象，格式如下：
 {{

@@ -1,7 +1,6 @@
 <!-- Skills Management Panel -->
 <div x-show="activePanel === 'skills'"
-    class="flex flex-col h-full bg-[var(--noble-black-900)]/60 backdrop-blur-3xl selection:bg-[var(--stem-green-500)]/30"
-    x-data="{ skillTab: 'installed', urlInput: '' }">
+    class="flex flex-col h-full bg-[var(--noble-black-900)] selection:bg-[var(--stem-green-500)]/30">
 
     <style>
         .skill-card {
@@ -184,14 +183,54 @@
                                 <div class="flex items-start justify-between gap-4">
                                     <div class="flex-1 min-w-0 pr-2">
                                         <div class="flex items-center gap-2 mb-1">
-                                            <span
-                                                class="text-white text-[13px] font-bold tracking-tight font-['Outfit']"
-                                                x-text="skill.name"></span>
-                                            <span x-show="!skill.enabled"
-                                                class="px-1.5 py-0.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold uppercase tracking-widest rounded font-mono">Off</span>
+                                            <div class="flex items-center gap-2 flex-1 min-w-0">
+                                                <span
+                                                    class="text-white text-[13px] font-bold tracking-tight font-['Outfit'] truncate"
+                                                    x-text="skill.name"></span>
+                                                <span x-show="!skill.enabled"
+                                                    class="px-1.5 py-0.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold uppercase tracking-widest rounded font-mono shrink-0">Off</span>
+                                            </div>
+                                            <button type="button" @click.stop="toggleSkillExpand(skill.name)"
+                                                class="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors group"
+                                                x-show="skill.tools && skill.tools.length > 0">
+                                                <span
+                                                    class="text-[9px] font-bold text-white/20 group-hover:text-white/40 uppercase tracking-widest"
+                                                    x-text="isSkillExpanded(skill.name) ? '收起工具' : '显示工具 (' + skill.tools.length + ')'"></span>
+                                                <svg class="w-3 h-3 text-white/20 group-hover:text-white/40 transition-transform"
+                                                    :class="isSkillExpanded(skill.name) ? 'rotate-180' : ''" fill="none"
+                                                    stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                            </button>
                                         </div>
-                                        <p class="text-[11px] font-medium text-white/50 leading-relaxed truncate max-w-lg"
+                                        <p class="text-[11px] font-medium text-white/50 leading-relaxed truncate max-w-lg mb-1"
                                             x-text="skill.description" :title="skill.description"></p>
+
+                                        <!-- Atomic Tools List -->
+                                        <div x-show="isSkillExpanded(skill.name)" x-collapse class="mt-2 mb-3">
+                                            <div class="p-3 bg-black/40 rounded-xl border border-white/5 shadow-inner">
+                                                <div class="flex items-center gap-2 mb-2 px-1">
+                                                    <div class="w-1 h-3 bg-[var(--stem-green-500)]/40 rounded-full">
+                                                    </div>
+                                                    <span
+                                                        class="text-[10px] font-bold text-white/30 uppercase tracking-widest font-['Outfit']">内置原子化工具</span>
+                                                </div>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                    <template x-for="tool in skill.tools" :key="tool">
+                                                        <div
+                                                            class="flex items-center gap-2 px-2.5 py-1.5 bg-white/[0.03] border border-white/5 rounded-lg group hover:bg-white/[0.06] hover:border-white/10 transition-all">
+                                                            <div
+                                                                class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)]/30 group-hover:bg-[var(--stem-green-500)] transition-colors">
+                                                            </div>
+                                                            <span
+                                                                class="text-[11px] font-mono text-white/60 group-hover:text-white transition-colors truncate"
+                                                                x-text="tool"></span>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </div>
 
                                         <!-- Config section -->
                                         <div x-show="skill.ui_config && skill.ui_config.length > 0" class="mt-2.5">
@@ -342,9 +381,9 @@
             </div>
 
             <div class="flex gap-3">
-                <input type="text" x-model="urlInput" placeholder="粘贴 Git URL 安装..."
+                <input type="text" x-model="skillUrlInput" placeholder="粘贴 Git URL 安装..."
                     class="skill-input flex-1 px-4 py-2 bg-black/20 border border-white/5 rounded-lg text-white text-[11px] font-medium placeholder-white/30 focus:outline-none focus:border-blue-500/40 transition-all font-mono">
-                <button @click="installSkillFromUrl(urlInput); urlInput = ''"
+                <button @click="installSkillFromUrl(skillUrlInput); skillUrlInput = ''"
                     class="px-4 py-2 bg-blue-500/10 hover:bg-blue-500 hover:text-white text-blue-400 border border-blue-500/20 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all shrink-0">
                     安装拉取
                 </button>
@@ -376,7 +415,7 @@
             </div>
 
             <!-- Skill Cards -->
-            <template x-for="item in skillMarketplace" :key="item.name || item.id">
+            <template x-for="item in skillMarketplace" :key="item.id || item.url || item.name">
                 <div
                     class="skill-card bg-white/[0.02] border border-white/5 rounded-xl px-4 py-3.5 hover:border-[var(--stem-green-500)]/30 hover:bg-white/[0.04] group">
                     <div class="flex items-start gap-4">
@@ -389,18 +428,48 @@
                         <!-- Info -->
                         <div class="flex-1 min-w-0 pr-3">
                             <div class="flex items-center gap-2 mb-1">
-                                <span class="text-[13px] font-bold text-white tracking-tight font-['Outfit']"
-                                    x-text="item.name || item.id"></span>
-                                <span x-show="item.version"
-                                    class="text-[9px] font-bold text-white/50 border border-white/10 px-1.5 py-0.5 rounded font-mono uppercase"
-                                    x-text="'v' + item.version"></span>
+                                <div class="flex items-center gap-2 flex-1 min-w-0">
+                                    <span
+                                        class="text-[13px] font-bold text-white tracking-tight font-['Outfit'] truncate"
+                                        x-text="item.name || item.id"></span>
+                                    <span x-show="item.version"
+                                        class="text-[9px] font-bold text-white/50 border border-white/10 px-1.5 py-0.5 rounded font-mono uppercase shrink-0"
+                                        x-text="'v' + item.version"></span>
+                                </div>
+                                <button type="button" @click.stop="toggleSkillExpand(item.name || item.id)"
+                                    class="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors group"
+                                    x-show="item.tools && item.tools.length > 0">
+                                    <svg class="w-3 h-3 text-white/20 group-hover:text-white/40 transition-transform"
+                                        :class="isSkillExpanded(item.name || item.id) ? 'rotate-180' : ''" fill="none"
+                                        stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                                            d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
                             </div>
                             <p class="text-[11px] font-medium text-white/50 leading-snug mb-2 truncate"
-                                x-text="item.description || '暂无算子拓扑描述'"></p>
+                                x-text="item.description || '暂无算子拓扑描述'" :title="item.description"></p>
+
+                            <!-- Atomic Tools List (Placeholder for marketplace) -->
+                            <div x-show="isSkillExpanded(item.name || item.id)" x-collapse class="mt-2 mb-3">
+                                <div class="p-2.5 bg-black/40 rounded-xl border border-white/5">
+                                    <div class="flex items-center gap-2 mb-2 px-1">
+                                        <span
+                                            class="text-[9px] font-bold text-white/20 uppercase tracking-widest font-['Outfit']">预估原子工具</span>
+                                    </div>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <template x-for="tool in item.tools" :key="tool">
+                                            <span
+                                                class="px-2 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] font-mono text-white/40"
+                                                x-text="tool"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
 
                             <div class="flex items-center gap-3">
                                 <span x-show="item.category"
-                                    class="text-[9px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded"
+                                    class="text-[9px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded font-mono"
                                     x-text="item.category"></span>
                                 <span x-show="item.author" class="text-[10px] text-white/40 font-bold"
                                     x-text="item.author"></span>
@@ -408,7 +477,7 @@
                         </div>
 
                         <!-- Install Button -->
-                        <button @click="installSkillFromUrl(item.url || item.git_url || '')"
+                        <button @click="installSkillFromUrl(item.url || item.git_url || '', item.name || item.id)"
                             :disabled="skillInstallingId === (item.name || item.id)"
                             class="shrink-0 mt-1 px-4 py-1.5 bg-[var(--stem-green-500)]/10 hover:bg-[var(--stem-green-500)] text-[var(--stem-green-500)] hover:text-black border border-[var(--stem-green-500)]/30 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40">
                             <span x-text="skillInstallingId === (item.name || item.id) ? '装载中...' : '安装'"></span>

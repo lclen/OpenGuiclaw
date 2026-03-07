@@ -36,13 +36,20 @@ def register(skills_manager):
             command = command.replace("agent-browser ", "agent-browser --auto-connect ")
 
         try:
+            kwargs = {}
+            if os.name == 'nt':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                
             # shell=True 允许使用管道、重定向、内部命令等
             # capture_output 捕获原始字节流，以便我们手动处理乱码
+            # 将 stdin 设为 DEVNULL，防止 EXE 环境下命令卡住等输入
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
-                timeout=timeout
+                stdin=subprocess.DEVNULL,
+                timeout=timeout,
+                **kwargs
             )
             
             def _decode_bytes(b: bytes) -> str:

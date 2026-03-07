@@ -58,7 +58,7 @@ def setup_node_env() -> None:
         os.environ["PATH"] = f"{node_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
     # 隔离用户级 NPM 安装目录（解决装在 Program Files 下被 UAC 拦截的问题）
-    user_app_dir = Path(os.environ.get("USERPROFILE", "~")).expanduser() / ".openGuiclaw"
+    user_app_dir = Path(os.environ.get("USERPROFILE", "~")).expanduser() / ".openguiclaw"
     npm_global = user_app_dir / "npm-global"
     npm_global.mkdir(parents=True, exist_ok=True)
 
@@ -77,13 +77,21 @@ def ensure_data_dirs() -> None:
 
 
 def ensure_config() -> None:
-    """config.json 不存在时，从 config.json.example 自动复制。"""
+    """config.json 不存在时，从 config.json.example 自动复制。
+    frozen 模式下 example 可能在 _MEIPASS（只读资源），也可能在 exe 旁边。
+    """
     base = get_app_base_dir()
     config = base / "config.json"
-    example = base / "config.json.example"
 
     if config.exists():
         return
+
+    # 优先找 exe 旁边的 example，frozen 时再从 _MEIPASS 找
+    example = base / "config.json.example"
+    if not example.exists() and getattr(sys, "frozen", False):
+        meipass_example = Path(sys._MEIPASS) / "config.json.example"  # type: ignore
+        if meipass_example.exists():
+            example = meipass_example
 
     if example.exists():
         import shutil
@@ -138,16 +146,38 @@ def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, shell=True, env=os.environ.copy(), **kwargs)
 
 
+def _get_venv_python() -> str | None:
+    """返回 venv 内的 python.exe 路径（若存在）。
+    venv 路径：%USERPROFILE%\.openguiclaw\venv（与 launcher.py 保持一致）
+    """
+    venv_dir = Path(os.environ.get("USERPROFILE", "~")).expanduser() / ".openguiclaw" / "venv"
+    venv_python = venv_dir / "Scripts" / "python.exe"
+    if venv_python.exists():
+        return str(venv_python)
+    return None
+
+
 def check_python_deps(requirements_file: str = "requirements.txt") -> None:
-    # frozen 状态下依赖已由 PyInstaller 打包，sys.executable 是 exe 本身，无法跑 pip
-    if getattr(sys, "frozen", False):
-        return
+    """安装 Python 依赖。
+    - 开发模式：使用当前 sys.executable（通常已在 venv 中）
+    - launcher 启动（run_gui.py 由 venv python 运行）：sys.executable 已是 venv python，直接用
+    - 兜底：尝试找 ~/.openguiclaw/venv/Scripts/python.exe
+    """
     base = get_app_base_dir()
     req_path = base / requirements_file
     if not req_path.exists():
         return
+
+    # 优先使用当前 python（launcher 已切换到 venv python）
+    pip_python = sys.executable
+
+    # 若当前 python 不在 venv 中，尝试找 venv python
+    venv_python = _get_venv_python()
+    if venv_python and venv_python != sys.executable:
+        pip_python = venv_python
+
     print("[Bootstrap] 检查 Python 依赖...")
-    result = _run([sys.executable, "-m", "pip", "install", "-r", str(req_path),
+    result = _run([pip_python, "-m", "pip", "install", "-r", str(req_path),
                    "-i", "https://mirrors.aliyun.com/pypi/simple/",
                    "--trusted-host", "mirrors.aliyun.com",
                    "--quiet"])

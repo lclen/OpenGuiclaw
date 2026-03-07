@@ -989,6 +989,9 @@ class VRMManager {
         if (this.container && this.container.clientWidth > 0 && this.container.clientHeight > 0) {
             width = this.container.clientWidth;
             height = this.container.clientHeight;
+        } else if (this.container && this.container.clientWidth === 0) {
+            // Container is hidden (e.g. VRM toggled off) — skip resize to avoid corrupting renderer state
+            return;
         } else {
             width = window.innerWidth;
             height = window.innerHeight;

@@ -37,9 +37,12 @@
     "confidence_threshold": 0.7
   },
   "proactive": {
-    "interval_minutes": 5,
-    "cooldown_minutes": 30,
+    "interval_minutes": null,
+    "cooldown_minutes": null,
     "verbose": true,
-    "mode": "normal"
+    "mode": "silent"
+  },
+  "journal": {
+    "enable_diary": false
   }
 }

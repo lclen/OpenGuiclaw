@@ -1,0 +1,693 @@
+<!-- ══════════════════════════ AGENT MANAGEMENT PANEL ══════════════════════════ -->
+<div x-show="activePanel === 'agents'" x-data="agentManager()"
+    @panel-change.window="if($event.detail === 'agents') loadAgents()"
+    class="flex flex-col h-full bg-[var(--noble-black-900)] selection:bg-[var(--stem-green-500)]/30">
+
+    <style>
+        .agent-card {
+            transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+            border-left-width: 3px;
+        }
+
+        .agent-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        .agent-modal-backdrop {
+            background: rgba(1, 2, 5, 0.85);
+            backdrop-filter: blur(12px);
+        }
+
+        .agent-form-input {
+            transition: all 0.2s ease;
+        }
+
+        .agent-form-input:focus {
+            box-shadow: 0 0 0 2px rgba(182, 240, 89, 0.15);
+        }
+
+        .category-badge {
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .skill-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            z-index: 200;
+            background: #0d0f14;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            max-height: 220px;
+            overflow-y: auto;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .skill-dropdown::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .skill-dropdown::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+        }
+    </style>
+
+    <!-- Header -->
+    <div class="px-6 py-4 border-b border-white/5 bg-black/40 shrink-0">
+        <div class="flex items-center justify-between">
+            <div>
+                <h2 class="text-[14px] font-bold text-white tracking-wide uppercase flex items-center gap-2">
+                    <span
+                        class="w-1.5 h-1.5 rounded-full bg-[var(--stem-green-500)] shadow-[0_0_8px_rgba(182,240,89,0.5)] animate-pulse"></span>
+                    智能体管理
+                </h2>
+                <p class="text-[var(--noble-black-400)] text-[11px] font-medium mt-0.5 flex items-center gap-1.5">
+                    <span x-text="agents.filter(a => a.type === 'system').length + ' 系统预置'"></span>
+                    <span class="opacity-30">/</span>
+                    <span x-text="agents.filter(a => a.type !== 'system').length + ' 自定义'"></span>
+                </p>
+            </div>
+            <div class="flex items-center gap-2">
+                <select x-model="categoryFilter"
+                    class="h-8 px-3 bg-black/40 border border-white/10 rounded-lg text-white text-[11px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/40 appearance-none cursor-pointer">
+                    <option value="all">全部分类</option>
+                    <option value="general">通用</option>
+                    <option value="productivity">生活效率</option>
+                    <option value="automation">自动化</option>
+                    <option value="devops">开发运维</option>
+                    <option value="system">系统</option>
+                </select>
+                <button @click="loadAgents()"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/40 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all active:scale-95"
+                    title="刷新">
+                    <svg class="w-4 h-4" :class="loading ? 'animate-spin' : ''" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                </button>
+                <button @click="openCreate()"
+                    class="h-8 px-4 flex items-center gap-2 bg-[var(--stem-green-500)] hover:bg-[var(--stem-green-400)] text-black rounded-lg text-[11px] font-black uppercase tracking-widest transition-all active:scale-95">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4" />
+                    </svg>
+                    新建 Agent
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Banner -->
+    <div x-show="alertMsg" x-collapse class="px-6 pt-3 shrink-0">
+        <div :class="alertType === 'success' ? 'bg-[var(--stem-green-500)]/10 border-[var(--stem-green-500)]/30 text-[var(--stem-green-500)]' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'"
+            class="flex items-center gap-3 px-4 py-2.5 rounded-lg border text-[11px] font-bold">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                    :d="alertType === 'success' ? 'M5 13l4 4L19 7' : 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'" />
+            </svg>
+            <span x-text="alertMsg"></span>
+            <button @click="alertMsg = null" class="ml-auto opacity-60 hover:opacity-100">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Grid -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-5">
+        <div x-show="loading" class="flex flex-col items-center justify-center py-20">
+            <div
+                class="w-8 h-8 border-[2px] border-[var(--stem-green-500)]/20 border-t-[var(--stem-green-500)] rounded-full animate-spin mb-4">
+            </div>
+            <p class="text-white/40 text-[12px] font-bold tracking-widest">加载智能体列表中...</p>
+        </div>
+        <div x-show="!loading && filteredAgents.length === 0"
+            class="flex flex-col items-center justify-center py-20 text-white/30">
+            <div
+                class="w-14 h-14 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/5 text-3xl">
+                🤖</div>
+            <p class="text-[13px] font-bold uppercase tracking-widest text-white">暂无智能体</p>
+        </div>
+        <div x-show="!loading && filteredAgents.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <template x-for="agent in filteredAgents" :key="agent.id">
+                <div class="agent-card bg-white/[0.025] rounded-xl border border-white/5 overflow-hidden hover:bg-white/[0.04] group"
+                    :style="`border-left-color: ${agent.color}`">
+                    <div class="flex items-start gap-3.5 p-4 pb-3">
+                        <div class="w-11 h-11 rounded-xl flex items-center justify-center text-2xl shrink-0 border border-white/10"
+                            :style="`background: ${agent.color}18`">
+                            <span x-text="agent.icon"></span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-white text-[14px] font-bold tracking-tight"
+                                    x-text="agent.name"></span>
+                                <span class="category-badge px-2 py-0.5 rounded-full" :class="{
+                                        'bg-amber-500/15 text-amber-400': agent.category === 'productivity',
+                                        'bg-blue-500/15 text-blue-400': agent.category === 'devops' || agent.category === 'automation',
+                                        'bg-purple-500/15 text-purple-400': agent.category === 'system',
+                                        'bg-[var(--stem-green-500)]/15 text-[var(--stem-green-500)]': agent.category === 'general' || !agent.category
+                                    }" x-text="categoryLabel(agent.category)"></span>
+                                <span x-show="agent.type === 'system'"
+                                    class="category-badge px-2 py-0.5 rounded-full bg-white/5 text-white/40">系统预置</span>
+                            </div>
+                            <p class="text-[var(--noble-black-500)] text-[10px] font-mono mt-0.5" x-text="agent.id"></p>
+                            <p class="text-[var(--noble-black-400)] text-[11px] font-medium leading-relaxed mt-1.5 line-clamp-2"
+                                x-text="agent.description || '暂无描述'"></p>
+                        </div>
+                    </div>
+                    <div class="px-4 pb-1" x-show="agent.preferred_model">
+                        <div
+                            class="flex items-center gap-1.5 py-1 px-2.5 bg-white/5 rounded-lg w-fit border border-white/5">
+                            <svg class="w-3 h-3 text-[var(--stem-green-500)]" fill="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    d="M21 16.5C21 16.88 20.79 17.21 20.47 17.38L12.57 21.82C12.41 21.94 12.21 22 12 22C11.79 22 11.59 21.94 11.43 21.82L3.53 17.38C3.21 17.21 3 16.88 3 16.5V7.5C3 7.12 3.21 6.79 3.53 6.62L11.43 2.18C11.59 2.06 11.79 2 12 2C12.21 2 12.41 2.06 12.57 2.18L20.47 6.62C20.79 6.79 21 7.12 21 7.5V16.5Z" />
+                            </svg>
+                            <span class="text-[10px] text-white/60 font-mono font-bold"
+                                x-text="agent.preferred_model"></span>
+                        </div>
+                    </div>
+                    <div class="px-4 pb-3" x-show="agent.skills && agent.skills.length > 0">
+                        <div class="flex flex-wrap gap-1.5">
+                            <template x-for="sk in (agent.skills || []).slice(0, 5)" :key="sk">
+                                <span
+                                    class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/40 rounded text-[9px] font-mono uppercase tracking-wide"
+                                    x-text="sk"></span>
+                            </template>
+                            <span x-show="(agent.skills || []).length > 5"
+                                class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/30 rounded text-[9px] font-mono"
+                                x-text="'+' + ((agent.skills || []).length - 5)"></span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 px-4 py-3 border-t border-white/5 bg-black/20">
+                        <button @click="openEdit(agent)"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-blue-500/15 text-white/50 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            编辑
+                        </button>
+                        <button @click="exportAgent(agent)"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-[var(--stem-green-500)]/10 text-white/50 hover:text-[var(--stem-green-500)] border border-white/5 hover:border-[var(--stem-green-500)]/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            导出
+                        </button>
+                        <div class="flex-1"></div>
+                        <button @click="confirmDelete(agent)" :disabled="agent.type === 'system'"
+                            :class="agent.type === 'system' ? 'opacity-20 cursor-not-allowed text-white/30 border-white/5' : 'hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/20 text-white/30 border-white/5 active:scale-95'"
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            删除
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- ══════════ CREATE / EDIT MODAL ══════════ -->
+    <div x-show="modalOpen" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0"
+        x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-150"
+        x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+        class="agent-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4" style="display: none;"
+        @click.self="modalOpen = false">
+
+        <div class="w-full max-w-2xl bg-[var(--noble-black-800)] border border-white/8 rounded-2xl shadow-2xl overflow-hidden"
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 scale-95 translate-y-4"
+            x-transition:enter-end="opacity-100 scale-100 translate-y-0">
+
+            <div class="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40">
+                <h3 class="text-[14px] font-bold text-white tracking-wide flex items-center gap-2">
+                    <span class="text-xl" x-text="form.icon || '🤖'"></span>
+                    <span x-text="editingId ? '编辑智能体' : '新建智能体'"></span>
+                </h3>
+                <button @click="modalOpen = false"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="p-6 space-y-5 max-h-[70vh] overflow-y-auto custom-scrollbar">
+
+                <!-- Icon + Name + Color row -->
+                <div class="flex gap-4">
+                    <div class="shrink-0">
+                        <label
+                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">图标</label>
+                        <input type="text" x-model="form.icon" maxlength="2"
+                            class="agent-form-input w-14 h-10 text-center text-2xl bg-black/40 border border-white/10 rounded-xl focus:outline-none focus:border-[var(--stem-green-500)]/50">
+                    </div>
+                    <div class="flex-1">
+                        <label
+                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">名称*</label>
+                        <input type="text" x-model="form.name" placeholder="给智能体起个名字..."
+                            class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium placeholder-white/25 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
+                    </div>
+                    <div class="shrink-0">
+                        <label
+                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">颜色</label>
+                        <input type="color" x-model="form.color"
+                            class="w-10 h-10 rounded-xl cursor-pointer bg-black/40 border border-white/10 p-1 focus:outline-none">
+                    </div>
+                </div>
+
+                <!-- Description & Model Row -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label
+                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">描述</label>
+                        <input type="text" x-model="form.description" placeholder="一句话描述智能体..."
+                            class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium placeholder-white/25 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
+                    </div>
+                    <div>
+                        <label
+                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">首选模型</label>
+                        <select x-model="form.preferred_model"
+                            class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
+                            <option value="">使用系统默认</option>
+                            <template x-for="m in availableModels" :key="m.id">
+                                <option :value="m.id" x-text="m.name"></option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Category -->
+                <div>
+                    <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">分类</label>
+                    <select x-model="form.category"
+                        class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
+                        <option value="general">通用</option>
+                        <option value="productivity">生活效率</option>
+                        <option value="automation">自动化</option>
+                        <option value="devops">开发运维</option>
+                        <option value="system">系统</option>
+                    </select>
+                </div>
+
+                <!-- ── Skills Picker ──────────────────────────────────────── -->
+                <div>
+                    <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">技能</label>
+
+                    <!-- Skills mode -->
+                    <select x-model="form.skills_mode"
+                        class="agent-form-input w-full h-10 px-3 mb-2 bg-black/40 border border-white/10 rounded-xl text-white text-[12px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
+                        <option value="all">全部技能</option>
+                        <option value="inclusive">仅使用勾选的技能</option>
+                        <option value="exclusive">排除勾选的技能</option>
+                    </select>
+
+                    <!-- Multi-select dropdown (hidden when mode=all) -->
+                    <div x-show="form.skills_mode !== 'all'" class="relative" x-data="{ open: false }"
+                        @click.outside="open = false">
+                        <button type="button" @click="open = !open"
+                            class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-left text-[12px] font-medium text-white flex items-center justify-between focus:outline-none hover:border-[var(--stem-green-500)]/40 transition-all">
+                            <span :class="form.selectedSkills.length === 0 ? 'text-white/40' : 'text-white'"
+                                x-text="form.selectedSkills.length === 0 ? '点击选择技能...' : form.selectedSkills.length + ' 个技能已选'"></span>
+                            <svg class="w-4 h-4 text-white/40 shrink-0 transition-transform"
+                                :class="open ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        <!-- Dropdown -->
+                        <div x-show="open" x-transition:enter="transition ease-out duration-100"
+                            x-transition:enter-start="opacity-0 -translate-y-1"
+                            x-transition:enter-end="opacity-100 translate-y-0" class="skill-dropdown">
+                            <div x-show="availableSkills.length === 0"
+                                class="px-4 py-3 text-white/30 text-[11px] text-center">加载技能列表中...</div>
+                            <template x-for="sk in availableSkills" :key="sk.name">
+                                <div class="border-b border-white/5 last:border-0 overflow-hidden">
+                                    <div class="flex items-center hover:bg-white/5 transition-colors group">
+                                        <!-- Checkbox region -->
+                                        <label class="flex-1 flex items-center gap-3 px-4 py-2.5 cursor-pointer">
+                                            <div class="w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-all bg-black/40"
+                                                :class="isSkillSelected(sk.name) ? 'bg-[var(--stem-green-500)] border-[var(--stem-green-500)]' : 'border-white/20'">
+                                                <svg x-show="isSkillSelected(sk.name)" class="w-2.5 h-2.5 text-black"
+                                                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="3" d="M5 13l4 4L19 7" />
+                                                </svg>
+                                            </div>
+                                            <input type="checkbox" class="sr-only" :checked="isSkillSelected(sk.name)"
+                                                @change="toggleSkillSelection(sk.name)">
+
+                                            <div class="flex flex-col min-w-0 flex-1">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-white text-[12px] font-bold font-mono"
+                                                        x-text="sk.name"></span>
+                                                    <span x-show="sk.category"
+                                                        class="bg-white/5 px-1.5 py-0.5 rounded text-[8px] text-white/30 uppercase tracking-tighter"
+                                                        x-text="sk.category"></span>
+                                                </div>
+                                                <span x-show="sk.description" class="text-white/35 text-[10px] truncate"
+                                                    x-text="sk.description"></span>
+                                            </div>
+                                        </label>
+
+                                        <!-- Expand toggle -->
+                                        <button type="button" @click.stop="toggleSkillExpand(sk.name)"
+                                            class="w-8 h-full flex items-center justify-center text-white/20 hover:text-white transition-colors"
+                                            x-show="sk.tools && sk.tools.length > 0">
+                                            <svg class="w-3 h-3 transition-transform"
+                                                :class="isSkillExpanded(sk.name) ? 'rotate-180' : ''" fill="none"
+                                                stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M19 9l-7 7-7-7" />
+                                            </svg>
+                                        </button>
+                                    </div>
+
+                                    <!-- Atomic Tools List -->
+                                    <div x-show="isSkillExpanded(sk.name)" x-collapse
+                                        class="bg-white/5 px-11 py-2 space-y-1 pb-3">
+                                        <div
+                                            class="text-[9px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                            包含的原子工具:</div>
+                                        <div class="flex flex-wrap gap-1">
+                                            <template x-for="tool in sk.tools" :key="tool">
+                                                <span
+                                                    class="px-1.5 py-0.5 bg-white/5 border border-white/5 rounded text-[10px] text-white/40 font-mono"
+                                                    x-text="tool"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Tags -->
+                        <div x-show="form.selectedSkills.length > 0" class="mt-2 flex flex-wrap gap-1.5">
+                            <template x-for="sk in form.selectedSkills" :key="sk">
+                                <span
+                                    class="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 bg-[var(--stem-green-500)]/10 border border-[var(--stem-green-500)]/20 text-[var(--stem-green-500)] rounded-lg text-[10px] font-bold font-mono">
+                                    <span x-text="sk"></span>
+                                    <button @click.prevent="toggleSkillSelection(sk)" type="button"
+                                        class="w-3.5 h-3.5 rounded-full bg-[var(--stem-green-500)]/20 hover:bg-rose-500/40 hover:text-rose-300 flex items-center justify-center transition-colors">
+                                        <svg class="w-2 h-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3"
+                                                d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Prompt -->
+                <div>
+                    <label
+                        class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">自定义提示词</label>
+                    <textarea x-model="form.custom_prompt" rows="5" placeholder="你是...&#10;&#10;你擅长...&#10;你的目标是..."
+                        class="agent-form-input w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white text-[12px] font-medium leading-relaxed placeholder-white/20 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all resize-none custom-scrollbar"></textarea>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between px-6 py-4 border-t border-white/5 bg-black/20">
+                <button @click="modalOpen = false"
+                    class="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">
+                    取消
+                </button>
+                <button @click="saveAgent()" :disabled="!form.name.trim() || saving"
+                    class="px-6 py-2 bg-[var(--stem-green-500)] hover:bg-[var(--stem-green-400)] text-black rounded-xl text-[11px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 flex items-center gap-2">
+                    <svg x-show="saving" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9" />
+                    </svg>
+                    <span x-text="saving ? '保存中...' : (editingId ? '保存修改' : '创建智能体')"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ DELETE CONFIRM ══════════ -->
+    <div x-show="deleteConfirmOpen" x-transition:enter="transition ease-out duration-150"
+        x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" style="display: none;"
+        class="agent-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
+        @click.self="deleteConfirmOpen = false">
+        <div class="w-full max-w-sm bg-[var(--noble-black-800)] border border-rose-500/20 rounded-2xl shadow-2xl p-6"
+            x-transition:enter="transition ease-out duration-150" x-transition:enter-start="scale-95 opacity-0"
+            x-transition:enter-end="scale-100 opacity-100">
+            <div class="text-center">
+                <div
+                    class="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-6 h-6 text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                </div>
+                <p class="text-white font-bold text-[14px] mb-1">确认删除</p>
+                <p class="text-white/40 text-[12px] mb-6">智能体 "<strong class="text-white/70"
+                        x-text="deletingAgent?.name"></strong>" 将被永久移除。</p>
+                <div class="flex gap-3">
+                    <button @click="deleteConfirmOpen = false"
+                        class="flex-1 py-2 bg-white/5 hover:bg-white/10 text-white/50 border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">取消</button>
+                    <button @click="doDelete()"
+                        class="flex-1 py-2 bg-rose-500 hover:bg-rose-400 text-white rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all active:scale-95">删除</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function agentManager() {
+        return {
+            agents: [],
+            availableSkills: [],
+            availableModels: [],
+            expandedSkills: [],
+            loading: false,
+            categoryFilter: 'all',
+            modalOpen: false,
+            deleteConfirmOpen: false,
+            saving: false,
+            editingId: null,
+            deletingAgent: null,
+            alertMsg: null,
+            alertType: 'success',
+
+            form: {
+                name: '',
+                description: '',
+                icon: '🤖',
+                color: '#4A90D9',
+                category: 'general',
+                custom_prompt: '',
+                selectedSkills: [],
+                skills_mode: 'inclusive',
+                preferred_model: '',
+            },
+
+            get filteredAgents() {
+                if (this.categoryFilter === 'all') return this.agents;
+                return this.agents.filter(a => a.category === this.categoryFilter);
+            },
+
+            categoryLabel(cat) {
+                const labels = { general: '通用', productivity: '生活效率', automation: '自动化', devops: '开发运维', system: '系统' };
+                return labels[cat] || cat;
+            },
+
+            toggleSkillSelection(name) {
+                const idx = this.form.selectedSkills.indexOf(name);
+                if (idx >= 0) {
+                    this.form.selectedSkills = this.form.selectedSkills.filter(s => s !== name);
+                } else {
+                    this.form.selectedSkills = [...this.form.selectedSkills, name];
+                }
+                // Force Alpine reactivity: reassign to trigger x-for re-render
+                this.form.selectedSkills = this.form.selectedSkills.slice();
+            },
+
+            isSkillSelected(name) {
+                return this.form.selectedSkills.indexOf(name) >= 0;
+            },
+
+            toggleSkillExpand(name) {
+                const idx = this.expandedSkills.indexOf(name);
+                if (idx >= 0) {
+                    this.expandedSkills = this.expandedSkills.filter(s => s !== name);
+                } else {
+                    this.expandedSkills.push(name);
+                }
+            },
+
+            isSkillExpanded(name) {
+                return this.expandedSkills.indexOf(name) >= 0;
+            },
+
+            async loadAgents() {
+                this.loading = true;
+                try {
+                    const res = await fetch('/api/agents');
+                    const data = await res.json();
+                    this.agents = data.agents || [];
+                } catch (e) {
+                    this.showAlert('加载失败: ' + e.message, 'error');
+                } finally {
+                    this.loading = false;
+                }
+            },
+
+            async loadSkills() {
+                try {
+                    const res = await fetch('/api/skills/list');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.availableSkills = data.skills || [];
+                    } else {
+                        // agent may not be ready yet, will retry on next modal open
+                        this.availableSkills = [];
+                    }
+                } catch (e) {
+                    this.availableSkills = [];
+                }
+            },
+
+            async loadModels() {
+                try {
+                    const res = await fetch('/api/models/list');
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.availableModels = data.models || [];
+                    }
+                } catch (e) { /* silently fail */ }
+            },
+
+            async openCreate() {
+                this.editingId = null;
+                this.form = {
+                    name: '', description: '', icon: '🤖', color: '#4A90D9',
+                    category: 'general', custom_prompt: '', selectedSkills: [], skills_mode: 'inclusive',
+                    preferred_model: '',
+                };
+                // await so list is populated before modal opens
+                await this.loadSkills();
+                if (!this.availableModels.length) this.loadModels();
+                this.modalOpen = true;
+            },
+
+            async openEdit(agent) {
+                this.editingId = agent.id;
+                this.form = {
+                    name: agent.name,
+                    description: agent.description || '',
+                    icon: agent.icon || '🤖',
+                    color: agent.color || '#4A90D9',
+                    category: agent.category || 'general',
+                    custom_prompt: agent.custom_prompt || '',
+                    selectedSkills: [...(agent.skills || [])],
+                    skills_mode: agent.skills_mode || 'inclusive',
+                    preferred_model: agent.preferred_model || '',
+                };
+                // await so checked state renders correctly when modal opens
+                await this.loadSkills();
+                if (!this.availableModels.length) this.loadModels();
+                this.modalOpen = true;
+            },
+
+            async saveAgent() {
+                if (!this.form.name.trim()) return;
+                this.saving = true;
+                const payload = {
+                    name: this.form.name.trim(),
+                    description: this.form.description,
+                    icon: this.form.icon,
+                    color: this.form.color,
+                    category: this.form.category,
+                    custom_prompt: this.form.custom_prompt,
+                    skills: this.form.skills_mode === 'all' ? [] : this.form.selectedSkills,
+                    skills_mode: this.form.skills_mode,
+                    preferred_model: this.form.preferred_model || null,
+                };
+                try {
+                    const method = this.editingId ? 'PUT' : 'POST';
+                    const url = this.editingId ? `/api/agents/${this.editingId}` : '/api/agents';
+                    const res = await fetch(url, {
+                        method,
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        this.modalOpen = false;
+                        this.showAlert(this.editingId ? '智能体已更新' : '智能体已创建', 'success');
+                        await this.loadAgents();
+                        window.dispatchEvent(new CustomEvent('agent-list-updated'));
+                    } else {
+                        this.showAlert(data.detail || '操作失败', 'error');
+                    }
+                } catch (e) {
+                    this.showAlert('请求失败: ' + e.message, 'error');
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            confirmDelete(agent) { this.deletingAgent = agent; this.deleteConfirmOpen = true; },
+
+            async doDelete() {
+                if (!this.deletingAgent) return;
+                this.deleteConfirmOpen = false;
+                try {
+                    const res = await fetch(`/api/agents/${this.deletingAgent.id}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (res.ok) {
+                        this.showAlert(`智能体 "${this.deletingAgent.name}" 已删除`, 'success');
+                        await this.loadAgents();
+                        window.dispatchEvent(new CustomEvent('agent-list-updated'));
+                    } else {
+                        this.showAlert(data.detail || '删除失败', 'error');
+                    }
+                } catch (e) {
+                    this.showAlert('删除失败: ' + e.message, 'error');
+                }
+                this.deletingAgent = null;
+            },
+
+            exportAgent(agent) {
+                const blob = new Blob([JSON.stringify(agent, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `agent-${agent.id}.json`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                this.showAlert(`已导出 ${agent.name}`, 'success');
+            },
+
+            showAlert(msg, type = 'success') {
+                this.alertMsg = msg;
+                this.alertType = type;
+                setTimeout(() => { this.alertMsg = null; }, 4000);
+            },
+
+            init() {
+                this.loadAgents();
+                // Don't preload skills here — agent may not be ready at page load.
+                // Skills are loaded fresh each time a modal is opened.
+                this.loadModels();
+            }
+        };
+    }
+</script>

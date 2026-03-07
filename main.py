@@ -107,6 +107,14 @@ def main():
     except ImportError as e:
         print(f"  [WARN] Web 技能加载失败（{e}），已跳过。")
 
+    # Load Orchestrator delegate skill
+    try:
+        from skills import orchestrator_skill
+        agent.register_skill_module(orchestrator_skill)
+        print("  [OK] 技能加载: orchestrator_skill (dispatch_gui_task [OpenAkita 增强])")
+    except ImportError as e:
+        print(f"  [WARN] Orchestrator 技能加载失败（{e}），已跳过。")
+
     print(f"\n  Persona: {agent.active_persona_name} ({agent.config.get('persona_name', 'AI 助理')})")
     print(f"  Model  : {agent.model}")
     print(f"  Session: {agent.sessions.current.session_id}\n")

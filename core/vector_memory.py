@@ -212,6 +212,11 @@ class VectorStore:
         self._store = [(mid, v) for mid, v in self._store if mid != mem_id]
         self._rewrite()
 
+    def clear(self) -> None:
+        """Clear all vectors."""
+        self._store = []
+        self._rewrite()
+
     def _save_one(self, mem_id: str, vector: List[float]) -> None:
         with open(self.vector_file, "a", encoding="utf-8") as f:
             f.write(json.dumps({"id": mem_id, "v": vector}, ensure_ascii=False) + "\n")

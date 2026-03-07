@@ -3,6 +3,8 @@
         // UI state
         activePanel: 'chat',
         sidebarOpen: false,
+        vrmSystemEnabled: localStorage.getItem('vrmSystemEnabled') === 'true', // 默认 false (关闭VRM系统)
+        showVrm: localStorage.getItem('showVrm') === 'true',                   // 默认 false (折叠VRM面板)
 
         // Agent status
         agentOnline: false,
@@ -14,9 +16,8 @@
         isReceiving: false,
         currentController: null,
 
-        // Image paste / drop
-        pendingImage: null,      // base64 data URL for preview
-        pendingImageFile: null,  // File object to upload
+        // Image paste / drop / staged files
+        stagedFiles: [],       // Array of File objects
         isDragOver: false,
 
         // Slash commands
@@ -46,6 +47,33 @@
         contextStatus: '',
         expandedContext: false,
 
+        // Context tracking
+        lastBackendTokens: 0,
+        lastMaxTokens: 182200,
+
+        get contextTokens() {
+            // Context used = last backend total_tokens + offline estimation of current input
+            let tokens = this.lastBackendTokens || 0;
+            const text = this.inputText || '';
+            tokens += Math.ceil(text.length * 0.8);
+
+            if (this.stagedFiles && this.stagedFiles.length > 0) {
+                // Approximate 500-1000 tokens per file depending on type, just a very rough indicator
+                tokens += this.stagedFiles.length * 800;
+            }
+            return tokens;
+        },
+        get maxTokensDisplay() {
+            return this.lastMaxTokens;
+        },
+        get contextDisplay() {
+            const current = this.contextTokens;
+            const max = this.maxTokensDisplay;
+            const percentage = ((current / max) * 100).toFixed(1);
+            const formatK = (num) => num >= 1000 ? (num / 1000).toFixed(1) + 'K' : num.toString();
+            return `${percentage}% • ${formatK(current)} / ${formatK(max)} context used`;
+        },
+
         // Data
         sessions: [],
         currentSessionId: null,
@@ -55,7 +83,8 @@
         personas: {},
         config: {
             browser_choice: 'edge',
-            proactive: { interval_minutes: 5, cooldown_minutes: 5, verbose: true, mode: 'normal' }
+            proactive: { interval_minutes: null, cooldown_minutes: null, verbose: true, mode: 'silent' },
+            journal: { enable_diary: false }
         },
         proactiveDefaults: {
             silent: { interval_minutes: null, cooldown_minutes: null },
@@ -108,6 +137,12 @@
         skillMarketSearch: '',
         skillInstallingId: null,
         skillInstallMsg: null,
+        skillTab: 'installed',
+        skillUrlInput: '',
+        expandedSkills: [], // track expanded skill tool lists in marketplace
+
+        // System state
+        requiresRestart: false,
 
         // Model endpoint config state
         configTab: 'models',
@@ -149,6 +184,14 @@
         },
         tokenPeriod: '1d',
 
+        // Chat model/agent selector
+        chatModel: '',          // '' means use default
+        chatAgent: null,        // null means use default
+        chatModelList: [],      // [{id, name}]
+        chatAgentList: [],      // [{id, name, icon, ...}]
+        showModelPicker: false,
+        showAgentPicker: false,
+
         async init() {
             await this.checkStatus();
             setInterval(() => this.checkStatus(), 15000);
@@ -165,6 +208,8 @@
             this.loadRoleEndpoints();
             this.loadMemories();
             this.loadTokenStats(this.tokenPeriod);
+            this.loadChatModels();
+            this.loadChatAgents();
         },
 
         // ── loadRoleEndpoints ──────────────────────────────────────────────
@@ -242,7 +287,8 @@
                         ...m,
                         _selected: false,
                         _editing: false,
-                        _editBuffer: ''
+                        _editBuffer: '',
+                        _confirmDelete: false
                     }));
                 }
             } catch (e) { console.error('Failed to load memories:', e); }
@@ -264,7 +310,6 @@
         async batchDeleteMemories() {
             const ids = this.memoryItems.filter(m => m._selected).map(m => m.id);
             if (ids.length === 0) return;
-            if (!confirm(`确定要删除选中的 ${ids.length} 条记忆吗？`)) return;
 
             try {
                 const r = await fetch('/api/memory/batch_delete', {
@@ -283,8 +328,6 @@
 
         async deleteMemory(id) {
             if (!id) return;
-            if (!confirm('确定要删除这条记忆吗？')) return;
-            this.pushLog('status', `正在删除记忆...`);
             try {
                 const r = await fetch(`/api/memory/${id}`, { method: 'DELETE' });
                 if (r.ok) {
@@ -396,6 +439,7 @@
                 });
                 const data = await r.json();
                 if (r.ok && data.status === 'ok') {
+                    if (data.requires_restart) this.requiresRestart = true;
                     await this.loadChatEndpoints(); // reload with assigned IDs
                     this.epEditIdx = null;
                     this.pushLog('status', `✓ 已保存 ${data.count} 个端点配置`);
@@ -412,8 +456,8 @@
         async testChatEndpoint(epIdx) {
             const ep = this.chatEndpoints[epIdx];
             if (!ep?.model) return;
-            this.epTesting[epIdx] = true;
-            this.epTestResult[epIdx] = null;
+            this.epTesting = { ...this.epTesting, [epIdx]: true };
+            this.epTestResult = { ...this.epTestResult, [epIdx]: null };
             try {
                 const r = await fetch('/api/config/model/test', {
                     method: 'POST',
@@ -426,14 +470,14 @@
                     }),
                 });
                 const data = await r.json();
-                this.epTestResult[epIdx] = data;
+                this.epTestResult = { ...this.epTestResult, [epIdx]: data };
                 if (data.status === 'ok') {
-                    setTimeout(() => { this.epTestResult[epIdx] = null; }, 5000);
+                    setTimeout(() => { this.epTestResult = { ...this.epTestResult, [epIdx]: null }; }, 5000);
                 }
             } catch (e) {
-                this.epTestResult[epIdx] = { status: 'error', error: e.message };
+                this.epTestResult = { ...this.epTestResult, [epIdx]: { status: 'error', error: e.message } };
             } finally {
-                this.epTesting[epIdx] = false;
+                this.epTesting = { ...this.epTesting, [epIdx]: false };
             }
         },
 
@@ -448,6 +492,7 @@
                 });
                 const data = await r.json();
                 if (r.ok && data.status === 'ok') {
+                    if (data.requires_restart) this.requiresRestart = true;
                     this.activeEndpointId = data.active_id;
                     this.pushLog('status', `✓ 已切换模型 → ${data.name} (${data.model})`);
                 } else {
@@ -492,8 +537,8 @@
             const rep = this.roleEndpoints[roleKey]?.[idx];
             if (!rep?.model) return;
             const key = `${roleKey}-${idx}`;
-            this.roleEpTesting[key] = true;
-            this.roleEpTestResult[key] = null;
+            this.roleEpTesting = { ...this.roleEpTesting, [key]: true };
+            this.roleEpTestResult = { ...this.roleEpTestResult, [key]: null };
             try {
                 const r = await fetch('/api/config/model/test', {
                     method: 'POST',
@@ -504,14 +549,14 @@
                     }),
                 });
                 const data = await r.json();
-                this.roleEpTestResult[key] = data;
+                this.roleEpTestResult = { ...this.roleEpTestResult, [key]: data };
                 if (data.status === 'ok') {
-                    setTimeout(() => { this.roleEpTestResult[key] = null; }, 5000);
+                    setTimeout(() => { this.roleEpTestResult = { ...this.roleEpTestResult, [key]: null }; }, 5000);
                 }
             } catch (e) {
-                this.roleEpTestResult[key] = { status: 'error', error: e.message };
+                this.roleEpTestResult = { ...this.roleEpTestResult, [key]: { status: 'error', error: e.message } };
             } finally {
-                this.roleEpTesting[key] = false;
+                this.roleEpTesting = { ...this.roleEpTesting, [key]: false };
             }
         },
 
@@ -540,6 +585,7 @@
                         this.pushLog('error', `主端点保存失败：${pd.detail || JSON.stringify(pd)}`);
                         return;
                     }
+                    if (pd.requires_restart) this.requiresRestart = true;
                 }
 
                 // Save extra endpoints via /api/config/role-endpoints
@@ -550,6 +596,7 @@
                 });
                 const ed = await er.json();
                 if (er.ok && ed.status === 'ok') {
+                    if (ed.requires_restart) this.requiresRestart = true;
                     // Clean _new flags
                     allEps.forEach(ep => delete ep._new);
                     this.roleEndpoints = { ...this.roleEndpoints };
@@ -643,6 +690,7 @@
                 });
                 const data = await r.json();
                 if (r.ok && data.status === 'ok') {
+                    if (data.requires_restart) this.requiresRestart = true;
                     // Refresh config from server
                     await this.loadModelConfig();
                     this.pushLog('status', `✓ ${role} 端点已保存：${draft.model}`);
@@ -659,8 +707,8 @@
         async testModelEndpoint(role) {
             const draft = this.modelDrafts[role];
             if (!draft?.model) return;
-            this.modelTesting[role] = true;
-            this.modelTestResult[role] = null;
+            this.modelTesting = { ...this.modelTesting, [role]: true };
+            this.modelTestResult = { ...this.modelTestResult, [role]: null };
             try {
                 const r = await fetch('/api/config/model/test', {
                     method: 'POST',
@@ -673,28 +721,72 @@
                     })
                 });
                 const data = await r.json();
-                this.modelTestResult[role] = data;
+                this.modelTestResult = { ...this.modelTestResult, [role]: data };
                 // Auto-clear success result after 5s
                 if (data.status === 'ok') {
-                    setTimeout(() => { this.modelTestResult[role] = null; }, 5000);
+                    setTimeout(() => { this.modelTestResult = { ...this.modelTestResult, [role]: null }; }, 5000);
                 }
             } catch (e) {
-                this.modelTestResult[role] = { status: 'error', error: e.message };
+                this.modelTestResult = { ...this.modelTestResult, [role]: { status: 'error', error: e.message } };
             } finally {
-                this.modelTesting[role] = false;
+                this.modelTesting = { ...this.modelTesting, [role]: false };
             }
         },
+
+        async applyAndRestart() {
+            this.pushLog('system', "正在重启后端服务...");
+            const modal = document.getElementById('restart-modal');
+            if (modal) modal.style.display = 'flex';
+            try {
+                await fetch('/api/system/restart', { method: 'POST' });
+            } catch (e) {
+                console.warn("Restart request error (ignored):", e);
+            }
+
+            // 先短暂等待，确保旧进程已经退出，避免轮询到旧进程
+            await new Promise(r => setTimeout(r, 300));
+
+            // Start polling health — 每 200ms 一次，比原来的 1s 快 5 倍
+            let attempts = 0;
+            const maxAttempts = 150; // 150 × 200ms = 30s 超时，与原逻辑等价
+            const poll = setInterval(async () => {
+                attempts++;
+                try {
+                    const r = await fetch('/api/health', { cache: 'no-store' });
+                    if (r.ok) {
+                        clearInterval(poll);
+                        // 平滑过渡：先更新提示文字，短暂停顿后再 reload
+                        const statusDiv = modal?.querySelector?.('div[style*="font-size:11px"]');
+                        if (statusDiv) statusDiv.textContent = '服务就绪，正在加载界面...';
+                        setTimeout(() => window.location.reload(true), 200);
+                    }
+                } catch (e) {
+                    // still dead, keep waiting
+                }
+                if (attempts >= maxAttempts) {
+                    clearInterval(poll);
+                    alert("重启超时，请手动检查服务状态并刷新页面。");
+                    if (modal) modal.style.display = 'none';
+                }
+            }, 200);
+        },
         // ── End Model Config Methods ─────────────────────────────────────
+
 
         async loadGlobalConfig() {
             try {
                 const r = await fetch('/api/config');
                 if (r.ok) {
                     const data = await r.json();
-                    if (data.proactive) {
-                        this.config.proactive = data.proactive;
-                    }
+                    // BUG#8 fix: defensive merge so missing keys don't break UI
                     this._fullConfig = data;
+                    this.config.proactive = { ...this.config.proactive, ...(data.proactive || {}) };
+                    this.config.journal = { ...this.config.journal, ...(data.journal || {}) };
+                    // BUG#2 fix: restore vrm toggle from backend config (fallback to localStorage)
+                    if (data.journal && typeof data.journal.vrm_enabled === 'boolean') {
+                        this.vrmSystemEnabled = data.journal.vrm_enabled;
+                        localStorage.setItem('vrmSystemEnabled', this.vrmSystemEnabled);
+                    }
                 }
             } catch (e) { console.error('Failed to load global config:', e); }
         },
@@ -716,13 +808,14 @@
                     return;
                 }
                 this._fullConfig.proactive = this.config.proactive;
+                this._fullConfig.journal = this.config.journal;
                 const r = await fetch('/api/config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(this._fullConfig)
                 });
                 if (r.ok) {
-                    this.pushLog('status', '⚙ 主动感知系统配置已实时更新');
+                    this.pushLog('status', '⚙ 系统配置已实时更新');
                 } else {
                     const err = await r.json().catch(() => ({}));
                     this.pushLog('error', `⚠ 保存配置失败: ${err.detail || r.status}`);
@@ -785,6 +878,8 @@
                         if (this.activePanel !== 'chat') {
                             this.activePanel = 'chat';
                         }
+                    } else if (ev.type === 'scheduler_updated') {
+                        this.loadSchedulerTasks();
                     }
                 } catch { }
             };
@@ -811,6 +906,38 @@
             } catch {
                 this.agentOnline = false;
                 this.statusText = '连接失败';
+            }
+        },
+
+        toggleVrmSystem() {
+            this.vrmSystemEnabled = !this.vrmSystemEnabled;
+            localStorage.setItem('vrmSystemEnabled', this.vrmSystemEnabled);
+            // BUG#2 fix: persist vrm toggle to backend config
+            if (this._fullConfig) {
+                if (!this._fullConfig.journal) this._fullConfig.journal = {};
+                this._fullConfig.journal.vrm_enabled = this.vrmSystemEnabled;
+                this.saveGlobalConfig();
+            }
+            if (!this.vrmSystemEnabled && (this.activePanel === 'persona' || this.activePanel === 'store')) {
+                this.switchPanel('chat');
+            }
+            // 稍后触发 resize 防止页面布局更新时 3D 画布渲染错乱
+            setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 520);
+        },
+
+        toggleVrm() {
+            this.showVrm = !this.showVrm;
+            localStorage.setItem('showVrm', this.showVrm);
+            if (this.showVrm) {
+                // 等待 CSS transition (500ms) 完成后再让 Three.js resize
+                setTimeout(() => {
+                    window.dispatchEvent(new Event('resize'));
+                }, 520);
+            } else {
+                // 隐藏时立即通知布局变化
+                this.$nextTick(() => {
+                    window.dispatchEvent(new Event('resize'));
+                });
             }
         },
 
@@ -865,10 +992,36 @@
 
                     if (m.role === 'user') {
                         lastAssistantMsg = null;
-                        let raw = Array.isArray(m.content)
-                            ? m.content.filter(c => c.type === 'text').map(c => c.text).join(' ')
-                            : (m.content || '');
-                        validMessages.push({ id: `h-${i}`, role: m.role, content: raw });
+                        let displayText = '';
+                        if (Array.isArray(m.content)) {
+                            // Reconstruct a clean display label from multimodal content:
+                            // - image_url blocks → show as "[图片]" placeholder
+                            // - text blocks that look like file content (【文件内容：...】) → show filename only
+                            // - the final plain prompt text → show as-is
+                            const fileParts = [];
+                            let promptText = '';
+                            for (const c of m.content) {
+                                if (c.type === 'image_url') {
+                                    fileParts.push('[图片]');
+                                } else if (c.type === 'text') {
+                                    // File content blocks start with 【文件内容：filename】
+                                    const fileMatch = c.text.match(/^【文件内容：(.+?)】/);
+                                    if (fileMatch) {
+                                        fileParts.push(`[文件: ${fileMatch[1]}]`);
+                                    } else {
+                                        // This is the user's actual prompt (last text block)
+                                        promptText = c.text.trim();
+                                    }
+                                }
+                            }
+                            const parts = [];
+                            if (fileParts.length > 0) parts.push(fileParts.join(' '));
+                            if (promptText) parts.push(promptText);
+                            displayText = parts.join('\n\n') || '(附件)';
+                        } else {
+                            displayText = m.content || '';
+                        }
+                        validMessages.push({ id: `h-${i}`, role: m.role, content: displayText });
                     } else if (m.role === 'assistant') {
                         if (!lastAssistantMsg) {
                             lastAssistantMsg = {
@@ -916,8 +1069,32 @@
                 this.messages = validMessages;
                 this.currentSessionId = sessionId;
                 if (!keepPanel) this.activePanel = 'chat';
+
+                // 使用后端精确估算的 token 数，避免刷新后 context bar 清零
+                if (data.estimated_tokens > 0) this.lastBackendTokens = data.estimated_tokens;
+
                 this.$nextTick(() => this.scrollToBottom());
             } catch { alert('加载对话失败。'); }
+        },
+
+        async deleteSession(sessionId) {
+            if (!confirm('确定永久删除该节点吗？此操作无法撤销。')) return;
+            try {
+                const r = await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+                if (r.ok) {
+                    this.sessions = this.sessions.filter(s => s.id !== sessionId);
+                    if (this.currentSessionId === sessionId) {
+                        this.messages = [];
+                        this.currentSessionId = null;
+                    }
+                    this.pushLog('status', `已销毁节点: ${sessionId}`);
+                } else {
+                    const err = await r.json().catch(() => ({}));
+                    alert(`删除失败: ${err.detail || r.status}`);
+                }
+            } catch (e) {
+                alert(`删除出错: ${e.message}`);
+            }
         },
 
         async loadDiaryDates() {
@@ -937,6 +1114,22 @@
             try {
                 this.personas = await (await fetch('/api/persona')).json();
             } catch { this.personas = {}; }
+        },
+
+        async loadChatModels() {
+            try {
+                const r = await fetch('/api/models/list');
+                const data = await r.json();
+                this.chatModelList = data.models || [];
+            } catch { this.chatModelList = []; }
+        },
+
+        async loadChatAgents() {
+            try {
+                const r = await fetch('/api/agents');
+                const data = await r.json();
+                this.chatAgentList = data.agents || [];
+            } catch { this.chatAgentList = []; }
         },
 
         async loadModels() {
@@ -1275,35 +1468,84 @@
                 if (item.type.startsWith('image/')) {
                     e.preventDefault();
                     const file = item.getAsFile();
-                    if (file) this._setPendingImage(file);
+                    if (file) this._addStagedFile(file);
                     return;
                 }
             }
             // Non-image paste: let the browser handle it normally (text into textarea)
         },
 
-        handleDrop(e) {
+        async handleDrop(e) {
+            e.preventDefault();
             this.isDragOver = false;
-            const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-            if (!file) return;
-            if (file.type.startsWith('image/')) {
-                this._setPendingImage(file);
-            } else {
-                // Non-image file: delegate to sendFile directly
-                this.sendFile(file, this.inputText.trim());
-                this.inputText = '';
-            }
-        },
 
-        _setPendingImage(file) {
-            this.pendingImageFile = file;
-            const reader = new FileReader();
-            reader.onload = (ev) => { this.pendingImage = ev.target.result; };
-            reader.readAsDataURL(file);
+            const dropItems = e.dataTransfer && e.dataTransfer.items;
+            if (!dropItems) return;
+
+            for (const item of dropItems) {
+                if (item.kind === 'file') {
+                    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                    if (entry) {
+                        await this._processEntry(entry);
+                    } else {
+                        const file = item.getAsFile();
+                        if (file) this._addStagedFile(file);
+                    }
+                }
+            }
+
             this.$nextTick(() => {
                 const ta = document.querySelector('textarea');
                 if (ta) ta.focus();
             });
+        },
+
+        // 递归处理文件夹条目
+        async _processEntry(entry) {
+            if (entry.isFile) {
+                return new Promise((resolve) => {
+                    entry.file((file) => {
+                        this._addStagedFile(file);
+                        resolve();
+                    });
+                });
+            } else if (entry.isDirectory) {
+                const dirReader = entry.createReader();
+                return new Promise((resolve) => {
+                    dirReader.readEntries(async (entries) => {
+                        for (let i = 0; i < entries.length; i++) {
+                            await this._processEntry(entries[i]);
+                        }
+                        resolve(); // 全部读完才 resolve
+                    });
+                });
+            }
+        },
+
+        _addStagedFile(file) {
+            // Guard: Optional size limits (e.g. 50MB per file)
+            if (file.size > 50 * 1024 * 1024) {
+                this.pushLog('error', `文件 ${file.name} 超过 50MB 限制。`);
+                return;
+            }
+            // Add file to staging list
+            this.stagedFiles.push(file);
+        },
+
+        removeStagedFile(index) {
+            if (index >= 0 && index < this.stagedFiles.length) {
+                this.stagedFiles.splice(index, 1);
+            }
+        },
+
+        handleFileSelect(e) {
+            const files = e.target.files;
+            if (files) {
+                for (let i = 0; i < files.length; i++) {
+                    this._addStagedFile(files[i]);
+                }
+            }
+            e.target.value = ''; // Reset input so same file can be selected again
         },
 
         // ── Arg / dispatch helpers ─────────────────────────────────────────────
@@ -1336,12 +1578,33 @@
 
         selectCommand(cmd) {
             const rawInput = this.inputText; // capture before clearing
-            this.inputText = '';
             this.showCommandMenu = false;
+
+            // Define which actions are "immediate" (execute without arguments)
+            const immediateActions = ['clear_chat', 'new_session', 'upload_file', 'save_vrm', 'poke_ai', 'clear_sandbox'];
+
+            if (!immediateActions.includes(cmd.action)) {
+                // Interactive shortcuts: just populate input and focus
+                this.inputText = cmd.command.trim() + ' ';
+                this.$nextTick(() => {
+                    const ta = document.querySelector('textarea');
+                    if (ta) {
+                        ta.style.height = 'auto'; // Reset height
+                        ta.focus();
+                        // Move cursor to end
+                        ta.setSelectionRange(this.inputText.length, this.inputText.length);
+                    }
+                });
+                return;
+            }
+
+            // Immediate actions: clear input first
+            this.inputText = '';
             this.$nextTick(() => {
                 const ta = document.querySelector('textarea');
                 if (ta) { ta.style.height = 'auto'; ta.focus(); }
             });
+
             const actions = {
                 // ── 会话管理 ──
                 clear_chat: () => {
@@ -1368,29 +1631,6 @@
                 },
                 save_vrm: () => this.saveVrmConfig(),
 
-                // ── AI 快捷任务 ──
-                send_recall: () => {
-                    const keyword = this._extractArg(cmd.command, rawInput);
-                    if (!keyword) { this._focusInput('请输入搜索关键词，如: /recall 南京'); return; }
-                    this._dispatchToAI(`请帮我搜索长期记忆，关键词：${keyword}`);
-                },
-                send_plan: () => {
-                    this._dispatchToAI('请调用 get_plan_status 工具，告诉我当前活跃任务计划的状态。');
-                },
-                send_weather: () => {
-                    const city = this._extractArg(cmd.command, rawInput);
-                    if (!city) { this._focusInput('请输入城市名，如: /weather 上海'); return; }
-                    this._dispatchToAI(`请查询${city}的当前天气。`);
-                },
-                send_remind: () => {
-                    const content = this._extractArg(cmd.command, rawInput);
-                    if (!content) { this._focusInput('请输入提醒内容，如: /remind 10分钟后喝水'); return; }
-                    this._dispatchToAI(`请帮我设置一个提醒：${content}`);
-                },
-                send_screenshot: () => {
-                    this._dispatchToAI('请调用 get_screenshot 工具截取当前屏幕，然后告诉我你看到了什么。');
-                },
-
                 // ── 系统维护 ──
                 poke_ai: () => {
                     fetch('/api/context/poke', { method: 'POST' })
@@ -1408,21 +1648,25 @@
                         .catch(() => { });
                 },
             };
-            const handler = actions[cmd.action];
-            if (handler) handler();
+
+            if (actions[cmd.action]) {
+                actions[cmd.action]();
+            }
         },
 
         async _onUploadFileSelected(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-            const prompt = '';  // no extra prompt by default
-            await this.sendFile(file, prompt);
+            this.handleFileSelect(e);
         },
 
-        async sendFile(file, prompt = '') {
+        async sendFiles(files, prompt = '') {
             if (this.isReceiving) return;
-            const label = prompt ? `${file.name}：${prompt}` : file.name;
-            this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: `[上传文件] ${label}` });
+            if (!files || files.length === 0) return;
+
+            const fileNames = files.map(f => f.name).join(', ');
+            let label = `[附件 ${files.length} 个] ${fileNames}`;
+            if (prompt) label += `\n\n${prompt}`;
+
+            this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: label });
             this.scrollToBottom();
 
             const aiId = 'a-' + Date.now();
@@ -1432,7 +1676,9 @@
 
             try {
                 const formData = new FormData();
-                formData.append('file', file);
+                for (let i = 0; i < files.length; i++) {
+                    formData.append('files', files[i]);
+                }
                 if (prompt) formData.append('prompt', prompt);
 
                 this.currentController = new AbortController();
@@ -1460,6 +1706,42 @@
                             const idx = this.messages.findIndex(m => m.id === aiId);
                             if (ev.type === 'status') {
                                 this.pushLog('status', ev.content || '');
+                            } else if (ev.type === 'tool_call') {
+                                const paramStr = ev.params ? JSON.stringify(ev.params, null, 2) : '';
+                                this.pushLog('tool_call', `${ev.name}(${paramStr})`);
+                                if (idx !== -1) {
+                                    const m = this.messages[idx];
+                                    if (!m._streaming) { m._streaming = true; m.content = ''; m.blocks = []; }
+                                    if (!m.blocks) m.blocks = [];
+                                    m._isThinking = true;
+                                    m.blocks.push({ type: 'tool', id: ev.id, name: ev.name, paramsStr: paramStr, status: 'running', _collapsed: false });
+                                    this.scrollToBottom();
+                                }
+                            } else if (ev.type === 'ask_user_interrupt') {
+                                this.pushLog('tool_call', `ask_user: ${ev.question}`);
+                                if (idx !== -1) {
+                                    const m = this.messages[idx];
+                                    if (!m._streaming) { m._streaming = true; m.content = ''; m.blocks = []; }
+                                    if (!m.blocks) m.blocks = [];
+                                    m._isThinking = false;
+                                    const options = (ev.options || []).map((opt, i) => ({
+                                        id: typeof opt === 'object' ? (opt.id || String(i)) : String(i),
+                                        label: typeof opt === 'object' ? (opt.label || opt.text || String(opt)) : String(opt)
+                                    }));
+                                    m.blocks.push({ type: 'ask_user', question: ev.question || '请选择：', options, answered: false });
+                                    this.scrollToBottom();
+                                }
+                            } else if (ev.type === 'tool_result') {
+                                this.pushLog('tool_result', `${ev.name} → ${ev.result || ''}`);
+                                if (idx !== -1) {
+                                    const m = this.messages[idx];
+                                    if (m.blocks) {
+                                        const tc = m.blocks.find(t => t.type === 'tool' && t.id === ev.id);
+                                        if (tc) { tc.status = 'done'; tc.resultStr = ev.result || ''; tc._collapsed = true; }
+                                        m._isThinking = m.blocks.some(b => b.type === 'tool' && b.status === 'running');
+                                    }
+                                    this.scrollToBottom();
+                                }
                             } else if (ev.type === 'message_chunk') {
                                 if (idx !== -1) {
                                     const m = this.messages[idx];
@@ -1475,7 +1757,21 @@
                                     this.scrollToBottom();
                                 }
                             } else if (ev.type === 'message') {
-                                // finalize
+                                if (idx !== -1) {
+                                    const m = this.messages[idx];
+                                    m._isThinking = false;
+                                    delete m._streaming;
+                                    if (!m.blocks) m.blocks = [];
+                                    const hasText = m.blocks.some(b => b.type === 'text' && b.content?.trim());
+                                    const hasTool = m.blocks.some(b => b.type === 'tool');
+                                    if (!hasText && hasTool) m.blocks.push({ type: 'status_done' });
+                                    this.scrollToBottom();
+                                }
+                            } else if (ev.type === 'usage') {
+                                if (ev.content && typeof ev.content === 'object') {
+                                    this.lastBackendTokens = ev.content.total_tokens || this.lastBackendTokens;
+                                    this.lastMaxTokens = ev.content.max_tokens || this.lastMaxTokens;
+                                }
                             } else if (ev.type === 'error') {
                                 this.pushLog('error', ev.content || '');
                                 if (idx !== -1) this.messages[idx].content = `<span class="text-red-400 text-xs">⚠ ${ev.content}</span>`;
@@ -1496,14 +1792,16 @@
         },
 
         async sendMessage(isProactive = false) {
-            // If an image is staged, send it via the upload endpoint instead
-            if (this.pendingImageFile && !isProactive) {
-                const file = this.pendingImageFile;
+            // Check if there are staged files to send
+            if (this.stagedFiles.length > 0 && !isProactive) {
+                const filesToSend = [...this.stagedFiles];
                 const prompt = this.inputText.trim();
-                this.pendingImage = null;
-                this.pendingImageFile = null;
+
+                // Clear inputs immediately
+                this.stagedFiles = [];
                 this.inputText = '';
-                await this.sendFile(file, prompt);
+
+                await this.sendFiles(filesToSend, prompt);
                 return;
             }
 
@@ -1527,7 +1825,11 @@
                 const response = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text }),
+                    body: JSON.stringify({
+                        message: text,
+                        ...(this.chatModel ? { model: this.chatModel } : {}),
+                        ...(this.chatAgent ? { agent_id: this.chatAgent.id } : {}),
+                    }),
                     signal: this.currentController.signal
                 });
                 const reader = response.body.getReader();
@@ -1561,7 +1863,23 @@
                                     const m = this.messages[idx];
                                     if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
                                     if (!m.blocks) m.blocks = [];
+                                    m._isThinking = true;
                                     m.blocks.push({ type: 'tool', id: ev.id, name: ev.name, paramsStr: paramStr, status: 'running', _collapsed: false });
+                                    this.scrollToBottom();
+                                }
+                            } else if (ev.type === 'ask_user_interrupt') {
+                                // 后端专用事件：ask_user 工具触发，渲染交互式选项块
+                                this.pushLog('tool_call', `ask_user: ${ev.question}`);
+                                if (idx !== -1) {
+                                    const m = this.messages[idx];
+                                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
+                                    if (!m.blocks) m.blocks = [];
+                                    m._isThinking = false;
+                                    const options = (ev.options || []).map((opt, i) => ({
+                                        id: typeof opt === 'object' ? (opt.id || String(i)) : String(i),
+                                        label: typeof opt === 'object' ? (opt.label || opt.text || String(opt)) : String(opt)
+                                    }));
+                                    m.blocks.push({ type: 'ask_user', question: ev.question || '请选择：', options, answered: false });
                                     this.scrollToBottom();
                                 }
                             } else if (ev.type === 'tool_result') {
@@ -1571,6 +1889,8 @@
                                     if (m.blocks) {
                                         const tc = m.blocks.find(t => t.type === 'tool' && t.id === ev.id);
                                         if (tc) { tc.status = 'done'; tc.resultStr = ev.result || ''; tc._collapsed = true; }
+                                        // Still thinking if any tool is still running
+                                        m._isThinking = m.blocks.some(b => b.type === 'tool' && b.status === 'running');
                                     }
                                     this.scrollToBottom();
                                 }
@@ -1620,12 +1940,28 @@
 
                                 if (idx !== -1) {
                                     const m = this.messages[idx];
+                                    m._isThinking = false;
                                     delete m._streaming;
                                     delete m._rawContent;
+                                    // If agent only called tools without any text output, show a done status block
+                                    if (!m.blocks) m.blocks = [];
+                                    const hasText = m.blocks.some(b => b.type === 'text' && b.content && b.content.trim());
+                                    const hasTool = m.blocks.some(b => b.type === 'tool');
+                                    if (!hasText && hasTool) {
+                                        m.blocks.push({ type: 'status_done' });
+                                    } else if (!hasText && !hasTool) {
+                                        // pure empty response fallback
+                                        m.blocks.push({ type: 'status_done' });
+                                    }
                                     this.scrollToBottom();
                                 }
                             } else if (ev.type === 'system') {
                                 this.pushLog('system', ev.text || '');
+                            } else if (ev.type === 'usage') {
+                                if (ev.content && typeof ev.content === 'object') {
+                                    this.lastBackendTokens = ev.content.total_tokens || this.lastBackendTokens;
+                                    this.lastMaxTokens = ev.content.max_tokens || this.lastMaxTokens;
+                                }
                             } else if (ev.type === 'error') {
                                 this.pushLog('error', ev.content || '');
                                 if (idx !== -1) {
@@ -1680,6 +2016,17 @@
                 const c = document.getElementById('chat-container');
                 if (c) c.scrollTop = c.scrollHeight;
             });
+        },
+
+        // 处理 ask_user 选项点击：标记已回答，并将选择作为用户消息发送给 AI
+        async submitAskUserChoice(msg, block, opt) {
+            if (block.answered) return;
+            block.answered = true;
+            block.resultStr = opt.label;
+
+            // 将用户选择作为新消息发送
+            this.inputText = opt.label;
+            await this.sendMessage();
         },
 
         // ═══════════════ Scheduler Management ═══════════════
@@ -1960,16 +2307,23 @@
 
         async toggleSkill(name, enabled) {
             try {
+                // find the skill to get its tools list and registry_category
+                const skill = this.skills.find(s => s.name === name);
+                const payload = {
+                    name: skill?.registry_category || name,
+                    enabled,
+                    tools: skill?.tools || []
+                };
                 const response = await fetch('/api/skills/toggle', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, enabled })
+                    body: JSON.stringify(payload)
                 });
 
                 if (response.ok) {
-                    const skill = this.skills.find(s => s.name === name);
-                    if (skill) {
-                        skill.enabled = enabled;
+                    const skillObj = this.skills.find(s => s.name === name);
+                    if (skillObj) {
+                        skillObj.enabled = enabled;
                     }
                     this.pushLog('success', `技能 ${name} 已${enabled ? '启用' : '禁用'}`);
                 } else {
@@ -2047,17 +2401,24 @@
             try {
                 const res = await fetch('/api/skills/marketplace?q=' + encodeURIComponent(q || 'agent'));
                 const data = await res.json();
-                this.skillMarketplace = data.skills || [];
+                if (data.error) {
+                    this.skillInstallMsg = { type: 'error', text: '同步失败: ' + data.error };
+                    this.skillMarketplace = [];
+                } else {
+                    this.skillMarketplace = data.skills || [];
+                }
             } catch (e) {
-                this.skillInstallMsg = { type: 'error', text: '加载失败: ' + e.message };
+                this.skillInstallMsg = { type: 'error', text: '网络请求异常: ' + e.message };
+                this.skillMarketplace = [];
             } finally {
                 this.skillMarketLoading = false;
             }
         },
 
-        async installSkillFromUrl(url) {
+        async installSkillFromUrl(url, skillId = null) {
             if (!url.trim()) return;
             this.skillInstallMsg = null;
+            if (skillId) this.skillInstallingId = skillId;
             try {
                 const res = await fetch('/api/skills/install', {
                     method: 'POST',
@@ -2070,6 +2431,8 @@
                 await this.reloadSkills();
             } catch (e) {
                 this.skillInstallMsg = { type: 'error', text: e.message };
+            } finally {
+                this.skillInstallingId = null;
             }
         },
 
@@ -2132,6 +2495,18 @@
                 groups[cat].push(skill);
             }
             return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+        },
+
+        isSkillExpanded(name) {
+            return this.expandedSkills.includes(name);
+        },
+
+        toggleSkillExpand(name) {
+            if (this.isSkillExpanded(name)) {
+                this.expandedSkills = this.expandedSkills.filter(n => n !== name);
+            } else {
+                this.expandedSkills.push(name);
+            }
         }
     };
 }

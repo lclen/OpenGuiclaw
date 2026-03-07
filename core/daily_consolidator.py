@@ -43,8 +43,8 @@ class DailyConsolidator:
             date_str = time.strftime("%Y-%m-%d")
         return not (self.report_dir / f"consolidation_{date_str}.json").exists()
 
-    def _summarize_journal(self, date_str: str) -> str:
-        """Call LLM to summarize the day's journal into ≤800 chars."""
+    def _extract_daily_experience(self, date_str: str) -> str:
+        """Call LLM to extract one key learned experience from the day's journal."""
         content = self.journal.read_day(date_str)
         if not content or not content.strip():
             return ""
@@ -54,15 +54,16 @@ class DailyConsolidator:
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个助手，请将以下日志内容总结为不超过800字的摘要，保留关键事件和结论。",
+                        "content": "提取今天日志中最重要的一条技术经验、错误教训或项目进展结论。用一句话精炼总结（不超过50字）。如果没有值得记录的，请回复'无'。",
                     },
                     {"role": "user", "content": content[:4000]},
                 ],
-                max_tokens=600,
+                max_tokens=100,
             )
-            return resp.choices[0].message.content.strip()
+            res = resp.choices[0].message.content.strip()
+            return "" if res == "无" else res
         except Exception as e:
-            print(f"[DailyConsolidator] LLM 摘要失败: {e}")
+            print(f"[DailyConsolidator] LLM 提取经验失败: {e}")
             return ""
 
     def _promote_memories(self) -> int:
@@ -209,11 +210,11 @@ class DailyConsolidator:
             "deduplicated": 0,
         }
 
-        # Step 1: Summarize journal → MEMORY.md
-        summary = self._summarize_journal(date_str)
-        if summary:
-            self.identity.write_memory(summary)
-            stats["summary_chars"] = len(summary)
+        # Step 1: Extract daily insight → scene_memory.jsonl
+        insight = self._extract_daily_experience(date_str)
+        if insight:
+            self.memory.add(insight, tags=["daily_insight", f"date:{date_str}"], type="experience", source="daily_consolidator")
+            stats["summary_chars"] = len(insight)
 
         # Step 2: Promote high-confidence memories
         stats["promoted"] = self._promote_memories()

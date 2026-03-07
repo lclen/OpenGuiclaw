@@ -358,10 +358,7 @@ class VRMCore {
             throw new Error(errorMsg);
         }
 
-        this.manager.container.style.display = 'block';
-        this.manager.container.style.visibility = 'visible';
-        this.manager.container.style.opacity = '1';
-        this.manager.container.style.setProperty('pointer-events', 'auto', 'important');
+        // Note: do NOT force display/visibility here — Alpine.js controls container visibility
 
         this.manager.clock = new THREE.Clock();
         this.manager.scene = new THREE.Scene();

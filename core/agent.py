@@ -27,8 +27,7 @@ from core.identity_manager import IdentityManager
 from core.daily_consolidator import DailyConsolidator
 import time
 import threading
-
-
+from datetime import datetime, timezone
 
 BUILTIN_SYSTEM_SUFFIX_BASE = """
 ---
@@ -99,12 +98,29 @@ class Agent:
             self.config = json.load(f)
         self.auto_evolve = auto_evolve
 
-        api_cfg = self.config["api"]
+        # Load main API config from active chat endpoint first
+        api_cfg = None
+        active_id = self.config.get("active_chat_endpoint_id")
+        endpoints = self.config.get("chat_endpoints", [])
+        if active_id and endpoints:
+            for ep in endpoints:
+                if ep.get("id") == active_id:
+                    api_cfg = ep
+                    break
+        
+        # Fallback to legacy "api" block if not found
+        if not api_cfg:
+            api_cfg = self.config.get("api", {})
+
         self.client = OpenAI(
-            base_url=api_cfg["base_url"],
-            api_key=api_cfg["api_key"],
+            base_url=api_cfg.get("base_url", ""),
+            api_key=api_cfg.get("api_key", ""),
         )
         self.model = api_cfg.get("model", "qwen-max") # Default to qwen-max if not specified
+        # Only pass enable_search for Qwen/DashScope endpoints
+        self._qwen_search_enabled = "dashscope" in api_cfg.get("base_url", "").lower() or \
+                                    "aliyun" in api_cfg.get("base_url", "").lower() or \
+                                    "qwen" in api_cfg.get("model", "").lower()
         
         # Scheduled vision model (for screen auto-analysis) -> reads from 'vision' section
         vision_cfg = self.config.get("vision", {})
@@ -247,6 +263,9 @@ class Agent:
             data_dir=data_dir,
         )
 
+        # 从 config 读取日记开关（默认 True，向后兼容）
+        _diary_enabled = self.config.get("journal", {}).get("enable_diary", True)
+
         self.evolution = SelfEvolution(
             self.client, self.evolution_model, self.memory, self.journal,
             persona_path=self.persona_path,
@@ -257,6 +276,7 @@ class Agent:
             diary_index=self.diary_index,
             identity=self.identity,
             daily_consolidator=self.daily_consolidator,
+            diary_enabled=_diary_enabled,
         )
         self.evolution._agentic_exploration_enabled = (
             self.config.get("proactive", {}).get("agentic_exploration", False)
@@ -305,7 +325,7 @@ class Agent:
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS token_usage (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
+                        timestamp TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now')),
                         model TEXT,
                         prompt_tokens INTEGER DEFAULT 0,
                         completion_tokens INTEGER DEFAULT 0,
@@ -390,14 +410,17 @@ class Agent:
         p = getattr(usage, "prompt_tokens", 0) or 0
         c = getattr(usage, "completion_tokens", 0) or 0
         t = getattr(usage, "total_tokens", 0) or (p + c)
+        
+        now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        
         # Write to DB (best-effort)
         try:
             with self._token_db_lock:
                 with sqlite3.connect(self._token_db_path) as conn:
                     conn.execute(
-                        "INSERT INTO token_usage (model, prompt_tokens, completion_tokens, total_tokens) "
-                        "VALUES (?, ?, ?, ?)",
-                        (model, p, c, t),
+                        "INSERT INTO token_usage (timestamp, model, prompt_tokens, completion_tokens, total_tokens) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (now_utc_str, model, p, c, t),
                     )
         except Exception as e:
             print(f"  [WARN] token DB 写入失败: {e}")
@@ -987,7 +1010,11 @@ class Agent:
             wrapper_code += f'    )\n'
             wrapper_code += f'    def remote_cli_runner(command: str) -> str:\n'
             wrapper_code += f'        try:\n'
-            wrapper_code += f'            res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)\n'
+            wrapper_code += f'            import os\n'
+            wrapper_code += f'            kwargs = {{}}\n'
+            wrapper_code += f'            if os.name == "nt":\n'
+            wrapper_code += f'                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW\n'
+            wrapper_code += f'            res = subprocess.run(command, shell=True, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120, **kwargs)\n'
             wrapper_code += f'            return res.stdout or f"报错: {{res.stderr}}"\n'
             wrapper_code += f'        except Exception as e:\n'
             wrapper_code += f'            return str(e)\n'
@@ -1006,27 +1033,31 @@ class Agent:
         """
         module.register(self.skills)
 
-    def _build_system_prompt(self, user_query: str = "") -> str:
+    def _build_system_prompt(self, user_query: str = "", system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive") -> str:
         """Build the full system prompt: Persona + User Profile + Dynamic Memory + Skill Summary."""
         import time
         current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
         weekday_str = time.strftime("%A")
         time_awareness = f"# 当前系统时间\n现在是 {current_time_str}，星期{weekday_str}。请在理解用户的“今天”、“昨天”等相对时间概念时，以此时间为基准。"
 
-        parts = [time_awareness, self.persona]
+        parts = [time_awareness]
+
+        # Base identity / custom prompt override
+        if system_prompt_override:
+            parts.append(f"# 身份设定\n{system_prompt_override}")
+        elif hasattr(self, "identity") and self.identity is not None:
+            profile_ctx = self.identity.build_prompt()
+            if profile_ctx:
+                parts.append(profile_ctx)
+        else:
+            profile_ctx = self.user_profile.build_prompt()
+            if profile_ctx:
+                parts.append(profile_ctx)
 
         # Inject Global Interaction Habits
         self._load_habits()  # Refresh before building prompt in case it was evolved
         if self.interaction_habits.strip():
             parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
-
-        # 注入用户档案（优先走 IdentityManager，回退到 UserProfileManager）
-        if hasattr(self, "identity") and self.identity is not None:
-            profile_ctx = self.identity.build_prompt()
-        else:
-            profile_ctx = self.user_profile.build_prompt()
-        if profile_ctx:
-            parts.append(profile_ctx)
 
         # Dynamic Memory Injection (Top-K related memories based on user query)
         if user_query and self.memory._vector_store:
@@ -1076,9 +1107,12 @@ class Agent:
         except Exception:
             pass
 
-        # Inject skill list
-        skill_summary = self.skills.summary()
-        parts.append(f"# 可用技能 (Skills)\n{skill_summary}")
+        # Inject skill list, filtered by agent profile
+        skill_summary = self.skills.summary(allowed_skills=allowed_skills, skills_mode=skills_mode)
+        skill_prompt = f"# 可用技能 (Skills)\n{skill_summary}"
+        if "[✨优先核心技能]" in skill_summary:
+            skill_prompt = f"> 💡 **重要说明**：当前你拥有以上全部工具的访问权限，但在你的智能体设定中，带有 `[✨优先核心技能]` 标记的工具是你最擅长、也最应该被首选的核心能力，请在解决问题时优先向它们倾斜。\n\n" + skill_prompt
+        parts.append(skill_prompt)
 
         # Inject local SKILL.md catalog so the model can self-navigate to detailed docs
         if self._local_skills_catalog:
@@ -1104,13 +1138,18 @@ class Agent:
         parts.append(_build_builtin_suffix())
         return "\n\n---\n\n".join(parts)
 
-    def chat(self, user_input: str) -> str:
+    def chat(self, user_input: str, system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive") -> str:
         """
         Process a single user turn.
         Supports multi-step tool calling.
         """
         session = self.sessions.current
-        system_prompt = self._build_system_prompt(user_input)
+        system_prompt = self._build_system_prompt(
+            user_input, 
+            system_prompt_override=system_prompt_override,
+            allowed_skills=allowed_skills, 
+            skills_mode=skills_mode
+        )
 
         # Notify context manager that user replied (resets cooldown)
         if self.context is not None:
@@ -1123,7 +1162,7 @@ class Agent:
         messages.extend(session.get_history())
         messages.append({"role": "user", "content": user_input})
 
-        tools = self.skills.get_tool_definitions()
+        tools = self.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
         
         max_tool_rounds = 15
         # 如果有活跃的计划，放宽工具调用轮次上限，让自驾模式能一口气跑完
@@ -1237,8 +1276,20 @@ class Agent:
             # Normal chat flow
             messages.extend(history)
             messages.append({"role": "user", "content": user_input})
-            # Add user message to session persistence immediately
-            session.add_message("user", user_input)
+            # Persist user message — strip embedded file contents to keep session compact.
+            if isinstance(user_input, list):
+                text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
+                has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
+                user_text = "".join(text_parts).strip()
+                summary = (f"[图片] {user_text}" if user_text else "[图片]") if has_image else (user_text or "（非文本内容）")
+                session.add_message("user", summary)
+            elif isinstance(user_input, str):
+                import re as _re
+                cleaned = _re.sub(r'【文件内容：[^】]+】\n```[^\n]*\n.*?```\n*', '', user_input, flags=_re.DOTALL)
+                cleaned = _re.sub(r'【附件：[^】]+】\n*', '', cleaned).strip()
+                session.add_message("user", cleaned or user_input)
+            else:
+                session.add_message("user", user_input)
             self.sessions.save()
 
         # --- Checkpoint/Rollback state ---
@@ -1283,7 +1334,7 @@ class Agent:
                 tool_choice="auto" if tools else None,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                extra_body={"enable_search": True},  # Qwen built-in web search
+                **({"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}),
             )
             self._record_usage(getattr(response, "usage", None), current_model)
 
@@ -1458,7 +1509,7 @@ class Agent:
 
         return final_response
 
-    async def chat_stream(self, user_input: str):
+    async def chat_stream(self, user_input: str, system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive"):
         """
         Stream a single user turn using an async generator.
         Yields dictionaries suitable for SSE containing state updates and Markdown text.
@@ -1467,7 +1518,12 @@ class Agent:
         import json
         
         session = self.sessions.current
-        system_prompt = self._build_system_prompt(user_input)
+        system_prompt = self._build_system_prompt(
+            user_input, 
+            system_prompt_override=system_prompt_override,
+            allowed_skills=allowed_skills, 
+            skills_mode=skills_mode
+        )
 
         if self.context is not None:
             self.context.notify_user_replied()
@@ -1476,7 +1532,9 @@ class Agent:
             {"role": "system", "content": system_prompt}
         ]
         # --- Ask User Intercept ---
-        history = session.get_history()
+        # Limit history to recent turns to control token usage.
+        # Tool-call chains grow fast; 40 messages covers ~10 rounds of tool use.
+        history = session.get_history(max_messages=40)
         pending_ask_user_id = None
         
         # Scan backward to find the last assistant message
@@ -1525,8 +1583,8 @@ class Agent:
             messages.extend(history)
             messages.append({"role": "user", "content": user_input})
             
-            # Persist user message — for multimodal input, store a text-only summary
-            # to avoid bloating the session JSON with base64 image data.
+            # Persist user message — store a compact summary to avoid bloating
+            # the session JSON with base64 image data or full file contents.
             if isinstance(user_input, list):
                 text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
                 has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
@@ -1536,11 +1594,25 @@ class Agent:
                 else:
                     summary = user_text or "（非文本内容）"
                 session.add_message("user", summary)
+            elif isinstance(user_input, str):
+                # Strip embedded file contents (【文件内容：filename】\n```...```\n\n)
+                # keeping only the user's actual prompt at the end.
+                import re as _re
+                cleaned = _re.sub(
+                    r'【文件内容：[^】]+】\n```[^\n]*\n.*?```\n*',
+                    '',
+                    user_input,
+                    flags=_re.DOTALL,
+                )
+                # Also strip attachment-only placeholders like 【附件：filename (...)】
+                cleaned = _re.sub(r'【附件：[^】]+】\n*', '', cleaned)
+                cleaned = cleaned.strip()
+                session.add_message("user", cleaned or user_input)
             else:
                 session.add_message("user", user_input)
             self.sessions.save()
 
-        tools = self.skills.get_tool_definitions()
+        tools = self.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
         
         max_tool_rounds = 15
         try:
@@ -1626,6 +1698,10 @@ class Agent:
         _MAX_ROLLBACKS = 2
         _CONSEC_FAIL_THRESHOLD = 3
 
+        # Cumulative token accumulators for multi-round tool-call loops.
+        _accum_prompt_tokens: int = 0
+        _accum_completion_tokens: int = 0
+
         def _save_checkpoint(msgs: list, tool_names: list) -> None:
             _checkpoints.append((_copy.deepcopy(msgs), list(tool_names)))
             if len(_checkpoints) > _MAX_CHECKPOINTS:
@@ -1649,6 +1725,31 @@ class Agent:
             })
             return restored
 
+        # --- Tool result compression ---
+        # After each round, compress old tool results in messages to reduce token usage.
+        # Only tool messages beyond the last N rounds are compressed.
+        _TOOL_RESULT_KEEP_FULL = 2      # keep last N rounds of tool results at full length
+        _TOOL_RESULT_COMPRESS_AT = 800  # compress results longer than this many chars
+
+        def _compress_old_tool_results(msgs: list) -> None:
+            """Replace oversized tool results in early rounds with a short summary."""
+            # Find indices of all tool messages
+            tool_indices = [i for i, m in enumerate(msgs) if m.get("role") == "tool"]
+            # Keep the last N rounds' worth of tool messages intact
+            compress_up_to = len(tool_indices) - _TOOL_RESULT_KEEP_FULL
+            if compress_up_to <= 0:
+                return
+            for idx in tool_indices[:compress_up_to]:
+                content = msgs[idx].get("content", "")
+                if isinstance(content, str) and len(content) > _TOOL_RESULT_COMPRESS_AT:
+                    # Keep first 200 chars as preview
+                    preview = content[:200].rstrip()
+                    msgs[idx] = dict(msgs[idx])  # shallow copy to avoid mutating original
+                    msgs[idx]["content"] = f"{preview}\n...[已压缩，原始长度 {len(content)} 字符]"
+
+        _accum_prompt_tokens = 0
+        _accum_completion_tokens = 0
+
         for round_idx in range(max_tool_rounds):
             yield _yield_event({"type": "status", "content": "思考中..."})
             
@@ -1664,7 +1765,7 @@ class Agent:
                         tool_choice="auto" if tools else None,
                         max_tokens=self.max_tokens,
                         temperature=self.temperature,
-                        extra_body={"enable_search": True},
+                        **({"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}),
                         stream=False, # Disable streaming
                     )
                 )
@@ -1683,6 +1784,29 @@ class Agent:
                 continue
 
             self._record_usage(getattr(response, "usage", None), current_model)
+            
+            # Accumulate token usage across all tool rounds for accurate context display.
+            # Each round's prompt_tokens already includes all previous context, so we take
+            # the LATEST prompt_tokens (largest, most accurate) but ADD incremental completion_tokens.
+            if hasattr(response, "usage") and response.usage:
+                _u = response.usage
+                _cur_prompt = getattr(_u, "prompt_tokens", 0)
+                _cur_comp   = getattr(_u, "completion_tokens", 0)
+                # Always use the largest prompt_tokens (latest round has fullest context)
+                if _cur_prompt > _accum_prompt_tokens:
+                    _accum_prompt_tokens = _cur_prompt
+                # Accumulate completion tokens across all rounds
+                _accum_completion_tokens += _cur_comp
+                # Emit cumulative usage so the frontend always shows the running total
+                yield _yield_event({
+                    "type": "usage",
+                    "content": {
+                        "prompt_tokens": _accum_prompt_tokens,
+                        "completion_tokens": _accum_completion_tokens,
+                        "total_tokens": _accum_prompt_tokens + _accum_completion_tokens,
+                        "max_tokens": self.context_window
+                    }
+                })
 
             # Process Process Non-Streaming Response
             msg = response.choices[0].message
@@ -1848,6 +1972,9 @@ class Agent:
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
+
+                # Compress old tool results to reduce token usage in subsequent rounds
+                _compress_old_tool_results(messages)
                     
                 continue
 
@@ -1950,14 +2077,25 @@ class Agent:
         On startup, check recent days for un-processed journals or chat sessions.
         """
         from datetime import datetime, timedelta
+        from pathlib import Path
 
         today = datetime.now().strftime("%Y-%m-%d")
         # Look back up to 7 days
         for days_back in range(1, 8):
             check_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
             
-            # If a diary already exists, this day was fully completed.
-            if self.diary.has_diary(check_date):
+            # Check if this day was already fully processed.
+            # evolution_done marker is written only after ALL steps complete,
+            # so a mid-run crash won't be mistaken for "already done".
+            # Fall back to diary/consolidation checks for backward compatibility
+            # (older runs that predate the marker file).
+            evolution_done = self.evolution.is_evolution_done(check_date)
+            diary_done = self.diary.has_diary(check_date)
+            consolidation_done = (
+                self.evolution.daily_consolidator is not None
+                and not self.evolution.daily_consolidator.should_run(check_date)
+            )
+            if evolution_done or diary_done or consolidation_done:
                 # We assume earlier days were also processed.
                 break
 

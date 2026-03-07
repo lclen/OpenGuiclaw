@@ -87,6 +87,10 @@
         "enabled": true,
         "config_values": {}
     },
+    "execute_command": {
+        "enabled": true,
+        "config_values": {}
+    },
     "read_file": {
         "enabled": true,
         "config_values": {}
@@ -143,7 +147,31 @@
         "enabled": true,
         "config_values": {}
     },
+    "browser_screenshot": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "browser_eval": {
+        "enabled": true,
+        "config_values": {}
+    },
     "browser_close": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "list_directory": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "search_file": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "copy_path": {
+        "enabled": true,
+        "config_values": {}
+    },
+    "create_directory": {
         "enabled": true,
         "config_values": {}
     },
@@ -200,10 +228,6 @@
         "config_values": {}
     },
     "create_plugin": {
-        "enabled": true,
-        "config_values": {}
-    },
-    "execute_command": {
         "enabled": true,
         "config_values": {}
     },

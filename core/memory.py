@@ -112,8 +112,8 @@ class MemoryManager:
         If vector search is available, generates and stores embedding.
         """
         with self._lock:
-            # Truncate content to 300 chars
-            content = content.strip()[:300]
+            # Increased content limit: 1200 chars as per user request
+            content = content.strip()[:1200]
 
             normalized = " ".join(content.lower().split())
             for mem in self._memories:
@@ -253,6 +253,14 @@ class MemoryManager:
                         print(f"[Memory] Vector update failed: {e}")
                 return True
         return False
+
+    def clear_all(self) -> None:
+        """Wipe all memories (use with caution)."""
+        with self._lock:
+            self._memories = []
+            self._rewrite_file()
+            if self._vector_store:
+                self._vector_store.clear()
 
     def _rewrite_file(self) -> None:
         """Rewrite the entire JSONL file (used after deletion or update)."""

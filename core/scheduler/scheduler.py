@@ -53,6 +53,7 @@ class TaskScheduler:
         self._scheduler_task: asyncio.Task | None = None
         self._running_tasks: set[str] = set()
         self._semaphore: asyncio.Semaphore | None = None
+        self._paused = False
 
         self._load_tasks()
 
@@ -76,7 +77,7 @@ class TaskScheduler:
                     self._recalculate_missed_run(task, now)
 
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
-        logger.info(f"TaskScheduler started with {len(self._tasks)} tasks")
+        logger.info(f"TaskScheduler started with {len(self._tasks)} tasks (paused={self._paused})")
 
     async def stop(self) -> None:
         """停止调度器"""
@@ -93,6 +94,27 @@ class TaskScheduler:
 
         self._save_tasks()
         logger.info("TaskScheduler stopped")
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    async def pause(self) -> None:
+        """暂停所有自动化任务执行"""
+        self._paused = True
+        self._save_tasks()
+        logger.info("TaskScheduler PAUSED")
+
+    async def resume(self) -> None:
+        """恢复自动化任务执行"""
+        self._paused = False
+        # Recalculate next runs for tasks that might have missed their schedule while paused
+        now = datetime.now()
+        for task in self._tasks.values():
+            if task.enabled and task.next_run and task.next_run < now:
+                self._recalculate_missed_run(task, now)
+        self._save_tasks()
+        logger.info("TaskScheduler RESUMED")
 
     async def add_task(self, task: ScheduledTask) -> str:
         """添加任务"""
@@ -174,6 +196,7 @@ class TaskScheduler:
             return True
         return False
 
+
     def get_task(self, task_id: str) -> ScheduledTask | None:
         """获取任务"""
         return self._tasks.get(task_id)
@@ -199,6 +222,11 @@ class TaskScheduler:
         while self._running:
             try:
                 now = datetime.now()
+                # Skip triggering if paused
+                if self._paused:
+                    await asyncio.sleep(self.check_interval)
+                    continue
+
                 for task_id, task in list(self._tasks.items()):
                     if not task.is_active:
                         continue
@@ -231,6 +259,7 @@ class TaskScheduler:
         """执行任务"""
         logger.info(f"Executing task: {task.id} ({task.name})")
         task.mark_running()
+        self._save_tasks()
 
         try:
             success = True
@@ -332,6 +361,7 @@ class TaskScheduler:
         return False
 
     def _load_tasks(self) -> None:
+        self._load_meta()
         tasks_file = self.storage_path / "scheduler_tasks.json"
 
         if not tasks_file.exists():
@@ -357,9 +387,34 @@ class TaskScheduler:
             logger.error(f"Failed to load tasks: {e}")
 
     def _save_tasks(self) -> None:
+        self._save_meta()
         tasks_file = self.storage_path / "scheduler_tasks.json"
         try:
             data = [task.to_dict() for task in self._tasks.values()]
             self._atomic_write_json(tasks_file, data)
+            
+            try:
+                from core.state import _ctx_event_queue
+                _ctx_event_queue.put({"type": "scheduler_updated"})
+            except ImportError:
+                pass
         except Exception as e:
             logger.error(f"Failed to save tasks: {e}")
+    def _load_meta(self) -> None:
+        """Load scheduler-wide settings."""
+        meta_file = self.storage_path / "scheduler_meta.json"
+        if meta_file.exists():
+            try:
+                with open(meta_file, encoding="utf-8") as f:
+                    meta = json.load(f)
+                    self._paused = meta.get("paused", False)
+            except Exception as e:
+                logger.error(f"Failed to load scheduler meta: {e}")
+
+    def _save_meta(self) -> None:
+        """Save scheduler-wide settings."""
+        meta_file = self.storage_path / "scheduler_meta.json"
+        try:
+            self._atomic_write_json(meta_file, {"paused": self._paused})
+        except Exception as e:
+            logger.error(f"Failed to save scheduler meta: {e}")

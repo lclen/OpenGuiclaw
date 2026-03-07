@@ -79,11 +79,15 @@ EXTRACTION_PROMPT = """\
 RELATION_PROMPT = """\
 你是一个实体关系提取助手。请从以下日志中提取**明确的实体关系三元组**。
 
-规则：
-- 只提取真实、具体的关系（人物、地点、工具、项目之间的关联）。
+规则（非常严格）：
+- 目标：只提取长期的、固有的、真实具体的实体间关系（如人物、地点、公司、框架、项目之间的客观关联）。
 - 格式：subject（主语）、relation（关系/谓语）、object（宾语）。
-- 例如：{{"subject": "张三", "relation": "是...的导师", "object": "李四"}}
-- 忽略模糊、推测性的关系。
+- 例子：{{"subject": "张三", "relation": "是...的导师", "object": "李四"}}, {{"subject": "Qwen", "relation": "是", "object": "语言模型"}}。
+- 禁忌（绝对不能提取的内容）：
+  ❌ 任何与工具调用、命令执行、程序运行状态相关的瞬时动作（如“AI 调用 msedge”，“Edge 浏览器加载页面”，“系统收集记忆”，“用户要求打开 B 站”等）。
+  ❌ 任何具体的对话行为（如“用户发送指令”，“AI 回复”）。
+  ❌ 模糊、推测性的关系。
+- 宁缺毋滥，如果没有长期记忆价值的实体关系，请直接返回空数组 `[]`。
 
 返回 JSON 数组，无关系则返回 []：
 [
@@ -231,6 +235,7 @@ class SelfEvolution:
         diary_index=None,
         identity=None,              # IdentityManager | None
         daily_consolidator=None,    # DailyConsolidator | None
+        diary_enabled: bool = True, # 是否开启日记功能（关闭后仍会进行记忆/KG进化）
     ):
         self.client = client
         self.model = model
@@ -240,6 +245,7 @@ class SelfEvolution:
         self.persona_path = Path(persona_path)
         self.identity = identity
         self.daily_consolidator = daily_consolidator
+        self._diary_enabled = diary_enabled
 
         # habits_path: use identity layer if available, else legacy file
         if identity is not None:
@@ -280,14 +286,27 @@ class SelfEvolution:
 
     # ── Public API ───────────────────────────────────────────────────
 
+    def _evolution_done_path(self, date_str: str) -> Path:
+        """Return the path of the completion marker for a given date."""
+        marker_dir = self.diary.diary_dir.parent / "evolution_done"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        return marker_dir / f"{date_str}.json"
+
+    def is_evolution_done(self, date_str: str) -> bool:
+        """Return True if evolve_from_journal fully completed for this date."""
+        return self._evolution_done_path(date_str).exists()
+
     def evolve_from_journal(self, date_str: str) -> List[str]:
         """
         Read the journal for `date_str` and:
-        1. Write Diary
+        1. Write Diary (可通过 config journal.enable_diary=false 关闭)
         2. Extract long-term memories (Add/Update) → MemoryManager
         3. Extract entity-relation triples → KnowledgeGraph
         4. Agentic exploration: research unresolved curiosities → MemoryManager + KnowledgeGraph
         Returns list of memory contents that were saved/updated.
+
+        A completion marker is written to data/evolution_done/{date}.json only after
+        all steps finish, so a mid-run crash won't be mistaken for "already done".
         """
         journal_content = self.journal.read_day(date_str)
         if not journal_content or not journal_content.strip():
@@ -300,8 +319,11 @@ class SelfEvolution:
             except Exception as e:
                 print(f"[SelfEvolution] DailyConsolidator error: {e}")
 
-        # Step 1: Write Diary
-        self._write_diary(journal_content, date_str)
+        # Step 1: Write Diary（可通过 config 关闭）
+        if self._diary_enabled:
+            self._write_diary(journal_content, date_str)
+        else:
+            print("[SelfEvolution] 📔 日记功能已关闭，跳过日记生成。")
 
         # Step 2: Memory extraction (with context and updates)
         saved = self._extract_memories(journal_content, date_str)
@@ -314,6 +336,13 @@ class SelfEvolution:
         if getattr(self, "_agentic_exploration_enabled", False):
             explored = self.explore_curiosities(journal_content, date_str)
             saved.extend(explored)
+
+        # All steps done — write completion marker so restarts don't re-run this date
+        import json as _json
+        self._evolution_done_path(date_str).write_text(
+            _json.dumps({"date": date_str, "memories": len(saved)}, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         return saved
 

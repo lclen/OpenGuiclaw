@@ -1,95 +1,33 @@
 ---
 name: file-manager
 description: |
-  文件和目录管理工具。创建、读取、写入、删除、移动、复制文件。
-  搜索文件、列出目录、获取文件信息。
-  关键词: 文件, 目录, 创建, 删除, 复制, 移动, 搜索, 列出
+  高性能原生异步文件管理插件。
+  提供 read_file, write_file, list_directory, search_file, delete_path, copy_path, move_path, create_directory 等原生方法。
+  运行在 Python 事件循环中，速度远超 shell，具有二进制文件防呆安全机制。
+  关键词: filesystem, 文件, 目录, 增删改查, aiofiles
 license: MIT
 metadata:
-  author: myagent
-  version: "1.0.0"
+  author: OpenAkita Native Port
+  version: "2.0.0"
 ---
 
-# File Manager
+# File Manager (Native Plugin)
 
-管理文件和目录的工具集。
+此技能提供一套完整的原生异步**文件与目录操作系统**，用于代替早期较慢的系统 `shell` 方式操作。
 
-## When to Use
+## 功能特性 (Features)
 
-- 创建、删除、移动、复制文件或目录
-- 读取或写入文件内容
-- 搜索文件
-- 列出目录内容
-- 获取文件信息（大小、修改时间等）
+该技能模块已经在 `plugins/filesystem.py` 中被作为内置插件加载，提供了以下原生 Python 方法，并且速度极快。
 
-## Instructions
+- `read_file`: 读取文本文件，并拦截大体积的二进制文件防止宕机。
+- `write_file`: 快速写出文本，会自动递归创建所需的父目录。
+- `list_directory`: 高效扫描目录结构。
+- `search_file`: 使用 glob 与可选的纯文本 Regex 进行深度搜索。
+- `delete_path`, `copy_path`, `move_path`, `create_directory`: 常见文件层级 API (增删改)。
 
-### 列出目录
+## Implementation Details (技术细节)
 
-```bash
-python scripts/file_ops.py list <path> [--recursive] [--pattern "*.py"]
-```
+- **工具执行位置**: 无需调用额外的 Python CLI 脚本，直接通过已挂载到 FastAPI 服务器内存中的 `plugins/filesystem.py` 进行 `FileTool` 类处理。
+- **并发机制**: 默认使用 `aiofiles` 执行无阻塞文件 IO 支持高并发。
 
-### 读取文件
-
-```bash
-python scripts/file_ops.py read <file_path> [--encoding utf-8]
-```
-
-### 写入文件
-
-```bash
-python scripts/file_ops.py write <file_path> --content "内容" [--append]
-```
-
-### 复制文件
-
-```bash
-python scripts/file_ops.py copy <source> <destination>
-```
-
-### 移动/重命名
-
-```bash
-python scripts/file_ops.py move <source> <destination>
-```
-
-### 删除
-
-```bash
-python scripts/file_ops.py delete <path> [--recursive]
-```
-
-### 搜索文件
-
-```bash
-python scripts/file_ops.py search <directory> --pattern "*.py" [--content "search_text"]
-```
-
-### 获取文件信息
-
-```bash
-python scripts/file_ops.py info <path>
-```
-
-## Output Format
-
-所有操作返回 JSON 格式:
-
-```json
-{
-  "success": true,
-  "operation": "list",
-  "data": {
-    "files": ["file1.py", "file2.py"],
-    "directories": ["subdir"],
-    "count": 3
-  }
-}
-```
-
-## Safety Notes
-
-- 删除操作不可恢复，谨慎使用
-- 写入文件会覆盖原有内容（除非使用 --append）
-- 对于重要文件，建议先备份
+> 注意：此 `SKILL.md` 仅为大模型和系统的元信息注册使用说明，实际业务逻辑在 `openGuiclaw/plugins/filesystem.py` 控制，这里不需要独立的 `scripts` 文件夹包裹。

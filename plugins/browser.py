@@ -49,12 +49,18 @@ def register(skills_manager):
         proc_holder = [None]  # 用列表持有进程引用，方便 timeout 时 kill
 
         def _run_sync():
+            kwargs = {}
+            if os.name == 'nt':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
             proc = subprocess.Popen(
                 cmd_str,
                 shell=True,
+                stdin=subprocess.DEVNULL,  # 避免 EXE 下挂起
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
+                **kwargs
             )
             proc_holder[0] = proc
             try:
@@ -134,20 +140,26 @@ def register(skills_manager):
             with _mode_lock:
                 _CURRENT_MODE = mode
         
-        result = await run_agent_browser(["open", url])
+        # 极大地缩短 open 的超时时间。因为如果它是由于 daemon 挂起导致卡死，给太长时间也是浪费。
+        # 这里给 8 秒，这足够拉起浏览器了，即使卡住也能很快报 timeout，然后进入我们的兜底验证流程。
+        result = await run_agent_browser(["open", url], timeout=8)
         
-        # 验证浏览器是否真的启动成功：尝试获取页面标题
-        if not result.startswith("❌"):
-            await asyncio.sleep(2)  # 给浏览器 2 秒启动时间
-            verify_result = await run_agent_browser(["eval", "document.title"], timeout=10)
-            if verify_result.startswith("❌"):
-                logger.warning(f"[Browser] 浏览器可能未成功启动，验证失败: {verify_result}")
-                return f"⚠️ 浏览器命令已执行，但无法验证是否成功打开页面。\n原始结果: {result}\n验证失败: {verify_result}"
+        # 给浏览器 2 秒启动加载页面
+        await asyncio.sleep(2)  
+        
+        # 兜底验证逻辑（读取刚才打开的页面标题和网址，以此判断是否真的调用成功）
+        verify_result = await run_agent_browser(["eval", "document.title + ' | ' + window.location.href"], timeout=10)
+        
+        if not verify_result.startswith("❌"):
+            logger.info(f"[Browser] 浏览器启动验证成功: {verify_result[:80]}")
+            return f"✅ 浏览器已成功打开页面。\n当前页面: {verify_result}"
+        else:
+            if result.startswith("❌"):
+                logger.warning(f"[Browser] 浏览器验证失败且启动命令也报错: {verify_result}")
+                return f"❌ 浏览器打开失败。\n执行报错: {result}\n验证报错: {verify_result}"
             else:
-                logger.info(f"[Browser] 浏览器启动验证成功，页面标题: {verify_result[:50]}")
-                return f"✅ 浏览器已成功打开 {url}\n页面标题: {verify_result}"
-        
-        return result
+                logger.warning(f"[Browser] 浏览器命令执行了，但验证未通过: {verify_result}")
+                return f"⚠️ 浏览器命令已执行，但无法验证是否成功打开页面。\n原始结果: {result}\n验证报错: {verify_result}"
 
     @skills_manager.skill(
         name="browser_get_snapshot",
