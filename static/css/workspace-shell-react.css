@@ -1,0 +1,64 @@
+.react-home-root,
+.react-sidebar-root {
+  display: contents;
+}
+
+[data-react-workspace-modal-root] {
+  position: relative;
+  z-index: 80;
+}
+
+.react-shell-sidebar {
+  height: 100%;
+}
+
+.react-shell-sidebar .sidebar-thread-groups {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.react-shell-sidebar .sidebar-shortcut-btn,
+.react-shell-sidebar .sidebar-home-btn,
+.react-shell-sidebar .sidebar-workspace-header,
+.react-shell-sidebar .sidebar-thread-preview-main,
+.react-shell-sidebar .sidebar-thread-pin-toggle,
+.react-shell-sidebar .sidebar-thread-action,
+.react-shell-sidebar .sidebar-section-tool {
+  cursor: pointer;
+}
+
+.react-shell-sidebar .sidebar-empty-state,
+.react-shell-sidebar .sidebar-empty-caption {
+  line-height: 1.5;
+}
+
+.react-workspace-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(3, 6, 10, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.react-workspace-modal-card {
+  width: min(100%, 560px);
+}
+
+.react-workspace-modal-card .workspace-path-preview {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .react-shell-sidebar .sidebar-home-copy,
+  .react-shell-sidebar .sidebar-shortcut-btn span:not(.sidebar-shortcut-icon),
+  .react-shell-sidebar .sidebar-section-label,
+  .react-shell-sidebar .sidebar-workspace-name,
+  .react-shell-sidebar .sidebar-thread-preview-copy,
+  .react-shell-sidebar .sidebar-footer-btn span:not(.sidebar-shortcut-icon) {
+    min-width: 0;
+  }
+}

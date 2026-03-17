@@ -188,6 +188,9 @@
              @mouseleave="handleComposerMouseLeave()"
              @focusin="handleComposerFocusIn()"
              @focusout="handleComposerFocusOut()">
+            <div data-react-chat-composer-root hidden></div>
+
+            <div data-legacy-chat-composer-root>
 
             <!-- Slash command menu -->
             <div id="command-menu" x-show="showCommandMenu && filteredCommands.length > 0" x-cloak>
@@ -284,6 +287,7 @@
                         <span class="composer-meta-text" x-show="lastBackendTokens > 0" x-text="contextDisplay"></span>
                     </div>
                 </div>
+            </div>
             </div>
         </div>
     </div>

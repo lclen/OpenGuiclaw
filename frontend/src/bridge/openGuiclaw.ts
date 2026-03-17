@@ -37,6 +37,13 @@ export type ChatAskOption = {
   label: string;
 };
 
+export type ComposerCommand = {
+  command: string;
+  desc?: string;
+  icon?: string;
+  action?: string;
+};
+
 export type ChatBlock = {
   id?: string;
   type: 'text' | 'tool' | 'status_done' | 'ask_user' | string;
@@ -65,12 +72,125 @@ export type ChatMessage = {
   blocks?: ChatBlock[];
 };
 
+export type WorkspaceThread = {
+  session_id: string;
+  title?: string | null;
+  pinned?: boolean;
+  updated_at?: string | null;
+};
+
+export type Workspace = {
+  id: string;
+  name: string;
+  workspace_path?: string | null;
+  thread_count?: number;
+};
+
+export type RecentThread = {
+  session_id: string;
+  title?: string | null;
+  updated_at?: string | null;
+  pinned?: boolean;
+};
+
+export type WorkspaceSummary = {
+  id: string;
+  name: string;
+  workspace_path?: string | null;
+  thread_count?: number;
+  recent_sessions?: RecentThread[];
+};
+
+export type HomeData = {
+  workspaces?: WorkspaceSummary[];
+};
+
+export type WorkspaceThreadMap = Record<string, WorkspaceThread[]>;
+
+export type ExpandedWorkspaceMap = Record<string, boolean>;
+
+export type WorkspaceShellSnapshot = {
+  workspaces: Workspace[];
+  homeData: HomeData | null;
+  activeWorkspaceId: string | null;
+  activeWorkspace: { id?: string; name?: string } | null;
+  sidebarCollapsed: boolean;
+  workspaceThreads: WorkspaceThread[];
+  workspaceThreadMap: WorkspaceThreadMap;
+  expandedWorkspaceIds: ExpandedWorkspaceMap;
+  workspaceLoading: boolean;
+  currentView: string;
+  currentThreadId: string | null;
+  showNewWorkspaceModal: boolean;
+  showWorkspaceSwitcher: boolean;
+  newWorkspaceName: string;
+  newWorkspacePath: string;
+  newWorkspaceError: string;
+  isReceiving: boolean;
+};
+
 export type OpenGuiclawApp = {
   skills: SkillRecord[];
   schedulerTasks: SchedulerTask[];
   messages: ChatMessage[];
+  workspaces: Workspace[];
+  homeData: HomeData | null;
+  inputText: string;
+  stagedFiles: File[];
+  showCommandMenu: boolean;
+  filteredCommands: ComposerCommand[];
+  commandSelectedIndex: number;
   currentThreadId: string | null;
   threadLoading?: boolean;
+  currentController?: unknown;
+  isReceiving?: boolean;
+  activeWorkspaceId?: string | null;
+  activeWorkspace?: { id?: string; name?: string } | null;
+  workspaceThreads?: WorkspaceThread[];
+  workspaceThreadMap?: WorkspaceThreadMap;
+  expandedWorkspaceIds?: ExpandedWorkspaceMap;
+  workspaceLoading?: boolean;
+  currentView?: string;
+  showNewWorkspaceModal?: boolean;
+  showWorkspaceSwitcher?: boolean;
+  showSettings?: boolean;
+  sidebarCollapsed?: boolean;
+  newWorkspaceName?: string;
+  newWorkspacePath?: string;
+  newWorkspaceError?: string;
+  contextDisplay?: string;
+  getCurrentThread?: () => WorkspaceThread | null;
+  getSidebarWorkspaceThreads?: (wsId: string) => WorkspaceThread[];
+  isWorkspaceExpanded?: (wsId: string) => boolean;
+  formatSidebarSessionTime?: (value?: string | null) => string;
+  handleInput?: (event?: Event) => void;
+  navigateCommand?: (dir: number, event?: KeyboardEvent) => void;
+  handlePaste?: (event: ClipboardEvent) => void;
+  handleDrop?: (event: DragEvent) => Promise<void> | void;
+  handleFileSelect?: (event: { target: HTMLInputElement }) => void;
+  removeStagedFile?: (index: number) => void;
+  selectCommand?: (command: ComposerCommand) => void;
+  sendMessage?: (isProactive?: boolean) => Promise<void> | void;
+  abortReceiving?: () => void;
+  newSession?: () => Promise<void> | void;
+  createThread?: (wsId: string) => Promise<void>;
+  loadThread?: (wsId: string, sessionId: string) => Promise<void>;
+  archiveThread?: (wsId: string, sessionId: string) => Promise<void>;
+  deleteThread?: (wsId: string, sessionId: string) => Promise<void>;
+  toggleThreadPin?: (wsId: string, sessionId: string, pinned: boolean) => Promise<void>;
+  loadHome?: () => Promise<void>;
+  loadWorkspaces?: () => Promise<void>;
+  switchWorkspace?: (wsId: string, silent?: boolean) => Promise<void>;
+  focusWorkspaceHome?: (wsId: string) => Promise<void>;
+  toggleWorkspaceGroup?: (wsId: string) => Promise<void>;
+  openSidebarThread?: (wsId: string, sessionId: string) => Promise<void>;
+  openSidebarPanel?: (view: string) => Promise<void> | void;
+  openNewWorkspaceModal?: () => void;
+  pickWorkspacePath?: () => Promise<void>;
+  createWorkspace?: (name?: string, path?: string) => Promise<void>;
+  setNewWorkspaceName?: (value: string) => void;
+  setNewWorkspacePath?: (value: string) => void;
+  closeNewWorkspaceModal?: () => void;
   loadSkills: () => Promise<void>;
   reloadSkills: () => Promise<void>;
   toggleSkill: (name: string, enabled: boolean) => Promise<void>;
@@ -81,6 +201,8 @@ export type OpenGuiclawApp = {
   openSchedulerForm: () => void;
   editSchedulerTask: (task: SchedulerTask) => void;
   submitAskUserChoice: (msg: ChatMessage, block: ChatBlock, opt: ChatAskOption) => Promise<void>;
+  getTopbarTitle?: () => string;
+  getTopbarKicker?: () => string;
 };
 
 declare global {
@@ -91,6 +213,10 @@ declare global {
 
 export function getHostApp(): OpenGuiclawApp | null {
   return window.__openGuiclawApp ?? null;
+}
+
+export function emitShellUpdate() {
+  window.dispatchEvent(new CustomEvent('openguiclaw:shell-updated'));
 }
 
 export function waitForHostApp(timeoutMs = 8000): Promise<OpenGuiclawApp> {

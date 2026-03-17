@@ -608,3 +608,71 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── React Topbar Toolbar ─────────────────────────────────────────────── */
+.react-topbar-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.react-topbar-breadcrumb {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.react-topbar-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.react-topbar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  color: var(--shell-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.react-topbar-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--shell-text);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.react-topbar-icon-btn.is-active {
+  background: rgba(182, 240, 89, 0.12);
+  color: #d9f99d;
+  border-color: rgba(182, 240, 89, 0.22);
+}
+
+.react-topbar-icon-btn.is-danger:hover:not(:disabled) {
+  background: rgba(251, 113, 133, 0.12);
+  color: #fda4af;
+  border-color: rgba(251, 113, 133, 0.2);
+}
+
+.react-topbar-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.react-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}

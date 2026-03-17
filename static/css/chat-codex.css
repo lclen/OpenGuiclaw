@@ -496,12 +496,130 @@
   border-color: rgba(182, 240, 89, 0.3);
 }
 
+.composer-command-menu,
+#command-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(20, 25, 34, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+  z-index: 40;
+}
+
+.composer-command-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--shell-text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.composer-command-item:hover,
+.composer-command-item.is-active {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.composer-command-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--shell-accent);
+  background: rgba(182, 240, 89, 0.1);
+  border: 1px solid rgba(182, 240, 89, 0.2);
+}
+
+.composer-command-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-command-name {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--shell-font-mono);
+  color: var(--shell-text);
+}
+
+.composer-command-desc {
+  font-size: 11px;
+  color: var(--shell-text-muted);
+}
+
+.composer-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px dashed rgba(182, 240, 89, 0.5);
+  background: rgba(13, 15, 20, 0.85);
+}
+
+.composer-drop-copy {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-accent);
+}
+
 /* Composer internals */
 .composer-staged-files {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 10px 14px 0;
+}
+
+.staged-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(182, 240, 89, 0.25);
+  background: rgba(182, 240, 89, 0.1);
+  color: var(--shell-accent);
+  font-size: 11px;
+  font-family: var(--shell-font-mono);
+}
+
+.staged-file-chip-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-file-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--shell-text-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  font-size: 12px;
 }
 
 .composer-main-row {
@@ -586,6 +704,10 @@
   cursor: not-allowed;
 }
 
+.composer-send-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
 .composer-meta-row {
   display: flex;
   align-items: center;
@@ -619,4 +741,20 @@
 .composer-meta-text {
   font-size: 10.5px;
   color: var(--shell-text-dim);
+}
+
+@media (max-width: 840px) {
+  .composer-main-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+
+  .composer-leading {
+    display: none;
+  }
+
+  .composer-meta-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

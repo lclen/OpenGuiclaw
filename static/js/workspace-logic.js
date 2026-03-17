@@ -53,6 +53,28 @@
             obj.newWorkspaceError = '';
             obj.chatScrollbarHidden = false;
             obj.composerHovering = false;
+            obj.notifyShellStateChanged = function () {
+                window.dispatchEvent(new CustomEvent('openguiclaw:shell-updated', {
+                    detail: {
+                        currentView: this.currentView,
+                        sidebarCollapsed: !!this.sidebarCollapsed,
+                        activeWorkspaceId: this.activeWorkspaceId,
+                        currentThreadId: this.currentThreadId,
+                        workspaces: this.workspaces,
+                        homeData: this.homeData,
+                        workspaceThreads: this.workspaceThreads,
+                        workspaceThreadMap: this.workspaceThreadMap,
+                        expandedWorkspaceIds: this.expandedWorkspaceIds,
+                        workspaceLoading: !!this.workspaceLoading,
+                        showNewWorkspaceModal: !!this.showNewWorkspaceModal,
+                        showWorkspaceSwitcher: !!this.showWorkspaceSwitcher,
+                        newWorkspaceName: this.newWorkspaceName,
+                        newWorkspacePath: this.newWorkspacePath,
+                        newWorkspaceError: this.newWorkspaceError,
+                        isReceiving: !!this.isReceiving
+                    }
+                }));
+            };
             obj.notifyChatStateChanged = function () {
                 window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
                     detail: {
@@ -141,6 +163,7 @@
                 this.currentView = 'home';
                 window.__openGuiclawApp = this;
                 window.dispatchEvent(new CustomEvent('openguiclaw:app-ready'));
+                this.notifyShellStateChanged();
                 this.notifyChatStateChanged();
             };
 
@@ -158,7 +181,23 @@
                     var ta = document.querySelector('.composer-textarea');
                     if (ta) ta.style.height = 'auto';
                 });
+                this.notifyShellStateChanged();
                 this.notifyChatStateChanged();
+            };
+
+            obj.setNewWorkspaceName = function (value) {
+                this.newWorkspaceName = typeof value === 'string' ? value : '';
+                this.notifyShellStateChanged();
+            };
+
+            obj.setNewWorkspacePath = function (value) {
+                this.newWorkspacePath = typeof value === 'string' ? value : '';
+                this.notifyShellStateChanged();
+            };
+
+            obj.closeNewWorkspaceModal = function () {
+                this.showNewWorkspaceModal = false;
+                this.notifyShellStateChanged();
             };
 
             obj.getCurrentThread = function () {
@@ -210,15 +249,18 @@
                 if (!wsId) return;
                 var willExpand = !this.expandedWorkspaceIds[wsId];
                 this.expandedWorkspaceIds[wsId] = willExpand;
+                this.notifyShellStateChanged();
                 if (willExpand) {
                     await this.switchWorkspace(wsId, true);
                     await this.loadWorkspaceThreads(wsId, true);
                     this.currentView = this.currentThreadId ? 'chat' : 'home';
+                    this.notifyShellStateChanged();
                 }
             };
 
             obj.openSidebarThread = async function (wsId, sessionId) {
                 this.expandedWorkspaceIds[wsId] = true;
+                this.notifyShellStateChanged();
                 await this.switchWorkspace(wsId, true);
                 await this.loadThread(wsId, sessionId);
             };
@@ -291,6 +333,7 @@
                 if (view === 'skills') {
                     this.currentView = 'skills';
                     this.activePanel = 'skills';
+                    this.notifyShellStateChanged();
                     if (typeof this.loadSkills === 'function' && this.skills.length === 0) {
                         await this.loadSkills();
                     }
@@ -303,6 +346,7 @@
                     if (typeof this.showSchedulerForm !== 'undefined') {
                         this.showSchedulerForm = false;
                     }
+                    this.notifyShellStateChanged();
                     if (typeof this.loadSchedulerTasks === 'function') {
                         await this.loadSchedulerTasks();
                     }
@@ -311,12 +355,14 @@
 
                 if (view === 'home') {
                     this.currentView = 'home';
+                    this.notifyShellStateChanged();
                     return;
                 }
 
                 if (view === 'chat') {
                     this.currentView = 'chat';
                     this.activePanel = 'chat';
+                    this.notifyShellStateChanged();
                 }
             };
 
@@ -325,11 +371,13 @@
                     var r = await fetch('/api/home');
                     if (r.ok) this.homeData = await r.json();
                 } catch (e) { console.warn('[Shell] loadHome:', e); }
+                this.notifyShellStateChanged();
             };
 
             // ── Workspaces ────────────────────────────────────────────────
             obj.loadWorkspaces = async function () {
                 this.workspaceLoading = true;
+                this.notifyShellStateChanged();
                 try {
                     var r = await fetch('/api/workspaces');
                     if (r.ok) {
@@ -341,6 +389,7 @@
                     this.workspaces = [];
                 } finally {
                     this.workspaceLoading = false;
+                    this.notifyShellStateChanged();
                 }
             };
 
@@ -353,6 +402,7 @@
                 this.expandedWorkspaceIds[wsId] = true;
                 this.resetDraftState();
                 localStorage.setItem('activeWorkspaceId', wsId);
+                this.notifyShellStateChanged();
 
                 await this.loadWorkspaceThreads(wsId);
             };
@@ -362,16 +412,20 @@
                 await this.switchWorkspace(wsId, true);
                 this.currentView = 'home';
                 this.showWorkspaceSwitcher = false;
+                this.notifyShellStateChanged();
             };
 
             obj.openNewWorkspaceModal = function () {
                 this.showNewWorkspaceModal = true;
                 this.showWorkspaceSwitcher = false;
                 this.newWorkspaceError = '';
+                this.notifyShellStateChanged();
+                this.notifyShellStateChanged();
             };
 
             obj.pickWorkspacePath = async function () {
                 this.newWorkspaceError = '';
+                this.notifyShellStateChanged();
                 try {
                     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.select_workspace_folder)) {
                         this.newWorkspaceError = '当前环境不支持原生目录选择器，请在桌面版 openGuiclaw 中使用。';
@@ -387,6 +441,7 @@
                         var parts = normalized.split(/[\\\\/]/);
                         this.newWorkspaceName = parts[parts.length - 1] || '';
                     }
+                    this.notifyShellStateChanged();
                 } catch (e) {
                     this.newWorkspaceError = '打开目录选择器失败：' + e.message;
                 }
@@ -398,6 +453,7 @@
                     if (this.activeWorkspaceId === wsId) {
                         this.workspaceThreads = this.workspaceThreadMap[wsId];
                     }
+                    this.notifyShellStateChanged();
                     return;
                 }
                 try {
@@ -417,6 +473,7 @@
                         this.workspaceThreads = [];
                     }
                 }
+                this.notifyShellStateChanged();
             };
 
             obj.createWorkspace = async function (name, path) {
@@ -446,6 +503,7 @@
                         this.showNewWorkspaceModal = false;
                         this.newWorkspaceName = '';
                         this.newWorkspacePath = '';
+                        this.notifyShellStateChanged();
                         await this.loadWorkspaces();
                         await this.loadHome();
                         await this.focusWorkspaceHome(data.id || data.workspace_id);

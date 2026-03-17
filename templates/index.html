@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="/static/css/shell.css">
     <link rel="stylesheet" href="/static/css/chat-codex.css">
     <link rel="stylesheet" href="/static/css/react-panels.css">
+    <link rel="stylesheet" href="/static/css/workspace-shell-react.css">
 
     <!-- Three.js Import Map (lazy-loaded after shell init) -->
     <script type="importmap">
@@ -118,16 +119,21 @@
         <!-- Main panel: home / chat -->
         <div class="main-panel">
             <div class="main-topbar">
-                <div class="topbar-leading">
-                    <button class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed" aria-label="切换侧边栏">
-                        ☰
-                    </button>
+                <button class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed; notifyShellStateChanged()" aria-label="切换侧边栏">
+                    ☰
+                </button>
+
+                <!-- React topbar toolbar (breadcrumb + thread actions + right actions) -->
+                <div data-react-topbar-toolbar hidden style="flex:1;min-width:0;display:flex;align-items:center;"></div>
+
+                <!-- Legacy Alpine topbar (hidden once React mounts) -->
+                <div data-legacy-topbar-breadcrumb class="topbar-leading" style="flex:1;min-width:0;">
                     <div class="topbar-breadcrumb">
                         <span class="topbar-kicker" x-text="getTopbarKicker()"></span>
                         <div class="workspace-title" x-text="getTopbarTitle()"></div>
                     </div>
                 </div>
-                <div class="topbar-actions">
+                <div data-legacy-topbar-actions class="topbar-actions">
                     <div class="topbar-chip"
                          x-show="activeWorkspaceId"
                          x-text="(workspaces.find(ws => ws.id === activeWorkspaceId) || {}).name || ''"></div>
@@ -163,6 +169,8 @@
     {% include "panels/settings_overlay.html" %}
 
     <!-- New Workspace Modal -->
+    <div data-react-workspace-modal-root hidden></div>
+    <div data-legacy-workspace-modal-root x-ignore>
     <div x-show="showNewWorkspaceModal" x-cloak
          class="workspace-modal-backdrop"
          @click.self="showNewWorkspaceModal = false"
@@ -215,6 +223,7 @@
                 </button>
             </div>
         </div>
+    </div>
     </div>
 
     <!-- App logic (sync, before Alpine defer) -->

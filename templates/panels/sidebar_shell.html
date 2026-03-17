@@ -1,112 +1,114 @@
-<aside class="sidebar" :class="sidebarCollapsed ? 'sidebar-collapsed' : ''">
-  <div class="sidebar-brand sidebar-brand-minimal">
-    <button class="sidebar-home-btn sidebar-brand-link"
-            :class="currentView === 'home' ? 'active' : ''"
-            @click="openSidebarPanel('home')">
-      <span class="sidebar-logo">◎</span>
-      <span class="sidebar-home-copy">
-        <strong>openGuiclaw</strong>
-        <small>Workspace Hub</small>
-      </span>
-    </button>
-  </div>
+<div data-react-sidebar-root class="react-sidebar-root" hidden></div>
 
-  <div class="sidebar-shortcuts">
-    <button class="sidebar-shortcut-btn" @click="newSession()">
-      <span class="sidebar-shortcut-icon">+</span>
-      <span>新线程</span>
-    </button>
-    <button class="sidebar-shortcut-btn"
-            :class="currentView === 'home' ? 'active' : ''"
-            @click="openSidebarPanel('home')">
-      <span class="sidebar-shortcut-icon">⌂</span>
-      <span>工作台</span>
-    </button>
-    <button class="sidebar-shortcut-btn"
-            :class="currentView === 'skills' ? 'active' : ''"
-            @click="openSidebarPanel('skills')">
-      <span class="sidebar-shortcut-icon">⚡</span>
-      <span>技能</span>
-    </button>
-    <button class="sidebar-shortcut-btn"
-            :class="currentView === 'scheduler' ? 'active' : ''"
-            @click="openSidebarPanel('scheduler')">
-      <span class="sidebar-shortcut-icon">◷</span>
-      <span>自动化</span>
-    </button>
-  </div>
+<div data-legacy-sidebar-root x-ignore>
+  <aside class="sidebar" :class="sidebarCollapsed ? 'sidebar-collapsed' : ''">
+    <div class="sidebar-brand sidebar-brand-minimal">
+      <button class="sidebar-home-btn sidebar-brand-link"
+              :class="currentView === 'home' ? 'active' : ''"
+              @click="openSidebarPanel('home')">
+        <span class="sidebar-logo">鈼?/span>
+        <span class="sidebar-home-copy">
+          <strong>openGuiclaw</strong>
+          <small>Workspace Hub</small>
+        </span>
+      </button>
+    </div>
 
-  <div class="sidebar-divider"></div>
+    <div class="sidebar-shortcuts">
+      <button class="sidebar-shortcut-btn" @click="newSession()">
+        <span class="sidebar-shortcut-icon">+</span>
+        <span>鏂扮嚎绋?/span>
+      </button>
+      <button class="sidebar-shortcut-btn"
+              :class="currentView === 'home' ? 'active' : ''"
+              @click="openSidebarPanel('home')">
+        <span class="sidebar-shortcut-icon">鈱?/span>
+        <span>宸ヤ綔鍙?/span>
+      </button>
+      <button class="sidebar-shortcut-btn"
+              :class="currentView === 'skills' ? 'active' : ''"
+              @click="openSidebarPanel('skills')">
+        <span class="sidebar-shortcut-icon">鈿?/span>
+        <span>鎶€鑳?/span>
+      </button>
+      <button class="sidebar-shortcut-btn"
+              :class="currentView === 'scheduler' ? 'active' : ''"
+              @click="openSidebarPanel('scheduler')">
+        <span class="sidebar-shortcut-icon">鈼?/span>
+        <span>鑷姩鍖?/span>
+      </button>
+    </div>
 
-  <div class="sidebar-thread-groups custom-scrollbar">
-    <div class="sidebar-section-row">
-      <span class="sidebar-section-label">线程</span>
-      <div class="sidebar-section-tools">
-        <button class="sidebar-section-tool" @click="openNewWorkspaceModal()" aria-label="添加工作区">+</button>
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-thread-groups custom-scrollbar">
+      <div class="sidebar-section-row">
+        <span class="sidebar-section-label">绾跨▼</span>
+        <div class="sidebar-section-tools">
+          <button class="sidebar-section-tool" @click="openNewWorkspaceModal()" aria-label="娣诲姞宸ヤ綔鍖?>+</button>
+        </div>
       </div>
-    </div>
 
-    <template x-for="ws in workspaces" :key="ws.id">
-      <section class="sidebar-workspace-group">
-        <button class="sidebar-workspace-header"
-                :class="activeWorkspaceId === ws.id ? 'active' : ''"
-                @click="toggleWorkspaceGroup(ws.id)">
-          <span class="sidebar-workspace-folder">⌂</span>
-          <span class="sidebar-workspace-name" x-text="ws.name"></span>
-          <span class="sidebar-workspace-count" x-text="(ws.thread_count || getSidebarWorkspaceThreads(ws.id).length || 0)"></span>
-          <span class="sidebar-workspace-chevron" :class="isWorkspaceExpanded(ws.id) ? 'open' : ''">⌄</span>
-        </button>
+      <template x-for="ws in workspaces" :key="ws.id">
+        <section class="sidebar-workspace-group">
+          <button class="sidebar-workspace-header"
+                  :class="activeWorkspaceId === ws.id ? 'active' : ''"
+                  @click="toggleWorkspaceGroup(ws.id)">
+            <span class="sidebar-workspace-folder">鈱?/span>
+            <span class="sidebar-workspace-name" x-text="ws.name"></span>
+            <span class="sidebar-workspace-count" x-text="(ws.thread_count || getSidebarWorkspaceThreads(ws.id).length || 0)"></span>
+            <span class="sidebar-workspace-chevron" :class="isWorkspaceExpanded(ws.id) ? 'open' : ''">鈱?/span>
+          </button>
 
-        <div class="sidebar-group-threads sidebar-fade-scroll custom-scrollbar"
-             x-show="isWorkspaceExpanded(ws.id) && getSidebarWorkspaceThreads(ws.id).length > 0">
-          <template x-for="thread in getSidebarWorkspaceThreads(ws.id)" :key="thread.session_id">
-            <div class="sidebar-thread-preview"
-                 :class="currentThreadId === thread.session_id ? 'active' : ''">
-              <button class="sidebar-thread-pin-toggle"
-                      :class="thread.pinned ? 'is-pinned' : ''"
-                      :title="thread.pinned ? '取消置顶' : '置顶'"
-                      @click.stop="toggleThreadPin(ws.id, thread.session_id, !!thread.pinned)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.1" d="M9 3h6l-1.2 5.2L18 12v1H13v7l-2-1.8V13H6v-1l4.2-3.8L9 3z"></path>
-                </svg>
-              </button>
-
-              <button class="sidebar-thread-preview-main"
-                      @click="openSidebarThread(ws.id, thread.session_id)">
-                <span class="sidebar-thread-preview-copy">
-                  <span class="sidebar-thread-preview-title"
-                        x-text="thread.title || thread.session_id.slice(0, 24) + '…'"></span>
-                  <span class="sidebar-thread-preview-meta"
-                        x-text="formatSidebarSessionTime(thread.updated_at)"></span>
-                </span>
-              </button>
-
-              <div class="sidebar-thread-preview-actions">
-                <button class="sidebar-thread-action danger"
-                        title="删除"
-                        @click.stop="deleteThread(ws.id, thread.session_id)">
-                  <span>×</span>
+          <div class="sidebar-group-threads sidebar-fade-scroll custom-scrollbar"
+               x-show="isWorkspaceExpanded(ws.id) && getSidebarWorkspaceThreads(ws.id).length > 0">
+            <template x-for="thread in getSidebarWorkspaceThreads(ws.id)" :key="thread.session_id">
+              <div class="sidebar-thread-preview"
+                   :class="currentThreadId === thread.session_id ? 'active' : ''">
+                <button class="sidebar-thread-pin-toggle"
+                        :class="thread.pinned ? 'is-pinned' : ''"
+                        :title="thread.pinned ? '鍙栨秷缃《' : '缃《'"
+                        @click.stop="toggleThreadPin(ws.id, thread.session_id, !!thread.pinned)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.1" d="M9 3h6l-1.2 5.2L18 12v1H13v7l-2-1.8V13H6v-1l4.2-3.8L9 3z"></path>
+                  </svg>
                 </button>
+
+                <button class="sidebar-thread-preview-main"
+                        @click="openSidebarThread(ws.id, thread.session_id)">
+                  <span class="sidebar-thread-preview-copy">
+                    <span class="sidebar-thread-preview-title"
+                          x-text="thread.title || thread.session_id.slice(0, 24) + '鈥?"></span>
+                    <span class="sidebar-thread-preview-meta"
+                          x-text="formatSidebarSessionTime(thread.updated_at)"></span>
+                  </span>
+                </button>
+
+                <div class="sidebar-thread-preview-actions">
+                  <button class="sidebar-thread-action danger"
+                          title="鍒犻櫎"
+                          @click.stop="deleteThread(ws.id, thread.session_id)">
+                    <span>脳</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          </template>
-        </div>
+            </template>
+          </div>
 
-        <div x-show="isWorkspaceExpanded(ws.id) && getSidebarWorkspaceThreads(ws.id).length === 0" class="sidebar-empty-caption">
-          无线程
-        </div>
-      </section>
-    </template>
+          <div x-show="isWorkspaceExpanded(ws.id) && getSidebarWorkspaceThreads(ws.id).length === 0" class="sidebar-empty-caption">
+            鏃犵嚎绋?        </div>
+        </section>
+      </template>
 
-    <div x-show="workspaces.length === 0" class="sidebar-empty-state">
-      还没有工作区，先添加一个项目。
+      <div x-show="workspaces.length === 0" class="sidebar-empty-state">
+        杩樻病鏈夊伐浣滃尯锛屽厛娣诲姞涓€涓」鐩€?    </div>
     </div>
-  </div>
 
-  <div class="sidebar-footer">
-    <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="showSettings = true">
-      <span class="sidebar-shortcut-icon">⚙</span>
-      <span>设置</span>
-    </button>
-  </div>
-</aside>
+    <div class="sidebar-footer">
+      <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="showSettings = true">
+        <span class="sidebar-shortcut-icon">鈿?/span>
+        <span>璁剧疆</span>
+      </button>
+    </div>
+  </aside>
+</div>

@@ -1,143 +1,145 @@
-<div class="home-shell custom-scrollbar">
-    <section class="home-hero">
-        <div class="home-hero-orb">
-            <span>◎</span>
+<div data-react-home-root class="react-home-root" hidden></div>
+
+<div data-legacy-home-root x-ignore>
+    <div class="home-shell custom-scrollbar">
+        <section class="home-hero">
+            <div class="home-hero-orb">
+                <span>鈼?/span>
+            </div>
+            <div class="home-kicker">OpenGuiclaw Workspace Hub</div>
+            <h1>寮€濮嬫瀯寤?/h1>
+            <p class="home-hero-copy">
+                鐢ㄦ洿娓呮櫚鐨勬柟寮忕鐞嗗涓」鐩€佺嚎绋嬪拰璁剧疆锛屾妸褰撳墠涓婁笅鏂囧缁堢暀鍦ㄧ溂鍓嶃€?        </p>
+            <div class="home-workspace-picker" @keydown.escape.window="showWorkspaceSwitcher = false">
+                <button class="home-active-pill home-active-pill-button"
+                        @click="showWorkspaceSwitcher = !showWorkspaceSwitcher">
+                    <span x-text="activeWorkspaceId ? ((workspaces.find(ws => ws.id === activeWorkspaceId) || {}).name || '褰撳墠宸ヤ綔鍖?) : '閫夋嫨浣犵殑椤圭洰'"></span>
+                    <span class="home-pill-chevron" :class="showWorkspaceSwitcher ? 'open' : ''">鈱?/span>
+                </button>
+
+                <div x-show="showWorkspaceSwitcher"
+                     x-cloak
+                     class="home-workspace-dropdown"
+                     @click.outside="showWorkspaceSwitcher = false">
+                    <div class="home-workspace-dropdown-label">閫夋嫨浣犵殑椤圭洰</div>
+
+                    <div class="home-workspace-dropdown-list">
+                        <template x-for="ws in workspaces" :key="ws.id">
+                            <button class="home-workspace-dropdown-item"
+                                    @click="focusWorkspaceHome(ws.id)">
+                                <span class="home-workspace-dropdown-icon">鈱?/span>
+                                <span class="home-workspace-dropdown-name" x-text="ws.name"></span>
+                                <span class="home-workspace-dropdown-check" x-show="activeWorkspaceId === ws.id">鉁?/span>
+                            </button>
+                        </template>
+                    </div>
+
+                    <button class="home-workspace-dropdown-add" @click="openNewWorkspaceModal()">
+                        <span>+</span>
+                        <span>娣诲姞鏂伴」鐩?/span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="home-suggestion-grid">
+                <button class="home-suggestion-card"
+                        @click="activeWorkspaceId ? createThread(activeWorkspaceId) : openNewWorkspaceModal()">
+                    <span class="home-suggestion-icon">+</span>
+                    <strong>寮€濮嬫柊绾跨▼</strong>
+                    <p>鍦ㄥ綋鍓嶉€変腑鐨勫伐浣滃尯閲屽紑鍚竴涓叏鏂扮殑浠诲姟涓婁笅鏂囥€?/p>
+                </button>
+                <button class="home-suggestion-card" @click="showSettings = true">
+                    <span class="home-suggestion-icon">鈿?/span>
+                    <strong>鏁寸悊璁剧疆</strong>
+                    <p>妫€鏌ユā鍨嬨€佽韩浠藉拰闆嗘垚锛屾妸甯哥敤閰嶇疆鏀惧湪椤烘墜鐨勪綅缃€?/p>
+                </button>
+                <button class="home-suggestion-card" @click="openNewWorkspaceModal()">
+                    <span class="home-suggestion-icon">鈱?/span>
+                    <strong>娣诲姞椤圭洰</strong>
+                    <p>閫氳繃鐩綍閫夋嫨鍣ㄦ帴鍏ヤ竴涓柊椤圭洰锛屼笉鍐嶆墜鍔ㄨ緭鍏ヨ矾寰勩€?/p>
+                </button>
+            </div>
+        </section>
+
+        <div x-show="workspaceLoading" class="home-loading">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;">
+                <circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="30 70" stroke-linecap="round"/>
+            </svg>
+            <span>姝ｅ湪杞藉叆宸ヤ綔鍖烘瑙?..</span>
         </div>
-        <div class="home-kicker">OpenGuiclaw Workspace Hub</div>
-        <h1>开始构建</h1>
-        <p class="home-hero-copy">
-            用更清晰的方式管理多个项目、线程和设置，把当前上下文始终留在眼前。
-        </p>
-        <div class="home-workspace-picker" @keydown.escape.window="showWorkspaceSwitcher = false">
-            <button class="home-active-pill home-active-pill-button"
-                    @click="showWorkspaceSwitcher = !showWorkspaceSwitcher">
-                <span x-text="activeWorkspaceId ? ((workspaces.find(ws => ws.id === activeWorkspaceId) || {}).name || '当前工作区') : '选择你的项目'"></span>
-                <span class="home-pill-chevron" :class="showWorkspaceSwitcher ? 'open' : ''">⌄</span>
-            </button>
 
-            <div x-show="showWorkspaceSwitcher"
-                 x-cloak
-                 class="home-workspace-dropdown"
-                 @click.outside="showWorkspaceSwitcher = false">
-                <div class="home-workspace-dropdown-label">选择你的项目</div>
+        <div x-show="!workspaceLoading" class="home-columns">
+            <section class="home-surface">
+                <div class="home-section-header">
+                    <div>
+                        <div class="home-section-kicker">Projects</div>
+                        <h2>宸ヤ綔鍖?/h2>
+                    </div>
+                    <button class="home-link-button" @click="openNewWorkspaceModal()">鏂板缓宸ヤ綔鍖?/button>
+                </div>
 
-                <div class="home-workspace-dropdown-list">
+                <div class="home-workspace-list" x-show="workspaces.length > 0">
                     <template x-for="ws in workspaces" :key="ws.id">
-                        <button class="home-workspace-dropdown-item"
+                        <button class="home-workspace-row"
+                                :class="activeWorkspaceId === ws.id ? 'active' : ''"
                                 @click="focusWorkspaceHome(ws.id)">
-                            <span class="home-workspace-dropdown-icon">⌘</span>
-                            <span class="home-workspace-dropdown-name" x-text="ws.name"></span>
-                            <span class="home-workspace-dropdown-check" x-show="activeWorkspaceId === ws.id">✓</span>
+                            <div class="home-workspace-main">
+                                <div class="home-workspace-icon">鈱?/div>
+                                <div class="home-workspace-copy">
+                                    <div class="home-workspace-title">
+                                        <span x-text="ws.name"></span>
+                                        <span class="home-badge" x-show="activeWorkspaceId === ws.id">褰撳墠</span>
+                                    </div>
+                                    <div class="home-workspace-path" x-text="ws.workspace_path"></div>
+                                </div>
+                            </div>
+                            <div class="home-workspace-meta" x-text="(ws.thread_count || 0) + ' 涓嚎绋?"></div>
                         </button>
                     </template>
                 </div>
 
-                <button class="home-workspace-dropdown-add" @click="openNewWorkspaceModal()">
-                    <span>+</span>
-                    <span>添加新项目</span>
-                </button>
-            </div>
-        </div>
-
-        <div class="home-suggestion-grid">
-            <button class="home-suggestion-card"
-                    @click="activeWorkspaceId ? createThread(activeWorkspaceId) : openNewWorkspaceModal()">
-                <span class="home-suggestion-icon">+</span>
-                <strong>开始新线程</strong>
-                <p>在当前选中的工作区里开启一个全新的任务上下文。</p>
-            </button>
-            <button class="home-suggestion-card" @click="showSettings = true">
-                <span class="home-suggestion-icon">⚙</span>
-                <strong>整理设置</strong>
-                <p>检查模型、身份和集成，把常用配置放在顺手的位置。</p>
-            </button>
-            <button class="home-suggestion-card" @click="openNewWorkspaceModal()">
-                <span class="home-suggestion-icon">⌘</span>
-                <strong>添加项目</strong>
-                <p>通过目录选择器接入一个新项目，不再手动输入路径。</p>
-            </button>
-        </div>
-    </section>
-
-    <div x-show="workspaceLoading" class="home-loading">
-        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="animation:spin 1s linear infinite;">
-            <circle cx="12" cy="12" r="10" stroke-width="3" stroke-dasharray="30 70" stroke-linecap="round"/>
-        </svg>
-        <span>正在载入工作区概览...</span>
-    </div>
-
-    <div x-show="!workspaceLoading" class="home-columns">
-        <section class="home-surface">
-            <div class="home-section-header">
-                <div>
-                    <div class="home-section-kicker">Projects</div>
-                    <h2>工作区</h2>
+                <div x-show="workspaces.length === 0" class="welcome-placeholder">
+                    <svg width="48" height="48" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24" style="opacity:0.4;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+                    </svg>
+                    <h2>杩樻病鏈夊伐浣滃尯</h2>
+                    <p>鍏堝垱寤轰竴涓」鐩叆鍙ｏ紝鍚庨潰鐨勮亰澶╁拰璁剧疆閮戒細璺熺潃鏇存竻鏅般€?/p>
+                    <button class="btn-primary" @click="openNewWorkspaceModal()">鍒涘缓绗竴涓伐浣滃尯</button>
                 </div>
-                <button class="home-link-button" @click="openNewWorkspaceModal()">新建工作区</button>
-            </div>
+            </section>
 
-            <div class="home-workspace-list" x-show="workspaces.length > 0">
-                <template x-for="ws in workspaces" :key="ws.id">
-                    <button class="home-workspace-row"
-                            :class="activeWorkspaceId === ws.id ? 'active' : ''"
-                            @click="focusWorkspaceHome(ws.id)">
-                        <div class="home-workspace-main">
-                            <div class="home-workspace-icon">⌘</div>
-                            <div class="home-workspace-copy">
-                                <div class="home-workspace-title">
-                                    <span x-text="ws.name"></span>
-                                    <span class="home-badge" x-show="activeWorkspaceId === ws.id">当前</span>
-                                </div>
-                                <div class="home-workspace-path" x-text="ws.workspace_path"></div>
-                            </div>
-                        </div>
-                        <div class="home-workspace-meta" x-text="(ws.thread_count || 0) + ' 个线程'"></div>
-                    </button>
-                </template>
-            </div>
-
-            <div x-show="workspaces.length === 0" class="welcome-placeholder">
-                <svg width="48" height="48" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24" style="opacity:0.4;">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-                </svg>
-                <h2>还没有工作区</h2>
-                <p>先创建一个项目入口，后面的聊天和设置都会跟着更清晰。</p>
-                <button class="btn-primary" @click="openNewWorkspaceModal()">创建第一个工作区</button>
-            </div>
-        </section>
-
-        <section class="home-surface">
-            <div class="home-section-header">
-                <div>
-                    <div class="home-section-kicker">Recent</div>
-                    <h2>最近对话</h2>
+            <section class="home-surface">
+                <div class="home-section-header">
+                    <div>
+                        <div class="home-section-kicker">Recent</div>
+                        <h2>鏈€杩戝璇?/h2>
+                    </div>
                 </div>
-            </div>
 
-            <template x-if="homeData && homeData.workspaces && homeData.workspaces.some(w => w.recent_sessions && w.recent_sessions.length > 0)">
-                <div class="home-thread-list">
-                    <template x-for="ws in (homeData.workspaces || [])" :key="ws.id">
-                        <template x-for="thread in (ws.recent_sessions || [])" :key="thread.session_id">
-                            <button class="home-thread-row"
-                                    @click="switchWorkspace(ws.id).then(() => loadThread(ws.id, thread.session_id))">
-                                <div class="home-thread-main">
-                                    <span class="home-thread-dot"></span>
-                                    <div class="home-thread-copy">
-                                        <span class="home-thread-title" x-text="thread.title || thread.session_id"></span>
-                                        <span class="home-thread-workspace" x-text="ws.name"></span>
+                <template x-if="homeData && homeData.workspaces && homeData.workspaces.some(w => w.recent_sessions && w.recent_sessions.length > 0)">
+                    <div class="home-thread-list">
+                        <template x-for="ws in (homeData.workspaces || [])" :key="ws.id">
+                            <template x-for="thread in (ws.recent_sessions || [])" :key="thread.session_id">
+                                <button class="home-thread-row"
+                                        @click="switchWorkspace(ws.id).then(() => loadThread(ws.id, thread.session_id))">
+                                    <div class="home-thread-main">
+                                        <span class="home-thread-dot"></span>
+                                        <div class="home-thread-copy">
+                                            <span class="home-thread-title" x-text="thread.title || thread.session_id"></span>
+                                            <span class="home-thread-workspace" x-text="ws.name"></span>
+                                        </div>
                                     </div>
-                                </div>
-                            </button>
+                                </button>
+                            </template>
                         </template>
-                    </template>
-                </div>
-            </template>
+                    </div>
+                </template>
 
-            <div x-show="!homeData || !homeData.workspaces || !homeData.workspaces.some(w => w.recent_sessions && w.recent_sessions.length > 0)"
-                 class="home-empty-inline">
-                最近还没有值得回看的线程记录。
-            </div>
-        </section>
+                <div x-show="!homeData || !homeData.workspaces || !homeData.workspaces.some(w => w.recent_sessions && w.recent_sessions.length > 0)"
+                     class="home-empty-inline">
+                    鏈€杩戣繕娌℃湁鍊煎緱鍥炵湅鐨勭嚎绋嬭褰曘€?            </div>
+            </section>
+        </div>
     </div>
 </div>
 
