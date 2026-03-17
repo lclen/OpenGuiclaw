@@ -1,96 +1,173 @@
 ---
 name: professional-markdown
-description: "生成的文档始终保持极高的专业审美和结构化。仿照 OpenAkita 官方文档风格，使用合理的表情符号、Mermaid 图表、严密的表格和清晰的层级结构。当用户要求“编写文档”、“生成说明”、“记录架构”、“撰写README”或需要任何高质量的 Markdown 产出时使用。"
+description: Produce highly polished, structured Markdown with strong information architecture, tasteful visual hierarchy, Mermaid diagrams, tables, callouts, and publication-quality formatting. Use when the user asks to write documentation, generate explanations, document architecture, create a README, or produce any high-quality Markdown artifact.
 ---
 
-# Professional Markdown Architect — 高级文档架构指南
+# Professional Markdown Architect
 
-## 核心设计理论
+Use this skill when the output should feel publication-ready rather than merely correct.
 
-一份“完美”的 Markdown 文档不仅仅是信息的堆砌，更是视觉引导与逻辑结构的艺术。本技能要求 Agent 遵循 **OpenAkita 黄金文档标准 (OGDS)**，确保产出的每一份文档都能达到“官网直发”的品质。
+The goal is not just to "write Markdown", but to produce Markdown that is:
 
----
+- technically accurate
+- easy to scan
+- visually well-structured
+- strong enough for long-term project documentation
 
-## 🧠 写作前置：信息采集与上下文构建 (Context Gathering)
-**不要在不了解全貌的情况下直接动笔！** 写作前必须：
-1. **全局扫描**：扫描相关源代码、配置文件或现存文档（如项目中的 `docs/`、`.github/` 目录），提取核心术语、技术栈和架构基础。
-2. **归纳合并**：将散落的代码逻辑、零散的日志和注释提取，随后在脑海中将其结构化。
-3. **推演补全**：一旦发现明显缺失的重要环节（例如：缺少了测试策略或部署说明），主动向用户询问，或者基于该技术栈体系给予标准的建议填充。
+## Core Principles
 
----
+### 1. Gather context before writing
 
-## 🏗️ 结构规范
+Do not write polished documentation from thin air.
 
-### 1. 顶部元数据 (Header Banner) & Badges
-每个文档必须以一级标题 `#` 开头，紧随其后的是一行引用框 `>`，包含状态、版本或是文档的简短一句话概述。
-针对开源项目的 README 等重要入口，建议进一步加入相关技术栈或构建状态的 **Badges 徽章**。
-> **示例 (状态说明)**:
-> > **版本**: v1.25.0 | **最后更新**: 2026-03-11 | **状态**: 🟢 Stable
-> 
-> **示例 (功能概述)**: 
-> > 完整的从零开始部署指南，涵盖 PyPI 安装、源码安装、大模型配置、IM 通道接入。
+Before drafting:
 
-### 2. 目录导航 (Table of Contents)
-复杂的或长于 3 个章节的文档必须包含 `## 目录` (TOC)。
-- 使用无序列表格式 `- [章节名](#锚点)` 生成锚点链接，以便快速定位。
+1. inspect the relevant source files, configs, or existing docs
+2. extract the real terminology, architecture boundaries, and workflows
+3. identify obvious missing sections and either infer conservatively or ask when the gap is important
 
-### 3. 段落分割
-使用 `---` 进行物理分割。务必在主要的二级标题 `##` 之前添加（或在关键的逻辑段落间），增强垂直空间的呼吸感与节奏感。
+### 2. Optimize for information architecture
 
-### 4. 标准化内容模块 (针对 README / 主干指南)
-撰写项目的主级文档时，必须遵循结构化的模块切分。例如 README 应至少包含：
-- **项目概述 (Project Name and Description)**
-- **技术栈声明 (Technology Stack)**
-- **系统架构图解 (Project Architecture)**
-- **快速开始指南 (Getting Started / Installation)**
-- **文件与项目结构 (Project Structure)**
+A strong document should guide the reader from overview to detail.
 
----
+Good defaults:
 
-## 🎨 视觉风格与排版策略
+- start with a clear title
+- immediately follow with a short quote block summarizing status, version, or purpose
+- add a table of contents when the document is more than a few sections long
+- separate major sections with `---`
 
-### 1. 重点突出与代码高亮
-- 使用 **加粗** (`**关键概念**`) 突出核心名词、重要操作和列表说明项（例如：`**Linux/macOS:**` 引导特定的代码块）。
-- 大量使用行内代码 \`code\` 突出命令、变量、术语、文件路径和函数名，提升技术严谨度。
-- 关键提示应使用 GitHub 风格的 Alert Box：
-  > [!IMPORTANT]
-  > 这是一个关键提示。
+### 3. Prefer structure over text walls
 
-### 2. 交叉引用 (Cross-Referencing)
-- 构建文档内部的知识网络。在提及其他配有文档的模块、配置文件或外置脚本时，使用 Markdown 标准链接 `[文件名称](./路径/到/文件)` 实现穿透式交叉引用，极大提升开发生态的连贯性。
+When the content is naturally structured, use structure.
 
-### 3. 表情符号 (Emoji Logic)
-- **拒绝过度堆砌**：不要为了 Emoji 而 Emoji。对偏向纯技术的手册（如部署文档），保持简洁严谨；对偏向产品介绍的文档或大章节标题，合理在标题中运用 Emoji（如：`## 🚀 快速开始`）。
-- **用于辅助说明内容状态**：在对比、列表和表格中，巧妙运用 Emoji 来增强状态反馈：
-  - 支持/不支持：✅ ❌
-  - 注意/闪电：⚠️ ⚡
+Prefer:
 
-### 4. 数据与逻辑表格化
-- **优先使用表格**：遇到“参数解析”、“多维度对比”、“资源说明”、“文件层级功能”时，**必须**使用 Markdown 表格进行归纳，坚决放弃冗长的文本堆砌。
-- 表单内容保持精准简练。
+- tables for comparisons, parameters, file roles, feature matrices, and settings
+- Mermaid diagrams for systems, flows, and interactions
+- callouts for important warnings or operational notes
+- short paragraphs with strong headings
 
----
+Avoid long, dense prose when a clearer format exists.
 
-## 📊 代码与逻辑说明表达
+## Recommended Document Shape
 
-### 1. 上下文代码块
-- 所有代码块必须标记对应的高亮语言（如 `python`, `json`, `bash`, `yaml`, `mermaid` 等）。
-- 长代码块在呈现之前，使用一段**加粗文字**（如 **配置方式：** 或 **OpenAI → Anthropic：**）简短说明其背景。
+### Header Pattern
 
-### 2. Mermaid 图表
-能用图表示的结构与逻辑，**绝不只用文字**。
-- **架构/关联图**：使用 `graph TD` / `graph LR`
-- **流程/交互图**：使用 `sequenceDiagram`
-- **状态机**：使用 `stateDiagram-v2`
+Every substantial document should usually begin like this:
 
----
+```markdown
+# Document Title
 
-## 🏁 自检清单 (Checklist)
-每次输出极客标准 Markdown 之前，请脑海中自检：
-1. **前置采集**：这绝不是凭空排版，我是否有足够的源码、配置和日志支撑文档的技术深度？
-2. **Banner / Badges**：是否有 `>` 的精美摘要、状态栏或微章？
-3. **逻辑表述**：并列功能点或参数对比是否改为了清爽的 `|表格|`？
-4. **高亮与交叉引用**：专用术语、文件路径是否被 \`包裹\`？是否存在指向其他文档的交叉链接？
-5. **重要警告**：风险点是否通过 GitHub Alert Box 标注？
-6. **分割线**：大的 Topic 之间是否加入了 `---` 进行物理分割？
-7. **代码说明**：大段代码块上方是否有简练的加粗提示词（如：**基本结构：**）？
+> **Status**: Stable | **Last Updated**: 2026-03-13 | **Purpose**: Short one-line summary
+```
+
+### Table of Contents
+
+For documents with more than three major sections, add:
+
+```markdown
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Usage](#usage)
+```
+
+### Standard Section Types
+
+Depending on the task, prefer some combination of:
+
+- Overview
+- Goals
+- Architecture
+- Core Workflow
+- Key Files
+- Configuration
+- Data Model
+- Usage
+- Troubleshooting
+- Known Limitations
+- Future Improvements
+
+## Visual Style
+
+### 1. Emphasis
+
+- use bold text for key concepts
+- use inline code for commands, file paths, variables, identifiers, and APIs
+- keep emphasis intentional rather than noisy
+
+### 2. Tables
+
+Use Markdown tables whenever they increase clarity.
+
+Common cases:
+
+- feature comparison
+- file responsibility mapping
+- config reference
+- component inventory
+- risk summary
+
+### 3. Callouts
+
+Use GitHub-style callouts for warnings and high-value notes:
+
+```markdown
+> [!IMPORTANT]
+> This is a key operational note.
+```
+
+### 4. Diagrams
+
+If the structure or flow is easier to explain visually, use Mermaid.
+
+Recommended types:
+
+- `graph TD` or `graph LR` for architecture
+- `sequenceDiagram` for workflows and interactions
+- `stateDiagram-v2` for state transitions
+
+## Writing Rules
+
+### 1. Code blocks need context
+
+Large code blocks should usually be introduced by a short line explaining what the reader is about to see.
+
+Example:
+
+```markdown
+**Configuration example:**
+
+```yaml
+...
+```
+```
+
+### 2. Cross-reference related docs
+
+When other repo docs exist, link them with standard Markdown links instead of repeating everything.
+
+### 3. Be tasteful with emoji
+
+Emoji are optional and should be used sparingly.
+
+Good use cases:
+
+- major section headings in user-facing docs
+- small status signals in lists or tables
+
+Avoid emoji clutter in highly technical or operational documents.
+
+## Review Checklist
+
+Before finalizing, quickly check:
+
+1. Did I inspect enough real context?
+2. Is the opening summary immediately clear?
+3. Should any section be converted into a table?
+4. Would a Mermaid diagram help?
+5. Are key warnings called out clearly?
+6. Is the document easy to scan from top to bottom?
+7. Does the output feel like durable documentation rather than chat text?

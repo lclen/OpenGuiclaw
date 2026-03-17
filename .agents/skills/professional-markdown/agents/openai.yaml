@@ -1,0 +1,7 @@
+interface:
+  display_name: "Professional Markdown"
+  short_description: "Write publication-quality Markdown docs."
+  default_prompt: "Use $professional-markdown to create polished, structured documentation with strong information architecture."
+
+policy:
+  allow_implicit_invocation: true

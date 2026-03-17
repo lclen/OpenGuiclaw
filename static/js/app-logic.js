@@ -174,12 +174,18 @@
         epSaving: false,           // endpoint list save spinner
         epTesting: {},             // testing per endpoint index
         epTestResult: {},          // test result per endpoint index
+        epFetchedModels: {},       // fetched model list per endpoint index {idx: [modelId,...]}
+        epModelFetching: {},       // fetching spinner per endpoint index
+        epModelFetchError: {},     // fetch error message per endpoint index
 
         // Role Endpoints (extra endpoints per functional role: vision/image_analyzer/embedding/autogui)
         roleEndpoints: {},         // {role_key: [{name,provider,base_url,api_key,model,...}]}
         roleEpTesting: {},         // {'vision-0': true/false}
         roleEpTestResult: {},      // {'vision-0': {status,model,error}}
         roleEpSaving: {},          // {role_key: true/false}
+        roleEpFetchedModels: {},   // {'vision-0': [modelId,...]}
+        roleEpModelFetching: {},   // {'vision-0': true/false}
+        roleEpModelFetchError: {}, // {'vision-0': 'error message'}
 
         // Token stats
         tokenStats: {
@@ -489,6 +495,30 @@
             }
         },
 
+        async fetchEndpointModels(epIdx) {
+            const ep = this.chatEndpoints[epIdx];
+            if (!ep?.base_url) return;
+            this.epModelFetching = { ...this.epModelFetching, [epIdx]: true };
+            this.epModelFetchError = { ...this.epModelFetchError, [epIdx]: null };
+            try {
+                const r = await fetch('/api/endpoints/fetch-models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ base_url: ep.base_url, api_key: ep.api_key || '' }),
+                });
+                const data = await r.json();
+                if (data.status === 'ok') {
+                    this.epFetchedModels = { ...this.epFetchedModels, [epIdx]: data.models };
+                } else {
+                    this.epModelFetchError = { ...this.epModelFetchError, [epIdx]: data.error || '获取失败' };
+                }
+            } catch (e) {
+                this.epModelFetchError = { ...this.epModelFetchError, [epIdx]: e.message };
+            } finally {
+                this.epModelFetching = { ...this.epModelFetching, [epIdx]: false };
+            }
+        },
+
         async switchChatEndpoint(id) {
             if (id === this.activeEndpointId || this.endpointSwitching) return;
             this.endpointSwitching = true;
@@ -565,6 +595,31 @@
                 this.roleEpTestResult = { ...this.roleEpTestResult, [key]: { status: 'error', error: e.message } };
             } finally {
                 this.roleEpTesting = { ...this.roleEpTesting, [key]: false };
+            }
+        },
+
+        async fetchRoleEndpointModels(roleKey, rIdx) {
+            const rep = this.roleEndpoints[roleKey]?.[rIdx];
+            if (!rep?.base_url) return;
+            const key = `${roleKey}-${rIdx}`;
+            this.roleEpModelFetching = { ...this.roleEpModelFetching, [key]: true };
+            this.roleEpModelFetchError = { ...this.roleEpModelFetchError, [key]: null };
+            try {
+                const r = await fetch('/api/endpoints/fetch-models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ base_url: rep.base_url, api_key: rep.api_key || '' }),
+                });
+                const data = await r.json();
+                if (data.status === 'ok') {
+                    this.roleEpFetchedModels = { ...this.roleEpFetchedModels, [key]: data.models };
+                } else {
+                    this.roleEpModelFetchError = { ...this.roleEpModelFetchError, [key]: data.error || '获取失败' };
+                }
+            } catch (e) {
+                this.roleEpModelFetchError = { ...this.roleEpModelFetchError, [key]: e.message };
+            } finally {
+                this.roleEpModelFetching = { ...this.roleEpModelFetching, [key]: false };
             }
         },
 

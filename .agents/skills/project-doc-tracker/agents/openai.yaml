@@ -1,0 +1,7 @@
+﻿interface:
+  display_name: "Project Doc Tracker"
+  short_description: "Track project progress and next steps in Markdown."
+  default_prompt: "Use $project-doc-tracker to inspect recent changes and update my project tracker."
+
+policy:
+  allow_implicit_invocation: true

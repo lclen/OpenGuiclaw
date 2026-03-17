@@ -1,0 +1,7 @@
+interface:
+  display_name: "PowerShell Standards"
+  short_description: "Write safe, UTF-8-friendly PowerShell."
+  default_prompt: "Use $powershell-standards to write or review PowerShell commands with UTF-8-safe file handling and script conventions."
+
+policy:
+  allow_implicit_invocation: true

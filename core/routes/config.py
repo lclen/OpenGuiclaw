@@ -439,6 +439,38 @@ async def test_model_endpoint(body: ModelEndpointWrite):
         return {"status": "error", "error": friendly}
 
 
+# ── Fetch models from endpoint ───────────────────────────────────────────────
+
+class FetchModelsRequest(BaseModel):
+    base_url: str
+    api_key: str
+
+@router.post("/api/endpoints/fetch-models")
+async def fetch_models_from_endpoint(body: FetchModelsRequest):
+    """Call the provider's /models endpoint and return the model ID list."""
+    import asyncio
+    def _do_fetch():
+        from openai import OpenAI
+        client = OpenAI(base_url=body.base_url, api_key=body.api_key or "test")
+        models = client.models.list()
+        ids = sorted([m.id for m in models.data])
+        return ids
+    try:
+        ids = await asyncio.to_thread(_do_fetch)
+        return {"status": "ok", "models": ids}
+    except Exception as e:
+        raw = str(e).lower()
+        if "401" in raw or "unauthorized" in raw or "authentication" in raw:
+            friendly = "API Key 无效或已过期"
+        elif "404" in raw or "not found" in raw:
+            friendly = "该服务商不支持 /models 接口"
+        elif "connect" in raw or "timeout" in raw:
+            friendly = "无法连接到服务商，请检查 base_url 和网络"
+        else:
+            friendly = str(e)[:120]
+        return {"status": "error", "error": friendly, "models": []}
+
+
 # ── Chat endpoints management ─────────────────────────────────────────────────
 
 @router.get("/api/endpoints")

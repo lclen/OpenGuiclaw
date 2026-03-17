@@ -16,6 +16,16 @@
       "sourceType": "github",
       "computedHash": "2275e4d8dba1790d52f6619b3e2fed04edc948beef545a2ad18e4a1be644426d"
     },
+    "professional-markdown": {
+      "source": "lclen/project-docs-skills",
+      "sourceType": "github",
+      "computedHash": "3129d7c8be979fb266904b9e97f264abfa1b3bcd3f29615d95d72f7c42a9934d"
+    },
+    "project-doc-tracker": {
+      "source": "lclen/project-docs-skills",
+      "sourceType": "github",
+      "computedHash": "d837981865349d46d4e9727520c7c5e1d3f3b28b08c2f33ac2a173f4bf830821"
+    },
     "web-design-guidelines": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",
