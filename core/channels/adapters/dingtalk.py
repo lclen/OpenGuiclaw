@@ -13,6 +13,7 @@
 """
 
 import asyncio
+import importlib.metadata
 import json
 import logging
 import re
@@ -57,6 +58,20 @@ def _import_dingtalk_stream():
             raise ImportError(
                 "钉钉 Stream SDK 未找到，请执行:\n  pip install dingtalk-stream"
             ) from exc
+
+
+def _get_websockets_major_version() -> int | None:
+    try:
+        raw_version = importlib.metadata.version("websockets")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    except Exception:
+        return None
+
+    try:
+        return int(str(raw_version).split(".", 1)[0])
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -142,6 +157,16 @@ class DingTalkAdapter(ChannelAdapter):
         _import_httpx()
         _import_dingtalk_stream()
 
+        websockets_major = _get_websockets_major_version()
+        if websockets_major is not None and websockets_major >= 12:
+            logger.error(
+                "DingTalk Stream requires websockets < 12 for stable operation, "
+                "but the current environment has websockets %s. "
+                "Please reinstall with: pip install \"websockets>=11.0.2,<12\"",
+                importlib.metadata.version("websockets"),
+            )
+            return
+
         self._http_client = httpx.AsyncClient()
         await self._refresh_token()
 
@@ -219,6 +244,43 @@ class DingTalkAdapter(ChannelAdapter):
             self._stream_loop = new_loop
 
             try:
+                # Monkey-patch dingtalk_stream 内部 logger，修复第三方库 bug：
+                # SDK 内部调用 self.logger.exception('msg', exc) 传了额外位置参数，
+                # 导致 "not all arguments converted during string formatting" TypeError。
+                # 用安全的 wrapper 替换，避免触发该 bug。
+                _ds_logger = logging.getLogger("dingtalk_stream")
+                _orig_exception = _ds_logger.exception
+
+                def _safe_exception(msg, *args, **kwargs):
+                    # 如果第一个额外参数是 Exception，转为 exc_info 方式记录
+                    if args and isinstance(args[0], BaseException):
+                        _orig_exception("%s: %s", msg, args[0], **{k: v for k, v in kwargs.items() if k != "exc_info"}, exc_info=True)
+                    else:
+                        try:
+                            _orig_exception(msg, *args, **kwargs)
+                        except TypeError:
+                            _orig_exception("%s", msg, exc_info=True)
+
+                _ds_logger.exception = _safe_exception
+                _ds_logger._openclaw_safe_exception_patched = True
+
+                _ds_client_logger = logging.getLogger("dingtalk_stream.client")
+                if not getattr(_ds_client_logger, "_openclaw_safe_exception_patched", False):
+                    _orig_client_exception = _ds_client_logger.exception
+
+                    def _safe_client_exception(msg, *args, **kwargs):
+                        if args and isinstance(args[0], BaseException):
+                            safe_kwargs = {k: v for k, v in kwargs.items() if k != "exc_info"}
+                            _orig_client_exception("%s: %s", msg, args[0], **safe_kwargs, exc_info=True)
+                        else:
+                            try:
+                                _orig_client_exception(msg, *args, **kwargs)
+                            except TypeError:
+                                _orig_client_exception("%s", msg, exc_info=True)
+
+                    _ds_client_logger.exception = _safe_client_exception
+                    _ds_client_logger._openclaw_safe_exception_patched = True
+
                 credential = dingtalk_stream.Credential(
                     self.config.app_key, self.config.app_secret
                 )
@@ -229,10 +291,8 @@ class DingTalkAdapter(ChannelAdapter):
                 )
                 self._stream_client = client
                 logger.info("DingTalk Stream client starting...")
-                
-                # Register connection status listening if supported by SDK or add basic logging
                 logger.info(f"DingTalk AppKey configured: {self.config.app_key[:6]}***")
-                
+
                 client.start_forever()
             except Exception as e:
                 if self._running:

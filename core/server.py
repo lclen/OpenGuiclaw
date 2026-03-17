@@ -48,8 +48,12 @@ async def lifespan(app: FastAPI):
         from core import bootstrap
         from core.tasks import scheduled_task_runner
         from core.scheduler import ScheduledTask, TaskScheduler, TriggerType, TaskType
+        from core.workspace_manager import get_workspace_manager
 
         bootstrap.run()
+
+        # ── WorkspaceManager: migrate legacy sessions + ensure default workspace ──
+        get_workspace_manager()
 
         # ── Agent ──────────────────────────────────────────────────────────
         config_path = str(_APP_BASE / "config.json")
@@ -281,7 +285,9 @@ templates = Jinja2Templates(directory=str(_APP_BASE / "templates"))
 # ── Register routers ──────────────────────────────────────────────────────────
 
 from core.routes import chat, memory, skills, agents, vrm, im, config as config_router
+from core.routes import workspace as workspace_router
 
+app.include_router(workspace_router.router)
 app.include_router(chat.router)
 app.include_router(memory.router)
 app.include_router(skills.router)

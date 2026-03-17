@@ -494,6 +494,10 @@ async def list_chat_endpoints():
         k = ep2.get("api_key", "")
         ep2["api_key_masked"] = (k[:4] + "***" + k[-2:]) if len(k) > 6 else ("***" if k else "")
         masked.append(ep2)
+    # Ensure active_id points to a valid endpoint
+    valid_ids = {ep.get("id") for ep in endpoints}
+    if active_id not in valid_ids:
+        active_id = endpoints[0].get("id") if endpoints else None
     return {"endpoints": masked, "active_id": active_id}
 
 
@@ -657,6 +661,43 @@ async def health_check_channels(req: ChannelHealthCheckRequest):
             })
 
     return {"results": results}
+
+
+# ── MCP servers config ───────────────────────────────────────────────────────
+
+_MCP_CONFIG_PATH = _APP_BASE / "config" / "mcp_servers.json"
+
+
+def _load_mcp_config() -> dict:
+    if not _MCP_CONFIG_PATH.exists():
+        return {"mcpServers": {}}
+    with open(_MCP_CONFIG_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_mcp_config(data: dict):
+    _MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_MCP_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+@router.get("/api/mcp/servers")
+async def get_mcp_servers():
+    return _load_mcp_config()
+
+
+@router.post("/api/mcp/servers")
+async def save_mcp_servers(request: Request):
+    try:
+        data = await request.json()
+        if not isinstance(data, dict) or "mcpServers" not in data:
+            raise HTTPException(status_code=400, detail="Expected {mcpServers: {...}}")
+        _save_mcp_config(data)
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── System control ────────────────────────────────────────────────────────────

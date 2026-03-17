@@ -72,7 +72,7 @@
             </div>
 
             <button @click="reloadSkills()"
-                class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/40 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all shadow-sm active:scale-95"
+                class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/72 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all shadow-sm active:scale-95"
                 title="重新唤醒引擎">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -85,7 +85,7 @@
     <!-- Tab Navigation -->
     <div class="flex shrink-0 px-6 bg-black/20 border-b border-white/5">
         <button @click="skillTab = 'installed'"
-            :class="skillTab === 'installed' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            :class="skillTab === 'installed' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/72 border-transparent hover:text-white/70'"
             class="relative py-3 mr-6 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit'] flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -94,7 +94,7 @@
         </button>
         <button
             @click="skillTab = 'marketplace'; if(!skillMarketplace.length) searchSkillMarketplace(skillMarketSearch)"
-            :class="skillTab === 'marketplace' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/40 border-transparent hover:text-white/70'"
+            :class="skillTab === 'marketplace' ? 'text-white border-[var(--stem-green-500)]' : 'text-white/72 border-transparent hover:text-white/70'"
             class="relative py-3 text-[12px] font-bold uppercase tracking-widest transition-all border-b-2 font-['Outfit'] flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -108,35 +108,38 @@
     <div x-show="skillTab === 'installed'" x-transition:enter="transition ease-out duration-200"
         x-transition:enter-start="opacity-0 translate-y-2" class="flex-1 flex flex-col overflow-hidden">
 
-        <!-- Search and Filter -->
-        <div class="px-6 py-4 border-b border-white/5 space-y-3 shrink-0 bg-black/10">
-            <div class="relative group">
-                <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                    <svg class="w-4 h-4 text-white/30 group-focus-within:text-[var(--stem-green-500)] transition-colors"
-                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
+        <div data-react-skills-root hidden class="flex-1 min-h-0 h-full overflow-hidden"></div>
+
+        <div data-legacy-skills-installed-root class="flex-1 flex flex-col overflow-hidden">
+            <!-- Search and Filter -->
+            <div class="px-6 py-4 border-b border-white/5 space-y-3 shrink-0 bg-black/10">
+                <div class="relative group">
+                    <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                        <svg class="w-4 h-4 text-white/65 group-focus-within:text-[var(--stem-green-500)] transition-colors"
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input type="text" x-model="skillSearchQuery" placeholder="检索算子功能..."
+                        class="skill-input w-full pl-9 pr-4 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-medium placeholder-white/30 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
                 </div>
-                <input type="text" x-model="skillSearchQuery" placeholder="检索算子功能..."
-                    class="skill-input w-full pl-9 pr-4 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-[12px] font-medium placeholder-white/30 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
+
+                <div class="flex gap-2">
+                    <button @click="skillStatusFilter = 'all'"
+                        :class="skillStatusFilter === 'all' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 'bg-transparent text-white/72 border-white/5 hover:bg-white/5 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">全部视图</button>
+                    <button @click="skillStatusFilter = 'enabled'"
+                        :class="skillStatusFilter === 'enabled' ? 'bg-[var(--stem-green-500)]/15 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-transparent text-white/72 border-white/5 hover:bg-white/5 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">仅活动态</button>
+                    <button @click="skillStatusFilter = 'disabled'"
+                        :class="skillStatusFilter === 'disabled' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' : 'bg-transparent text-white/72 border-white/5 hover:bg-white/5 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">已休眠体</button>
+                </div>
             </div>
 
-            <div class="flex gap-2">
-                <button @click="skillStatusFilter = 'all'"
-                    :class="skillStatusFilter === 'all' ? 'bg-blue-500/15 text-blue-400 border-blue-500/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
-                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">全部视图</button>
-                <button @click="skillStatusFilter = 'enabled'"
-                    :class="skillStatusFilter === 'enabled' ? 'bg-[var(--stem-green-500)]/15 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
-                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">仅活动态</button>
-                <button @click="skillStatusFilter = 'disabled'"
-                    :class="skillStatusFilter === 'disabled' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' : 'bg-transparent text-white/40 border-white/5 hover:bg-white/5 hover:text-white'"
-                    class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border tracking-widest uppercase font-['Outfit']">已休眠体</button>
-            </div>
-        </div>
-
-        <!-- Grouped Skills List -->
-        <div class="flex-1 overflow-y-auto px-6 py-4 space-y-3 custom-scrollbar">
+            <!-- Grouped Skills List -->
+            <div class="flex-1 overflow-y-auto px-6 py-4 space-y-3 custom-scrollbar">
             <template x-for="[category, categorySkills] in groupedSkills" :key="category">
                 <div x-data="{ open: false }"
                     class="skill-card bg-white/[0.02] border border-white/5 rounded-xl overflow-hidden shadow-sm transition-all group">
@@ -156,7 +159,7 @@
                             <div class="text-left flex items-center gap-2">
                                 <span class="text-white text-[13px] font-bold capitalize font-['Outfit'] tracking-wide"
                                     x-text="category"></span>
-                                <span class="text-white/40 text-[10px] font-mono mt-0.5"
+                                <span class="text-white/72 text-[10px] font-mono mt-0.5"
                                     x-text="'[' + categorySkills.length + ']'"></span>
                             </div>
                         </div>
@@ -164,10 +167,10 @@
                         <div class="flex items-center gap-3">
                             <span
                                 class="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border font-mono"
-                                :class="categorySkills.every(s => s.enabled) ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/20' : categorySkills.some(s => s.enabled) ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-black/40 text-white/30 border-white/5'"
+                                :class="categorySkills.every(s => s.enabled) ? 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/20' : categorySkills.some(s => s.enabled) ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-black/40 text-white/65 border-white/5'"
                                 x-text="categorySkills.filter(s => s.enabled).length + '/' + categorySkills.length + ' ON'">
                             </span>
-                            <svg class="w-4 h-4 text-white/30 transition-transform duration-300"
+                            <svg class="w-4 h-4 text-white/65 transition-transform duration-300"
                                 :class="open ? 'rotate-180 text-white' : ''" fill="none" stroke="currentColor"
                                 viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -194,9 +197,9 @@
                                                 class="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors group"
                                                 x-show="skill.tools && skill.tools.length > 0">
                                                 <span
-                                                    class="text-[9px] font-bold text-white/20 group-hover:text-white/40 uppercase tracking-widest"
+                                                    class="text-[9px] font-bold text-white/55 group-hover:text-white/72 uppercase tracking-widest"
                                                     x-text="isSkillExpanded(skill.name) ? '收起工具' : '显示工具 (' + skill.tools.length + ')'"></span>
-                                                <svg class="w-3 h-3 text-white/20 group-hover:text-white/40 transition-transform"
+                                                <svg class="w-3 h-3 text-white/55 group-hover:text-white/72 transition-transform"
                                                     :class="isSkillExpanded(skill.name) ? 'rotate-180' : ''" fill="none"
                                                     stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -204,7 +207,7 @@
                                                 </svg>
                                             </button>
                                         </div>
-                                        <p class="text-[11px] font-medium text-white/50 leading-relaxed truncate max-w-lg mb-1"
+                                        <p class="text-[11px] font-medium text-white/75 leading-relaxed truncate max-w-lg mb-1"
                                             x-text="skill.description" :title="skill.description"></p>
 
                                         <!-- Atomic Tools List -->
@@ -214,7 +217,7 @@
                                                     <div class="w-1 h-3 bg-[var(--stem-green-500)]/40 rounded-full">
                                                     </div>
                                                     <span
-                                                        class="text-[10px] font-bold text-white/30 uppercase tracking-widest font-['Outfit']">内置原子化工具</span>
+                                                        class="text-[10px] font-bold text-white/65 uppercase tracking-widest font-['Outfit']">内置原子化工具</span>
                                                 </div>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                                     <template x-for="tool in skill.tools" :key="tool">
@@ -250,7 +253,7 @@
                                                 <template x-for="field in skill.ui_config" :key="field.key">
                                                     <div>
                                                         <label
-                                                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest ml-1 mb-1.5 font-['Outfit']"
+                                                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest ml-1 mb-1.5 font-['Outfit']"
                                                             x-text="field.label"></label>
 
                                                         <template x-if="field.type === 'text'">
@@ -321,17 +324,18 @@
                 </div>
             </template>
 
-            <!-- Empty State -->
-            <div x-show="groupedSkills.length === 0"
-                class="flex flex-col items-center justify-center py-20 text-white/30">
-                <div
-                    class="w-14 h-14 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/5">
-                    <svg class="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+                <!-- Empty State -->
+                <div x-show="groupedSkills.length === 0"
+                    class="flex flex-col items-center justify-center py-20 text-white/65">
+                    <div
+                        class="w-14 h-14 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/5">
+                        <svg class="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <p class="text-[13px] font-bold uppercase tracking-widest font-['Outfit'] text-white">未能检索到系统算子库</p>
                 </div>
-                <p class="text-[13px] font-bold uppercase tracking-widest font-['Outfit'] text-white">未能检索到系统算子库</p>
             </div>
         </div>
     </div>
@@ -364,7 +368,7 @@
             <div class="flex gap-3">
                 <div class="relative flex-1 group">
                     <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                        <svg class="w-4 h-4 text-white/30 group-focus-within:text-[var(--stem-green-500)] transition-colors"
+                        <svg class="w-4 h-4 text-white/65 group-focus-within:text-[var(--stem-green-500)] transition-colors"
                             fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -403,7 +407,7 @@
 
             <!-- No results -->
             <div x-show="!skillMarketLoading && skillMarketplace.length === 0"
-                class="flex flex-col items-center justify-center py-16 text-white/30">
+                class="flex flex-col items-center justify-center py-16 text-white/65">
                 <div
                     class="w-12 h-12 mb-4 rounded-xl bg-white/5 flex items-center justify-center border border-white/5">
                     <svg class="w-6 h-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -433,13 +437,13 @@
                                         class="text-[13px] font-bold text-white tracking-tight font-['Outfit'] truncate"
                                         x-text="item.name || item.id"></span>
                                     <span x-show="item.version"
-                                        class="text-[9px] font-bold text-white/50 border border-white/10 px-1.5 py-0.5 rounded font-mono uppercase shrink-0"
+                                        class="text-[9px] font-bold text-white/75 border border-white/10 px-1.5 py-0.5 rounded font-mono uppercase shrink-0"
                                         x-text="'v' + item.version"></span>
                                 </div>
                                 <button type="button" @click.stop="toggleSkillExpand(item.name || item.id)"
                                     class="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors group"
                                     x-show="item.tools && item.tools.length > 0">
-                                    <svg class="w-3 h-3 text-white/20 group-hover:text-white/40 transition-transform"
+                                    <svg class="w-3 h-3 text-white/55 group-hover:text-white/72 transition-transform"
                                         :class="isSkillExpanded(item.name || item.id) ? 'rotate-180' : ''" fill="none"
                                         stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
@@ -447,7 +451,7 @@
                                     </svg>
                                 </button>
                             </div>
-                            <p class="text-[11px] font-medium text-white/50 leading-snug mb-2 truncate"
+                            <p class="text-[11px] font-medium text-white/75 leading-snug mb-2 truncate"
                                 x-text="item.description || '暂无算子拓扑描述'" :title="item.description"></p>
 
                             <!-- Atomic Tools List (Placeholder for marketplace) -->
@@ -455,12 +459,12 @@
                                 <div class="p-2.5 bg-black/40 rounded-xl border border-white/5">
                                     <div class="flex items-center gap-2 mb-2 px-1">
                                         <span
-                                            class="text-[9px] font-bold text-white/20 uppercase tracking-widest font-['Outfit']">预估原子工具</span>
+                                            class="text-[9px] font-bold text-white/55 uppercase tracking-widest font-['Outfit']">预估原子工具</span>
                                     </div>
                                     <div class="flex flex-wrap gap-1.5">
                                         <template x-for="tool in item.tools" :key="tool">
                                             <span
-                                                class="px-2 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] font-mono text-white/40"
+                                                class="px-2 py-0.5 bg-white/5 rounded border border-white/5 text-[10px] font-mono text-white/72"
                                                 x-text="tool"></span>
                                         </template>
                                     </div>
@@ -471,7 +475,7 @@
                                 <span x-show="item.category"
                                     class="text-[9px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded font-mono"
                                     x-text="item.category"></span>
-                                <span x-show="item.author" class="text-[10px] text-white/40 font-bold"
+                                <span x-show="item.author" class="text-[10px] text-white/72 font-bold"
                                     x-text="item.author"></span>
                             </div>
                         </div>

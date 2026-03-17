@@ -37,4 +37,5 @@ numpy>=1.24.0
 # IM Integrations
 lark-oapi>=1.2.5
 dingtalk-stream>=0.1.0
+websockets>=11.0.2,<12.0
 python-telegram-bot>=21.0.0

@@ -1,0 +1,302 @@
+<!-- ═══ CHAT VIEW — Codex Style ═══ -->
+<div class="chat-view-root">
+
+    <!-- Welcome state -->
+    <div x-show="!currentThreadId" class="welcome-placeholder chat-welcome">
+        <div class="chat-welcome-orb">
+            <svg width="22" height="22" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+        </div>
+        <h2 x-show="activeWorkspaceId">选择或新建对话</h2>
+        <h2 x-show="!activeWorkspaceId">请先选择工作区</h2>
+        <p x-show="activeWorkspaceId">返回首页选择工作区，或者直接为当前项目新开一个线程。</p>
+        <p x-show="!activeWorkspaceId">先在首页或左侧栏选择一个工作区，再开始新的线程。</p>
+        <button x-show="activeWorkspaceId" class="btn-primary" @click="newSession()" style="margin-top:8px;">
+            开始对话
+        </button>
+    </div>
+
+    <!-- Active chat -->
+    <div x-show="currentThreadId" class="chat-thread-shell">
+
+        <!-- Message list -->
+        <div id="chat-container"
+             data-react-chat-root
+             hidden
+             class="chat-scroll-region"
+             :class="chatScrollbarHidden ? 'chat-scrollbar-hidden' : 'chat-scrollbar-visible'"
+             style="padding: 32px 0 16px;"></div>
+
+        <div data-legacy-chat-message-root
+             class="chat-scroll-region"
+             :class="chatScrollbarHidden ? 'chat-scrollbar-hidden' : 'chat-scrollbar-visible'"
+             style="padding: 32px 0 16px;">
+
+            <!-- Empty state -->
+            <div x-show="messages.length === 0"
+                class="chat-empty-state">
+                <div class="chat-empty-icon">
+                    <svg width="20" height="20" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                    </svg>
+                </div>
+                <p class="chat-empty-title">对话已就绪</p>
+                <p class="chat-empty-sub">随时可以开始</p>
+            </div>
+
+            <template x-for="msg in messages" :key="msg.id">
+                <div>
+                    <!-- Visual log pill -->
+                    <div x-show="msg.role === 'visual_log'" class="chat-visual-log">
+                        <span class="chat-visual-log-dot"></span>
+                        <span class="md-body" x-html="msg.html || mdRender(msg.content || '')"></span>
+                    </div>
+
+                    <!-- User message — right-aligned bubble -->
+                    <div x-show="msg.role === 'user'" class="chat-row chat-row-user">
+                        <div class="chat-bubble-user">
+                            <div class="md-body" x-html="msg.html || msg.content"></div>
+                        </div>
+                    </div>
+
+                    <!-- Assistant message — no bubble, centered column -->
+                    <div x-show="msg.role === 'assistant'" class="chat-row chat-row-assistant">
+                        <div class="chat-assistant-body">
+
+                            <!-- Thinking block -->
+                            <template x-if="msg.thinkingHtml">
+                                <div class="chat-think-block">
+                                    <div class="chat-think-header"
+                                        @click="msg._thinkCollapsed = !msg._thinkCollapsed">
+                                        <svg width="11" height="11" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24"
+                                            :style="msg._thinkCollapsed ? 'transform:rotate(-90deg)' : ''"
+                                            style="transition:transform 0.2s;flex-shrink:0;opacity:0.7;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                                        </svg>
+                                        <span>思考过程</span>
+                                    </div>
+                                    <div x-show="!msg._thinkCollapsed" x-transition.opacity
+                                        class="chat-think-body md-body font-mono"
+                                        x-html="msg.thinkingHtml"></div>
+                                </div>
+                            </template>
+
+                            <!-- Thinking indicator -->
+                            <template x-if="msg._isThinking">
+                                <div class="chat-thinking-indicator">
+                                    <span class="chat-thinking-dots">
+                                        <span></span><span></span><span></span>
+                                    </span>
+                                    <span>推理中</span>
+                                </div>
+                            </template>
+
+                            <!-- Interleaved blocks -->
+                            <template x-if="msg.blocks && msg.blocks.length > 0">
+                                <div class="chat-blocks">
+                                    <template x-for="(block, bIdx) in msg.blocks" :key="bIdx">
+                                        <div>
+                                            <!-- Text block -->
+                                            <template x-if="block.type === 'text'">
+                                                <div class="chat-text-block md-body" x-html="block.html"></div>
+                                            </template>
+
+                                            <!-- Tool call block -->
+                                            <template x-if="block.type === 'tool'">
+                                                <div class="chat-tool-block">
+                                                    <div class="chat-tool-header"
+                                                        @click="msg.blocks = msg.blocks.map((b,i) => i===bIdx ? {...b, _collapsed: !b._collapsed} : b)">
+                                                        <div class="chat-tool-icon"
+                                                            :class="block.status === 'done' ? 'chat-tool-icon-done' : 'chat-tool-icon-running'">
+                                                            <svg x-show="block.status === 'running'" width="10" height="10" fill="none" viewBox="0 0 24 24"
+                                                                style="animation:spin 1s linear infinite;">
+                                                                <circle cx="12" cy="12" r="10" stroke="rgba(99,179,237,0.9)" stroke-width="3" stroke-dasharray="30 70" stroke-linecap="round"/>
+                                                            </svg>
+                                                            <svg x-show="block.status === 'done'" width="10" height="10" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                                                            </svg>
+                                                        </div>
+                                                        <span class="chat-tool-name" x-text="block.name"></span>
+                                                        <span class="chat-tool-status"
+                                                            :class="block.status === 'running' ? 'chat-tool-status-running' : 'chat-tool-status-done'"
+                                                            x-text="block.status === 'running' ? '执行中' : '完成'"></span>
+                                                        <svg width="10" height="10" fill="none" stroke="var(--shell-text-muted)" viewBox="0 0 24 24"
+                                                            :style="block._collapsed ? 'transform:rotate(-90deg)' : ''"
+                                                            style="transition:transform 0.2s;margin-left:auto;flex-shrink:0;">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div x-show="!block._collapsed" class="chat-tool-body">
+                                                        <div class="chat-tool-code chat-tool-params" x-text="block.paramsStr"></div>
+                                                        <template x-if="block.resultStr">
+                                                            <div class="chat-tool-result-wrap">
+                                                                <div class="chat-tool-code chat-tool-result" x-text="block.resultStr"></div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
+
+                                            <!-- Status done -->
+                                            <template x-if="block.type === 'status_done'">
+                                                <div class="chat-status-done">
+                                                    <div class="chat-status-done-icon">
+                                                        <svg width="9" height="9" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                        </svg>
+                                                    </div>
+                                                    任务完成
+                                                </div>
+                                            </template>
+
+                                            <!-- Ask user -->
+                                            <template x-if="block.type === 'ask_user'">
+                                                <div class="chat-ask-block">
+                                                    <p class="chat-ask-question" x-text="block.question"></p>
+                                                    <div x-show="!block.answered" class="chat-ask-options">
+                                                        <template x-for="opt in block.options" :key="opt.id">
+                                                            <button @click="submitAskUserChoice(msg, block, opt)"
+                                                                class="chat-ask-btn"
+                                                                x-text="opt.label"></button>
+                                                        </template>
+                                                    </div>
+                                                    <div x-show="block.answered" class="chat-ask-answered">
+                                                        ✓ 已选择：<span x-text="block.resultStr"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <!-- Fallback -->
+                            <template x-if="!msg.blocks || msg.blocks.length === 0">
+                                <div class="chat-text-block md-body" x-html="msg.html || msg.content"></div>
+                            </template>
+
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Input area -->
+        <div class="chat-composer-shell"
+             @mouseenter="handleComposerMouseEnter()"
+             @mouseleave="handleComposerMouseLeave()"
+             @focusin="handleComposerFocusIn()"
+             @focusout="handleComposerFocusOut()">
+
+            <!-- Slash command menu -->
+            <div id="command-menu" x-show="showCommandMenu && filteredCommands.length > 0" x-cloak>
+                <template x-for="(cmd, idx) in filteredCommands" :key="cmd.command">
+                    <div @click="selectCommand(cmd)"
+                        style="display:flex;align-items:center;gap:10px;padding:9px 14px;cursor:pointer;transition:background 0.1s;"
+                        :style="idx === commandSelectedIndex ? 'background:rgba(255,255,255,0.06)' : ''"
+                        onmouseover="this.style.background='rgba(255,255,255,0.04)'"
+                        onmouseout="this.style.background=''">
+                        <span style="width:22px;height:22px;border-radius:6px;background:rgba(182,240,89,0.1);border:1px solid rgba(182,240,89,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;"
+                            x-text="cmd.icon"></span>
+                        <div>
+                            <div style="font-size:12px;font-weight:700;color:white;font-family:var(--shell-font-mono);" x-text="cmd.command"></div>
+                            <div style="font-size:11px;color:var(--shell-text-muted);" x-text="cmd.desc"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <div id="chat-input-area" class="chat-composer-card"
+                :style="isDragOver ? 'border-color:rgba(182,240,89,0.6);background:rgba(182,240,89,0.05)' : ''"
+                @dragover.prevent="isDragOver = true"
+                @dragleave.prevent="isDragOver = false"
+                @drop.prevent="handleDrop($event)"
+                @paste="handlePaste($event)">
+
+                <!-- Drag overlay -->
+                <div x-show="isDragOver"
+                    style="position:absolute;inset:0;border-radius:24px;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:10;border:2px dashed rgba(182,240,89,0.5);background:rgba(13,15,20,0.85);">
+                    <span style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--shell-accent);">松开以添加文件</span>
+                </div>
+
+                <!-- Staged files -->
+                <div x-show="stagedFiles.length > 0" class="composer-staged-files">
+                    <template x-for="(file, idx) in stagedFiles" :key="idx">
+                        <div class="staged-file-chip">
+                            <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                            </svg>
+                            <span x-text="file.name" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+                            <button @click="removeStagedFile(idx)"
+                                style="background:transparent;border:none;color:var(--shell-text-muted);cursor:pointer;padding:0;line-height:1;font-size:13px;">&times;</button>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Textarea row -->
+                <div class="composer-main-row">
+                    <div class="composer-leading">
+                        <label class="composer-attach-button" title="添加文件">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                            </svg>
+                            <input type="file" multiple style="display:none;" @change="handleFileSelect($event)">
+                        </label>
+                    </div>
+
+                    <textarea
+                        x-model="inputText"
+                        class="composer-textarea"
+                        @input="handleInput($event); autoResize($event.target)"
+                        @keydown.up.prevent="navigateCommand(-1, $event)"
+                        @keydown.down.prevent="navigateCommand(1, $event)"
+                        @keydown.enter.prevent="handleEnter($event)"
+                        @keydown.escape="showCommandMenu = false"
+                        placeholder="向 openGuiclaw 提问，或输入 / 调出命令"
+                        rows="1"
+                        :disabled="isReceiving && !currentController"></textarea>
+
+                    <button @click="isReceiving ? abortReceiving() : sendMessage()"
+                            class="composer-send-button"
+                            :class="isReceiving ? 'is-abort' : ((inputText.trim() || stagedFiles.length > 0) ? 'is-ready' : '')"
+                            :disabled="!isReceiving && !inputText.trim() && stagedFiles.length === 0">
+                        <svg x-show="isReceiving" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <rect x="6" y="6" width="12" height="12" rx="2" stroke-width="2.5"/>
+                        </svg>
+                        <svg x-show="!isReceiving" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 19V5m-7 7l7-7 7 7"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="composer-meta-row">
+                    <div class="composer-meta-left">
+                        <span class="composer-meta-chip"
+                              x-text="activeWorkspace ? activeWorkspace.name : '未选择工作区'"></span>
+                        <span class="composer-meta-chip"
+                              x-show="currentThreadId"
+                              x-text="getCurrentThread() && getCurrentThread().title ? getCurrentThread().title : '新线程草稿'"></span>
+                    </div>
+                    <div class="composer-meta-right">
+                        <span class="composer-meta-text">Enter 发送</span>
+                        <span class="composer-meta-text">Shift+Enter 换行</span>
+                        <span class="composer-meta-text" x-show="lastBackendTokens > 0" x-text="contextDisplay"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<style>
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); opacity: 0.4; }
+    50%       { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+</style>

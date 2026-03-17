@@ -45,11 +45,13 @@
 | knowledge-graph | 知识图谱 | stable | 2026-03-13T15:00:53+08:00 | 持续维护 | core/knowledge_graph.py | - |
 | bootstrap | 启动引导 | stable | 2026-03-13T15:00:55+08:00 | 持续维护 | core/bootstrap.py, launcher.py | - |
 | self-check | 自检系统 | stable | 2026-03-13T15:00:56+08:00 | 持续维护 | core/self_check.py | - |
+| codex-style-workspace-ui | Codex 风格 Workspace UI 重构 | done | 2026-03-17T14:53:55+08:00 | 无（本次交付完毕） | tests/test_workspace_manager.py | - |
+| config-panel-display-bug | 设置面板模型端点显示 bug | done | 2026-03-17T19:03:37+08:00 | 持续维护 | templates/panels/panel_config.html | - |
 <!-- project-tracker:items:end -->
 
 ## 最近一次会话
 <!-- project-tracker:session:start -->
-系统健康检查与诊断
+已修复：移除 panel_config.html 旧架构遗留的 x-show 条件，设置打开时重新加载端点数据
 <!-- project-tracker:session:end -->
 
 ## 下一步建议
@@ -75,6 +77,8 @@
 - knowledge-graph: 持续维护
 - bootstrap: 持续维护
 - self-check: 持续维护
+- codex-style-workspace-ui: 无（本次交付完毕）
+- config-panel-display-bug: 持续维护
 <!-- project-tracker:next:end -->
 
 ## 已知阻塞

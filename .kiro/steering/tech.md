@@ -52,7 +52,7 @@
 uv pip install -r requirements.txt
 
 # 启动 Web UI（推荐）
-uv run uvicorn core.server:app --host 127.0.0.1 --port 8080
+uv run uvicorn core.server:app --host 127.0.0.1 --port 8010 --reload
 
 # 启动 CLI 模式
 uv run python main.py

@@ -2,7 +2,7 @@
 <div x-show="activePanel === 'history'" class="flex flex-col h-full">
     <div class="px-4 py-3 border-b border-white/10">
         <p class="text-white font-semibold text-sm">历史对话</p>
-        <p class="text-white/40 text-xs mt-0.5" x-text="`共 ${sessions.length} 条`"></p>
+        <p class="text-white/72 text-xs mt-0.5" x-text="`共 ${sessions.length} 条`"></p>
     </div>
     <div class="flex-1 overflow-y-auto custom-scrollbar py-2">
         <template x-for="s in sessions" :key="s.id">
@@ -21,10 +21,10 @@
                     <span x-show="s.id === currentSessionId"
                         class="text-[9px] bg-[var(--stem-green-500,theme(colors.emerald.500))]/20 text-[var(--stem-green-400,theme(colors.emerald.400))] px-1 py-0.5 rounded ml-2 shrink-0 border border-[var(--stem-green-500,theme(colors.emerald.500))]/30">当前</span>
                 </div>
-                <p class="text-white/35 text-[10px] mt-0.5"
+                <p class="text-white/68 text-[10px] mt-0.5"
                     x-text="`${s.message_count} 条消息 · ${s.created_at ? s.created_at.slice(0,10) : ''}`"></p>
             </button>
         </template>
-        <div x-show="sessions.length === 0" class="px-4 py-8 text-center text-white/30 text-sm">暂无历史对话</div>
+        <div x-show="sessions.length === 0" class="px-4 py-8 text-center text-white/65 text-sm">暂无历史对话</div>
     </div>
 </div>

@@ -1,6 +1,9 @@
 <!-- Scheduler Panel -->
 <div x-show="activePanel === 'scheduler'"
     class="h-full flex flex-col relative bg-[var(--noble-black-800)]/40 backdrop-blur-md">
+    <div data-react-scheduler-root hidden class="flex-1 min-h-0 h-full overflow-hidden"></div>
+
+    <div data-legacy-scheduler-main-root class="h-full flex flex-col">
     <!-- Header -->
     <div class="flex items-center justify-between px-6 py-3.5 border-b border-white/5 shrink-0">
         <div>
@@ -145,6 +148,7 @@
                 </div>
             </div>
         </template>
+    </div>
     </div>
 
     <!-- Form Overlay -->

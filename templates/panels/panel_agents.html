@@ -84,7 +84,7 @@
                     <option value="system">系统</option>
                 </select>
                 <button @click="loadAgents()"
-                    class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/40 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all active:scale-95"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/5 hover:bg-blue-500/10 text-white/72 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 transition-all active:scale-95"
                     title="刷新">
                     <svg class="w-4 h-4" :class="loading ? 'animate-spin' : ''" fill="none" stroke="currentColor"
                         viewBox="0 0 24 24">
@@ -126,10 +126,10 @@
             <div
                 class="w-8 h-8 border-[2px] border-[var(--stem-green-500)]/20 border-t-[var(--stem-green-500)] rounded-full animate-spin mb-4">
             </div>
-            <p class="text-white/40 text-[12px] font-bold tracking-widest">加载智能体列表中...</p>
+            <p class="text-white/72 text-[12px] font-bold tracking-widest">加载智能体列表中...</p>
         </div>
         <div x-show="!loading && filteredAgents.length === 0"
-            class="flex flex-col items-center justify-center py-20 text-white/30">
+            class="flex flex-col items-center justify-center py-20 text-white/65">
             <div
                 class="w-14 h-14 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/5 text-3xl">
                 🤖</div>
@@ -155,7 +155,7 @@
                                         'bg-[var(--stem-green-500)]/15 text-[var(--stem-green-500)]': agent.category === 'general' || !agent.category
                                     }" x-text="categoryLabel(agent.category)"></span>
                                 <span x-show="agent.type === 'system'"
-                                    class="category-badge px-2 py-0.5 rounded-full bg-white/5 text-white/40">系统预置</span>
+                                    class="category-badge px-2 py-0.5 rounded-full bg-white/5 text-white/72">系统预置</span>
                             </div>
                             <p class="text-[var(--noble-black-500)] text-[10px] font-mono mt-0.5" x-text="agent.id"></p>
                             <p class="text-[var(--noble-black-400)] text-[11px] font-medium leading-relaxed mt-1.5 line-clamp-2"
@@ -177,17 +177,17 @@
                         <div class="flex flex-wrap gap-1.5">
                             <template x-for="sk in (agent.skills || []).slice(0, 5)" :key="sk">
                                 <span
-                                    class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/40 rounded text-[9px] font-mono uppercase tracking-wide"
+                                    class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/72 rounded text-[9px] font-mono uppercase tracking-wide"
                                     x-text="sk"></span>
                             </template>
                             <span x-show="(agent.skills || []).length > 5"
-                                class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/30 rounded text-[9px] font-mono"
+                                class="px-2 py-0.5 bg-black/40 border border-white/5 text-white/65 rounded text-[9px] font-mono"
                                 x-text="'+' + ((agent.skills || []).length - 5)"></span>
                         </div>
                     </div>
                     <div class="flex items-center gap-2 px-4 py-3 border-t border-white/5 bg-black/20">
                         <button @click="openEdit(agent)"
-                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-blue-500/15 text-white/50 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-blue-500/15 text-white/75 hover:text-blue-400 border border-white/5 hover:border-blue-500/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -195,7 +195,7 @@
                             编辑
                         </button>
                         <button @click="exportAgent(agent)"
-                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-[var(--stem-green-500)]/10 text-white/50 hover:text-[var(--stem-green-500)] border border-white/5 hover:border-[var(--stem-green-500)]/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
+                            class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-[var(--stem-green-500)]/10 text-white/75 hover:text-[var(--stem-green-500)] border border-white/5 hover:border-[var(--stem-green-500)]/20 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all active:scale-95">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -204,7 +204,7 @@
                         </button>
                         <div class="flex-1"></div>
                         <button @click="confirmDelete(agent)" :disabled="agent.type === 'system'"
-                            :class="agent.type === 'system' ? 'opacity-20 cursor-not-allowed text-white/30 border-white/5' : 'hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/20 text-white/30 border-white/5 active:scale-95'"
+                            :class="agent.type === 'system' ? 'opacity-20 cursor-not-allowed text-white/65 border-white/5' : 'hover:bg-rose-500/15 hover:text-rose-400 hover:border-rose-500/20 text-white/65 border-white/5 active:scale-95'"
                             class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -236,7 +236,7 @@
                     <span x-text="editingId ? '编辑智能体' : '新建智能体'"></span>
                 </h3>
                 <button @click="modalOpen = false"
-                    class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all">
+                    class="w-7 h-7 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 text-white/72 hover:text-white transition-all">
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M6 18L18 6M6 6l12 12" />
@@ -250,19 +250,19 @@
                 <div class="flex gap-4">
                     <div class="shrink-0">
                         <label
-                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">图标</label>
+                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">图标</label>
                         <input type="text" x-model="form.icon" maxlength="2"
                             class="agent-form-input w-14 h-10 text-center text-2xl bg-black/40 border border-white/10 rounded-xl focus:outline-none focus:border-[var(--stem-green-500)]/50">
                     </div>
                     <div class="flex-1">
                         <label
-                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">名称*</label>
+                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">名称*</label>
                         <input type="text" x-model="form.name" placeholder="给智能体起个名字..."
                             class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium placeholder-white/25 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
                     </div>
                     <div class="shrink-0">
                         <label
-                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">颜色</label>
+                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">颜色</label>
                         <input type="color" x-model="form.color"
                             class="w-10 h-10 rounded-xl cursor-pointer bg-black/40 border border-white/10 p-1 focus:outline-none">
                     </div>
@@ -272,13 +272,13 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label
-                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">描述</label>
+                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">描述</label>
                         <input type="text" x-model="form.description" placeholder="一句话描述智能体..."
                             class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium placeholder-white/25 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all">
                     </div>
                     <div>
                         <label
-                            class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">首选模型</label>
+                            class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">首选模型</label>
                         <select x-model="form.preferred_model"
                             class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
                             <option value="">使用系统默认</option>
@@ -291,7 +291,7 @@
 
                 <!-- Category -->
                 <div>
-                    <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">分类</label>
+                    <label class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">分类</label>
                     <select x-model="form.category"
                         class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-white text-[13px] font-medium focus:outline-none focus:border-[var(--stem-green-500)]/50 appearance-none cursor-pointer">
                         <option value="general">通用</option>
@@ -304,7 +304,7 @@
 
                 <!-- ── Skills Picker ──────────────────────────────────────── -->
                 <div>
-                    <label class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">技能</label>
+                    <label class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">技能</label>
 
                     <!-- Skills mode -->
                     <select x-model="form.skills_mode"
@@ -319,9 +319,9 @@
                         @click.outside="open = false">
                         <button type="button" @click="open = !open"
                             class="agent-form-input w-full h-10 px-3 bg-black/40 border border-white/10 rounded-xl text-left text-[12px] font-medium text-white flex items-center justify-between focus:outline-none hover:border-[var(--stem-green-500)]/40 transition-all">
-                            <span :class="form.selectedSkills.length === 0 ? 'text-white/40' : 'text-white'"
+                            <span :class="form.selectedSkills.length === 0 ? 'text-white/72' : 'text-white'"
                                 x-text="form.selectedSkills.length === 0 ? '点击选择技能...' : form.selectedSkills.length + ' 个技能已选'"></span>
-                            <svg class="w-4 h-4 text-white/40 shrink-0 transition-transform"
+                            <svg class="w-4 h-4 text-white/72 shrink-0 transition-transform"
                                 :class="open ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M19 9l-7 7-7-7" />
@@ -333,7 +333,7 @@
                             x-transition:enter-start="opacity-0 -translate-y-1"
                             x-transition:enter-end="opacity-100 translate-y-0" class="skill-dropdown">
                             <div x-show="availableSkills.length === 0"
-                                class="px-4 py-3 text-white/30 text-[11px] text-center">加载技能列表中...</div>
+                                class="px-4 py-3 text-white/65 text-[11px] text-center">加载技能列表中...</div>
                             <template x-for="sk in availableSkills" :key="sk.name">
                                 <div class="border-b border-white/5 last:border-0 overflow-hidden">
                                     <div class="flex items-center hover:bg-white/5 transition-colors group">
@@ -355,17 +355,17 @@
                                                     <span class="text-white text-[12px] font-bold font-mono"
                                                         x-text="sk.name"></span>
                                                     <span x-show="sk.category"
-                                                        class="bg-white/5 px-1.5 py-0.5 rounded text-[8px] text-white/30 uppercase tracking-tighter"
+                                                        class="bg-white/5 px-1.5 py-0.5 rounded text-[8px] text-white/65 uppercase tracking-tighter"
                                                         x-text="sk.category"></span>
                                                 </div>
-                                                <span x-show="sk.description" class="text-white/35 text-[10px] truncate"
+                                                <span x-show="sk.description" class="text-white/68 text-[10px] truncate"
                                                     x-text="sk.description"></span>
                                             </div>
                                         </label>
 
                                         <!-- Expand toggle -->
                                         <button type="button" @click.stop="toggleSkillExpand(sk.name)"
-                                            class="w-8 h-full flex items-center justify-center text-white/20 hover:text-white transition-colors"
+                                            class="w-8 h-full flex items-center justify-center text-white/55 hover:text-white transition-colors"
                                             x-show="sk.tools && sk.tools.length > 0">
                                             <svg class="w-3 h-3 transition-transform"
                                                 :class="isSkillExpanded(sk.name) ? 'rotate-180' : ''" fill="none"
@@ -380,12 +380,12 @@
                                     <div x-show="isSkillExpanded(sk.name)" x-collapse
                                         class="bg-white/5 px-11 py-2 space-y-1 pb-3">
                                         <div
-                                            class="text-[9px] text-white/20 uppercase tracking-widest mb-1.5 font-bold">
+                                            class="text-[9px] text-white/55 uppercase tracking-widest mb-1.5 font-bold">
                                             包含的原子工具:</div>
                                         <div class="flex flex-wrap gap-1">
                                             <template x-for="tool in sk.tools" :key="tool">
                                                 <span
-                                                    class="px-1.5 py-0.5 bg-white/5 border border-white/5 rounded text-[10px] text-white/40 font-mono"
+                                                    class="px-1.5 py-0.5 bg-white/5 border border-white/5 rounded text-[10px] text-white/72 font-mono"
                                                     x-text="tool"></span>
                                             </template>
                                         </div>
@@ -416,7 +416,7 @@
                 <!-- Custom Prompt -->
                 <div>
                     <label
-                        class="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1.5">自定义提示词</label>
+                        class="block text-[10px] font-bold text-white/72 uppercase tracking-widest mb-1.5">自定义提示词</label>
                     <textarea x-model="form.custom_prompt" rows="5" placeholder="你是...&#10;&#10;你擅长...&#10;你的目标是..."
                         class="agent-form-input w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white text-[12px] font-medium leading-relaxed placeholder-white/20 focus:outline-none focus:border-[var(--stem-green-500)]/50 transition-all resize-none custom-scrollbar"></textarea>
                 </div>
@@ -424,7 +424,7 @@
 
             <div class="flex items-center justify-between px-6 py-4 border-t border-white/5 bg-black/20">
                 <button @click="modalOpen = false"
-                    class="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">
+                    class="px-4 py-2 bg-white/5 hover:bg-white/10 text-white/75 hover:text-white border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">
                     取消
                 </button>
                 <button @click="saveAgent()" :disabled="!form.name.trim() || saving"
@@ -457,11 +457,11 @@
                     </svg>
                 </div>
                 <p class="text-white font-bold text-[14px] mb-1">确认删除</p>
-                <p class="text-white/40 text-[12px] mb-6">智能体 "<strong class="text-white/70"
+                <p class="text-white/72 text-[12px] mb-6">智能体 "<strong class="text-white/70"
                         x-text="deletingAgent?.name"></strong>" 将被永久移除。</p>
                 <div class="flex gap-3">
                     <button @click="deleteConfirmOpen = false"
-                        class="flex-1 py-2 bg-white/5 hover:bg-white/10 text-white/50 border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">取消</button>
+                        class="flex-1 py-2 bg-white/5 hover:bg-white/10 text-white/75 border border-white/5 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all">取消</button>
                     <button @click="doDelete()"
                         class="flex-1 py-2 bg-rose-500 hover:bg-rose-400 text-white rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all active:scale-95">删除</button>
                 </div>

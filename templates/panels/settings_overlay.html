@@ -1,0 +1,75 @@
+<div class="settings-overlay" x-show="showSettings" x-cloak
+     @click.self="showSettings = false"
+     @wheel.capture="handleSettingsWheel($event)"
+     x-init="
+        if (!settingsTab) settingsTab = 'models';
+        $watch('showSettings', function(v) {
+            if (v) {
+                activePanel = 'config';
+                if (settingsTab !== 'archived') {
+                    const current = settingsTabs.find(tab => tab.id === settingsTab);
+                    if (current && current.cfgTab) $dispatch('set-cfg-tab', current.cfgTab);
+                }
+                // 每次打开设置时重新加载端点数据，确保显示最新配置
+                if (typeof $data.loadChatEndpoints === 'function') $data.loadChatEndpoints();
+                if (typeof $data.loadRoleEndpoints === 'function') $data.loadRoleEndpoints();
+            }
+        });
+     "
+     @keydown.escape.window="showSettings = false"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0">
+  <div class="settings-panel" @click.stop>
+    <div class="settings-shell">
+      <aside class="settings-nav">
+        <div class="settings-nav-header">
+          <div class="settings-nav-kicker">OpenGuiclaw</div>
+          <h2>设置中心</h2>
+          <p>把模型、身份和工具接入整理到同一处，减少层级和认知切换。</p>
+        </div>
+
+        <div class="settings-nav-list">
+          <template x-for="tab in settingsTabs" :key="tab.id">
+            <button class="settings-nav-item"
+                    :class="settingsTab === tab.id ? 'active' : ''"
+                    @click="
+                      settingsTab = tab.id;
+                      if (tab.cfgTab) {
+                        activePanel = 'config';
+                        $dispatch('set-cfg-tab', tab.cfgTab);
+                      }
+                    ">
+              <span class="settings-nav-title" x-text="tab.title"></span>
+              <span class="settings-nav-description" x-text="tab.description"></span>
+            </button>
+          </template>
+        </div>
+      </aside>
+
+      <section class="settings-main">
+        <div class="settings-main-header">
+          <div>
+            <div class="settings-main-kicker">Workspace Preferences</div>
+            <h3 x-text="(settingsTabs.find(tab => tab.id === settingsTab) || settingsTabs[0]).title"></h3>
+            <p x-text="(settingsTabs.find(tab => tab.id === settingsTab) || settingsTabs[0]).description"></p>
+          </div>
+          <button class="settings-close" @click="showSettings = false">关闭</button>
+        </div>
+
+        <div class="settings-main-body">
+          <div x-show="settingsTab !== 'archived'" style="flex:1; min-height:0; overflow:hidden;">
+            {% include 'panels/panel_config.html' %}
+          </div>
+
+          <div x-show="settingsTab === 'archived'" class="settings-archived-pane">
+            {% include 'panels/panel_archived.html' %}
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

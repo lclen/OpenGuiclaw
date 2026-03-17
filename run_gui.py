@@ -143,6 +143,21 @@ class Api:
         if self._window:
             self._window.destroy()
 
+    def select_workspace_folder(self):
+        """Open a native folder picker and return the selected directory."""
+        if not self._window:
+            return None
+        try:
+            result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+            if not result:
+                return None
+            if isinstance(result, (list, tuple)):
+                return str(result[0]) if result else None
+            return str(result)
+        except Exception as exc:
+            logging.warning(f"Failed to open workspace folder picker: {exc}")
+            return None
+
 
 def apply_native_dark_titlebar(window_title):
     """

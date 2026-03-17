@@ -80,6 +80,12 @@
         diaryDates: [],
         selectedDiaryContent: null,
         memoryItems: [],
+        memoryFilteredItems: [],
+        memorySearch: '',
+        memoryTypeFilter: 'all',
+        mcpServers: [],
+        mcpLoading: false,
+        mcpSaving: false,
         personas: {},
         config: {
             browser_choice: 'edge',
@@ -221,6 +227,7 @@
             this.loadChatEndpoints();
             this.loadRoleEndpoints();
             this.loadMemories();
+            this.loadMcpServers();
             this.loadTokenStats(this.tokenPeriod);
             this.loadChatModels();
             this.loadChatAgents();
@@ -262,7 +269,22 @@
                     extra = ed.role_extra_endpoints || {};
                 }
 
-                // 3) Merge: primary first, then extra endpoints
+                // 3) Ensure modelProviders is loaded (may not be ready on first call)
+                let providers = this.modelProviders || [];
+                if (providers.length === 0) {
+                    try {
+                        const pr = await fetch('/api/config/model/providers');
+                        if (pr.ok) {
+                            const pd = await pr.json();
+                            providers = pd.providers || [];
+                            if (!this.modelProviders || this.modelProviders.length === 0) {
+                                this.modelProviders = providers;
+                            }
+                        }
+                    } catch (_) { /* ignore, provider matching is best-effort */ }
+                }
+
+                // 4) Merge: primary first, then extra endpoints
                 const merged = {};
                 for (const key of ROLE_KEYS) {
                     const arr = [];
@@ -274,10 +296,10 @@
                     }
 
                     // Auto-match provider for role endpoints
-                    if (this.modelProviders && this.modelProviders.length > 0) {
+                    if (providers.length > 0) {
                         arr.forEach(ep => {
                             if (!ep.provider || ep.provider === 'custom') {
-                                const matched = this.modelProviders.find(pv =>
+                                const matched = providers.find(pv =>
                                     (pv.base_url && ep.base_url) &&
                                     (pv.base_url.replace(/\/$/, '') === ep.base_url.replace(/\/$/, ''))
                                 );
@@ -304,8 +326,25 @@
                         _editBuffer: '',
                         _confirmDelete: false
                     }));
+                    this.refreshFilteredMemories();
                 }
             } catch (e) { console.error('Failed to load memories:', e); }
+        },
+
+        refreshFilteredMemories() {
+            const search = (this.memorySearch || '').trim().toLowerCase();
+            const type = this.memoryTypeFilter || 'all';
+            this.memoryFilteredItems = this.memoryItems.filter((item) => {
+                const matchesType = type === 'all' || (item.type || 'general') === type;
+                if (!matchesType) return false;
+                if (!search) return true;
+                const haystack = [
+                    item.content || '',
+                    item.type || '',
+                    ...(Array.isArray(item.tags) ? item.tags : [])
+                ].join(' ').toLowerCase();
+                return haystack.includes(search);
+            });
         },
 
         get selectedMemoryCount() {
@@ -376,12 +415,102 @@
                     this.pushLog('status', '记忆已更新');
                     item.content = item._editBuffer;
                     item._editing = false;
+                    this.refreshFilteredMemories();
                     // re-fetch to ensure sync (optional)
                     // await this.loadMemories();
                 } else {
                     this.pushLog('error', '更新记忆失败');
                 }
             } catch (e) { console.error(e); }
+        },
+
+        async loadMcpServers() {
+            this.mcpLoading = true;
+            try {
+                const r = await fetch('/api/mcp/servers');
+                if (r.ok) {
+                    const data = await r.json();
+                    const servers = data.mcpServers || {};
+                    this.mcpServers = Object.entries(servers).map(([name, cfg]) => ({
+                        name,
+                        command: cfg.command || '',
+                        argsText: Array.isArray(cfg.args) ? cfg.args.join('\n') : '',
+                        envText: cfg.env ? Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`).join('\n') : '',
+                        disabled: !!cfg.disabled
+                    }));
+                }
+            } catch (e) {
+                console.error('Failed to load MCP servers:', e);
+                this.pushLog('error', '加载 MCP 工具配置失败');
+            } finally {
+                this.mcpLoading = false;
+            }
+        },
+
+        addMcpServer() {
+            this.mcpServers.push({
+                name: '',
+                command: '',
+                argsText: '',
+                envText: '',
+                disabled: false
+            });
+        },
+
+        removeMcpServer(idx) {
+            this.mcpServers.splice(idx, 1);
+        },
+
+        async saveMcpServers() {
+            this.mcpSaving = true;
+            try {
+                const payload = { mcpServers: {} };
+                this.mcpServers.forEach((server) => {
+                    const name = (server.name || '').trim();
+                    if (!name) return;
+                    const args = (server.argsText || '')
+                        .split(/\r?\n/)
+                        .map(s => s.trim())
+                        .filter(Boolean);
+                    const env = {};
+                    (server.envText || '')
+                        .split(/\r?\n/)
+                        .map(s => s.trim())
+                        .filter(Boolean)
+                        .forEach((line) => {
+                            const idx = line.indexOf('=');
+                            if (idx <= 0) return;
+                            const key = line.slice(0, idx).trim();
+                            const value = line.slice(idx + 1).trim();
+                            if (key) env[key] = value;
+                        });
+
+                    payload.mcpServers[name] = {
+                        command: (server.command || '').trim(),
+                        args,
+                        ...(Object.keys(env).length ? { env } : {}),
+                        ...(server.disabled ? { disabled: true } : {})
+                    };
+                });
+
+                const r = await fetch('/api/mcp/servers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (r.ok) {
+                    this.pushLog('status', 'MCP 工具配置已保存');
+                    await this.loadMcpServers();
+                } else {
+                    const data = await r.json().catch(() => ({}));
+                    this.pushLog('error', `MCP 配置保存失败：${data.detail || '未知错误'}`);
+                }
+            } catch (e) {
+                console.error(e);
+                this.pushLog('error', 'MCP 配置保存异常');
+            } finally {
+                this.mcpSaving = false;
+            }
         },
 
 
@@ -2150,9 +2279,17 @@
 
         // 处理 ask_user 选项点击：标记已回答，并将选择作为用户消息发送给 AI
         async submitAskUserChoice(msg, block, opt) {
-            if (block.answered) return;
-            block.answered = true;
-            block.resultStr = opt.label;
+            const targetMsg = this.messages.find(m => m.id === msg.id) || msg;
+            const targetBlock = targetMsg && Array.isArray(targetMsg.blocks)
+                ? targetMsg.blocks.find(b => (block.id && b.id === block.id) || b === block)
+                : block;
+
+            if (!targetBlock || targetBlock.answered) return;
+            targetBlock.answered = true;
+            targetBlock.resultStr = opt.label;
+            if (typeof this.notifyChatStateChanged === 'function') {
+                this.notifyChatStateChanged();
+            }
 
             // 将用户选择作为新消息发送
             this.inputText = opt.label;
@@ -2160,12 +2297,19 @@
         },
 
         // ═══════════════ Scheduler Management ═══════════════
+        notifySchedulerChanged() {
+            window.dispatchEvent(new CustomEvent('openguiclaw:scheduler-updated', {
+                detail: { schedulerTasks: this.schedulerTasks }
+            }));
+        },
+
         async loadSchedulerTasks() {
             try {
                 const res = await fetch('/api/scheduler/tasks');
                 if (res.ok) {
                     const data = await res.json();
                     this.schedulerTasks = data.tasks || [];
+                    this.notifySchedulerChanged();
                 }
             } catch (e) {
                 console.error('Failed to load scheduler tasks', e);
@@ -2410,6 +2554,12 @@
         },
 
         // ═══════════════ Skills Management ═══════════════
+        notifySkillsChanged() {
+            window.dispatchEvent(new CustomEvent('openguiclaw:skills-updated', {
+                detail: { skills: this.skills }
+            }));
+        },
+
         async loadSkills() {
             try {
                 console.log('[Skills] Loading skills...');
@@ -2427,6 +2577,7 @@
                         };
                     });
                     console.log('[Skills] Skills array length:', this.skills.length);
+                    this.notifySkillsChanged();
                 } else {
                     console.error('[Skills] Failed to load skills:', response.statusText);
                 }
@@ -2455,6 +2606,7 @@
                     if (skillObj) {
                         skillObj.enabled = enabled;
                     }
+                    this.notifySkillsChanged();
                     this.pushLog('success', `技能 ${name} 已${enabled ? '启用' : '禁用'}`);
                 } else {
                     this.pushLog('error', `切换技能状态失败`);
@@ -2478,6 +2630,7 @@
                 if (response.ok) {
                     this.pushLog('success', `技能配置 ${skill.name} 保存成功`);
                     skill.config_values = data.config_values || skill.config_values;
+                    this.notifySkillsChanged();
                 } else {
                     this.pushLog('error', `技能配置保存失败: ${data.detail || '未知错误'}`);
                 }

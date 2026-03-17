@@ -1,0 +1,209 @@
+<!-- ═══ ARCHIVED MANAGEMENT ═══ -->
+<div x-data="archivedPanel()" x-init="load()" style="padding:8px 0;">
+
+    <!-- Archived Workspaces -->
+    <div style="margin-bottom:28px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <h2 style="font-size:12px;font-weight:700;color:var(--shell-text-muted);text-transform:uppercase;letter-spacing:0.08em;">
+                归档工作区
+            </h2>
+            <button @click="load()"
+                style="background:transparent;border:none;color:var(--shell-text-dim);font-size:11px;font-family:var(--shell-font);cursor:pointer;padding:3px 8px;border-radius:6px;transition:background 0.15s;"
+                onmouseover="this.style.background='var(--shell-hover)'"
+                onmouseout="this.style.background='transparent'">
+                刷新
+            </button>
+        </div>
+
+        <div x-show="loadingWs" style="font-size:12px;color:var(--shell-text-dim);padding:8px 0;">加载中...</div>
+
+        <div x-show="!loadingWs && archivedWorkspaces.length === 0"
+            style="font-size:12px;color:var(--shell-text-dim);padding:8px 0;">
+            暂无归档工作区
+        </div>
+
+        <div x-show="!loadingWs && archivedWorkspaces.length > 0"
+            style="display:flex;flex-direction:column;gap:4px;">
+            <template x-for="ws in archivedWorkspaces" :key="ws.id">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--shell-panel-bg);border:1px solid var(--shell-border);border-radius:10px;">
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:var(--shell-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+                            x-text="ws.name"></div>
+                        <div style="font-size:11px;color:var(--shell-text-dim);font-family:var(--shell-font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;"
+                            x-text="ws.workspace_path || ''"></div>
+                    </div>
+                    <button @click="restoreWorkspace(ws.id)"
+                        style="padding:4px 10px;background:var(--shell-accent-dim);border:1px solid rgba(182,240,89,0.3);border-radius:6px;color:var(--shell-accent);font-size:11px;font-weight:700;font-family:var(--shell-font);cursor:pointer;flex-shrink:0;transition:all 0.15s;"
+                        onmouseover="this.style.background='var(--shell-accent)';this.style.color='#0d0d0d'"
+                        onmouseout="this.style.background='var(--shell-accent-dim)';this.style.color='var(--shell-accent)'">
+                        恢复
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Archived Threads -->
+    <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <h2 style="font-size:12px;font-weight:700;color:var(--shell-text-muted);text-transform:uppercase;letter-spacing:0.08em;">
+                归档对话
+            </h2>
+            <select x-model="selectedWsFilter" @change="loadArchivedThreads()"
+                style="background:var(--shell-panel-bg);border:1px solid var(--shell-border);border-radius:6px;color:var(--shell-text);font-size:11px;font-family:var(--shell-font);padding:3px 8px;outline:none;cursor:pointer;">
+                <option value="">全部工作区</option>
+                <template x-for="ws in allWorkspaces" :key="ws.id">
+                    <option :value="ws.id" x-text="ws.name"></option>
+                </template>
+            </select>
+        </div>
+
+        <div x-show="loadingThreads" style="font-size:12px;color:var(--shell-text-dim);padding:8px 0;">加载中...</div>
+
+        <div x-show="!loadingThreads && archivedThreads.length === 0"
+            style="font-size:12px;color:var(--shell-text-dim);padding:8px 0;">
+            暂无归档对话
+        </div>
+
+        <div x-show="!loadingThreads && archivedThreads.length > 0"
+            style="display:flex;flex-direction:column;gap:4px;">
+            <template x-for="item in archivedThreads" :key="item.session_id">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--shell-panel-bg);border:1px solid var(--shell-border);border-radius:10px;">
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:13px;color:var(--shell-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+                            x-text="item.title || item.session_id"></div>
+                        <div style="font-size:11px;color:var(--shell-text-dim);margin-top:2px;"
+                            x-text="item._wsName || ''"></div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0;">
+                        <button @click="restoreThread(item._wsId, item.session_id)"
+                            style="padding:4px 10px;background:var(--shell-accent-dim);border:1px solid rgba(182,240,89,0.3);border-radius:6px;color:var(--shell-accent);font-size:11px;font-weight:700;font-family:var(--shell-font);cursor:pointer;transition:all 0.15s;"
+                            onmouseover="this.style.background='var(--shell-accent)';this.style.color='#0d0d0d'"
+                            onmouseout="this.style.background='var(--shell-accent-dim)';this.style.color='var(--shell-accent)'">
+                            恢复
+                        </button>
+                        <button @click="deleteThread(item._wsId, item.session_id)"
+                            style="padding:4px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:6px;color:#f87171;font-size:11px;font-weight:700;font-family:var(--shell-font);cursor:pointer;transition:all 0.15s;"
+                            onmouseover="this.style.background='rgba(239,68,68,0.8)';this.style.color='white'"
+                            onmouseout="this.style.background='rgba(239,68,68,0.1)';this.style.color='#f87171'">
+                            永久删除
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div x-show="statusMsg"
+        style="margin-top:16px;padding:8px 12px;background:var(--shell-accent-dim);border:1px solid rgba(182,240,89,0.3);border-radius:8px;font-size:12px;color:var(--shell-accent);"
+        x-text="statusMsg"></div>
+</div>
+
+<script>
+function archivedPanel() {
+    return {
+        loadingWs: false,
+        loadingThreads: false,
+        archivedWorkspaces: [],
+        archivedThreads: [],
+        allWorkspaces: [],
+        selectedWsFilter: '',
+        statusMsg: '',
+        _statusTimer: null,
+
+        showStatus(msg) {
+            this.statusMsg = msg;
+            clearTimeout(this._statusTimer);
+            this._statusTimer = setTimeout(() => { this.statusMsg = ''; }, 3000);
+        },
+
+        async load() {
+            await Promise.all([this.loadArchivedWorkspaces(), this.loadAllWorkspaces()]);
+            await this.loadArchivedThreads();
+        },
+
+        async loadAllWorkspaces() {
+            try {
+                const r = await fetch('/api/workspaces');
+                if (r.ok) {
+                    const data = await r.json();
+                    this.allWorkspaces = Array.isArray(data) ? data : (data.workspaces || []);
+                }
+            } catch (e) {}
+        },
+
+        async loadArchivedWorkspaces() {
+            this.loadingWs = true;
+            try {
+                const r = await fetch('/api/workspaces/archived');
+                if (r.ok) {
+                    const data = await r.json();
+                    this.archivedWorkspaces = Array.isArray(data) ? data : (data.workspaces || []);
+                }
+            } catch (e) {
+                this.archivedWorkspaces = [];
+            } finally {
+                this.loadingWs = false;
+            }
+        },
+
+        async loadArchivedThreads() {
+            this.loadingThreads = true;
+            this.archivedThreads = [];
+            try {
+                const wsList = this.selectedWsFilter
+                    ? this.allWorkspaces.filter(w => w.id === this.selectedWsFilter)
+                    : this.allWorkspaces;
+
+                const results = await Promise.all(wsList.map(async ws => {
+                    try {
+                        const r = await fetch('/api/workspaces/' + ws.id + '/sessions?include_archived=true');
+                        if (!r.ok) return [];
+                        const data = await r.json();
+                        const sessions = Array.isArray(data) ? data : (data.sessions || []);
+                        return sessions
+                            .filter(s => s.archived)
+                            .map(s => ({ ...s, _wsId: ws.id, _wsName: ws.name }));
+                    } catch (e) { return []; }
+                }));
+                this.archivedThreads = results.flat();
+            } finally {
+                this.loadingThreads = false;
+            }
+        },
+
+        async restoreWorkspace(wsId) {
+            try {
+                const r = await fetch('/api/workspaces/' + wsId + '/unarchive', { method: 'POST' });
+                if (r.ok) {
+                    this.showStatus('工作区已恢复');
+                    await this.loadArchivedWorkspaces();
+                    // Refresh main workspace list via custom event
+                    window.dispatchEvent(new CustomEvent('workspaces-changed'));
+                }
+            } catch (e) { this.showStatus('恢复失败'); }
+        },
+
+        async restoreThread(wsId, sessionId) {
+            try {
+                const r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId + '/unarchive', { method: 'POST' });
+                if (r.ok) {
+                    this.showStatus('对话已恢复');
+                    await this.loadArchivedThreads();
+                }
+            } catch (e) { this.showStatus('恢复失败'); }
+        },
+
+        async deleteThread(wsId, sessionId) {
+            if (!confirm('确定永久删除该对话？此操作无法撤销。')) return;
+            try {
+                const r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId, { method: 'DELETE' });
+                if (r.ok) {
+                    this.showStatus('对话已永久删除');
+                    await this.loadArchivedThreads();
+                }
+            } catch (e) { this.showStatus('删除失败'); }
+        }
+    };
+}
+</script>
