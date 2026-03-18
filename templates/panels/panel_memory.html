@@ -1,5 +1,5 @@
 <!-- ═══════════════ MEMORY POOL PANEL ═══════════════ -->
-<div x-show="activePanel === 'memory'" class="flex flex-col h-full bg-[var(--noble-black-900)]">
+<div x-show="activePanel === 'memory'" class="memory-panel flex flex-col h-full bg-[var(--noble-black-900)]">
 
     <!-- Header -->
     <div class="flex items-center justify-between px-6 py-3.5 border-b border-white/5 bg-black/20 shrink-0">
@@ -14,7 +14,7 @@
             <div>
                 <h2 class="text-[14px] font-bold text-white tracking-wide uppercase">长短期记忆池 (Memory)</h2>
                 <div class="flex items-center gap-2 mt-0.5">
-                    <p class="text-[var(--noble-black-400)] text-[11px] font-medium tracking-tight">跨越对话的实体与关系网络</p>
+                    <p class="memory-panel__subtitle text-[var(--noble-black-400)] text-[11px] font-medium tracking-tight">跨越对话的实体与关系网络</p>
                     <span x-show="selectedMemoryCount > 0" x-transition.opacity
                         class="text-[10px] text-amber-500 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                         已选 <span x-text="selectedMemoryCount"></span> 项
@@ -137,7 +137,7 @@
                                           }"
                                         x-text="item.type === 'fact' ? '事实' : (item.type === 'experience' ? '经历' : (item.type === 'preference' ? '偏好' : item.type))"></span>
                                     <span
-                                        class="text-[10px] text-[var(--noble-black-500)] font-mono font-bold tracking-wider"
+                                        class="memory-panel__meta text-[10px] text-[var(--noble-black-500)] font-mono font-bold tracking-wider"
                                         x-text="item.created_at || 'Unknown'"></span>
                                 </div>
 
@@ -180,14 +180,14 @@
                                         </div>
                                     </template>
                                     <span x-show="!item._editing && !item._confirmDelete"
-                                        class="bg-[var(--noble-black-900)] px-2 py-0.5 rounded border border-white/5 text-[9px] font-bold text-[var(--noble-black-500)] shadow-inner uppercase tracking-widest ml-2"
+                                        class="memory-panel__source bg-[var(--noble-black-900)] px-2 py-0.5 rounded border border-white/5 text-[9px] font-bold text-[var(--noble-black-500)] shadow-inner uppercase tracking-widest ml-2"
                                         x-text="item.source || 'Auto'"></span>
                                 </div>
                             </div>
 
                             <!-- Content Area -->
                             <div x-show="!item._editing">
-                                <p class="text-[12px] text-white leading-relaxed font-medium tracking-wide whitespace-pre-wrap"
+                                <p class="memory-panel__content text-[12px] text-white leading-relaxed font-medium tracking-wide whitespace-pre-wrap"
                                     x-text="item.content"></p>
                             </div>
 
@@ -211,7 +211,7 @@
                             <div class="flex flex-wrap gap-1.5 mt-3" x-show="item.tags && item.tags.length > 0">
                                 <template x-for="tag in item.tags" :key="tag">
                                     <span
-                                        class="text-[10px] text-[var(--noble-black-400)] font-medium bg-[var(--noble-black-900)]/80 px-2 py-0.5 rounded border border-white/5 shadow-inner"
+                                        class="memory-panel__tag text-[10px] text-[var(--noble-black-400)] font-medium bg-[var(--noble-black-900)]/80 px-2 py-0.5 rounded border border-white/5 shadow-inner"
                                         x-text="`#${tag}`"></span>
                                 </template>
                             </div>
@@ -236,7 +236,7 @@
             </div>
 
             <h3 class="text-[14px] font-black text-white uppercase tracking-widest mb-2">记忆结构尚未固化</h3>
-            <p class="text-[11px] font-medium text-[var(--noble-black-400)] leading-relaxed max-w-[250px]">
+            <p class="memory-panel__empty-copy text-[11px] font-medium text-[var(--noble-black-400)] leading-relaxed max-w-[250px]">
                 与大语言模型交互并持续对话，相关的长短期实体属性将会在此处进行结晶。
             </p>
 

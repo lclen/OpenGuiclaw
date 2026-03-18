@@ -1,7 +1,13 @@
 import { ChatComposer } from './components/ChatComposer';
 import { ChatMessageList } from './components/ChatMessageList';
 import { ChatThreadToolbar } from './components/ChatThreadToolbar';
+import { ArchivedPanel } from './components/ArchivedPanel';
+import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { HomeWorkspaceDashboard } from './components/HomeWorkspaceDashboard';
+import { IdentityPanel } from './components/IdentityPanel';
+import { IntegrationsPanel } from './components/IntegrationsPanel';
+import { MemoryPanel } from './components/MemoryPanel';
+import { McpServersPanel } from './components/McpServersPanel';
 import { SettingsButton } from './components/SettingsButton';
 import { SettingsMainHeader, SettingsNav } from './components/SettingsOverlay';
 import { SidebarToggleButton } from './components/SidebarToggleButton';
@@ -9,6 +15,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { SchedulerPanel } from './components/SchedulerPanel';
 import { SkillsQuickPanel } from './components/SkillsQuickPanel';
+import { TokenStatsPanel } from './components/TokenStatsPanel';
 import { WorkspaceCreateModal } from './components/WorkspaceCreateModal';
 import { WorkspaceSidebar } from './components/WorkspaceSidebar';
 
@@ -190,6 +197,20 @@ if (settingsNavRoot) {
 // ── 阶段 6：settings main header ──────────────────────────────────────────
 const settingsHeaderRoot = document.querySelector<HTMLElement>('[data-react-settings-header-root]');
 const legacySettingsHeader = document.querySelector<HTMLElement>('[data-legacy-settings-header]');
+const archivedRoot = document.querySelector<HTMLElement>('[data-react-archived-root]');
+const legacyArchivedRoot = document.querySelector<HTMLElement>('[data-legacy-archived-root]');
+const mcpRoot = document.querySelector<HTMLElement>('[data-react-mcp-root]');
+const legacyMcpRoot = document.querySelector<HTMLElement>('[data-legacy-mcp-root]');
+const memoryRoot = document.querySelector<HTMLElement>('[data-react-memory-root]');
+const legacyMemoryRoot = document.querySelector<HTMLElement>('[data-legacy-memory-root]');
+const tokenRoot = document.querySelector<HTMLElement>('[data-react-token-root]');
+const legacyTokenRoot = document.querySelector<HTMLElement>('[data-legacy-token-root]');
+const integrationsRoot = document.querySelector<HTMLElement>('[data-react-integrations-root]');
+const legacyIntegrationsRoot = document.querySelector<HTMLElement>('[data-legacy-integrations-root]');
+const identityRoot = document.querySelector<HTMLElement>('[data-react-identity-root]');
+const legacyIdentityRoot = document.querySelector<HTMLElement>('[data-legacy-identity-root]');
+const diagnosticsRoot = document.querySelector<HTMLElement>('[data-react-diagnostics-root]');
+const legacyDiagnosticsRoot = document.querySelector<HTMLElement>('[data-legacy-diagnostics-root]');
 
 if (settingsHeaderRoot) {
   if (legacySettingsHeader) {
@@ -199,6 +220,97 @@ if (settingsHeaderRoot) {
   ReactDOM.createRoot(settingsHeaderRoot).render(
     <React.StrictMode>
       <SettingsMainHeader />
+    </React.StrictMode>
+  );
+}
+
+if (archivedRoot) {
+  archivedRoot.hidden = false;
+  if (legacyArchivedRoot) {
+    legacyArchivedRoot.hidden = true;
+    legacyArchivedRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(archivedRoot).render(
+    <React.StrictMode>
+      <ArchivedPanel />
+    </React.StrictMode>
+  );
+}
+
+if (memoryRoot) {
+  memoryRoot.hidden = false;
+  if (legacyMemoryRoot) {
+    legacyMemoryRoot.hidden = true;
+    legacyMemoryRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(memoryRoot).render(
+    <React.StrictMode>
+      <MemoryPanel />
+    </React.StrictMode>
+  );
+}
+
+if (tokenRoot) {
+  tokenRoot.hidden = false;
+  if (legacyTokenRoot) {
+    legacyTokenRoot.hidden = true;
+    legacyTokenRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(tokenRoot).render(
+    <React.StrictMode>
+      <TokenStatsPanel />
+    </React.StrictMode>
+  );
+}
+
+if (mcpRoot) {
+  mcpRoot.hidden = false;
+  if (legacyMcpRoot) {
+    legacyMcpRoot.hidden = true;
+    legacyMcpRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(mcpRoot).render(
+    <React.StrictMode>
+      <McpServersPanel />
+    </React.StrictMode>
+  );
+}
+
+if (integrationsRoot) {
+  integrationsRoot.hidden = false;
+  if (legacyIntegrationsRoot) {
+    legacyIntegrationsRoot.hidden = true;
+    legacyIntegrationsRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(integrationsRoot).render(
+    <React.StrictMode>
+      <IntegrationsPanel />
+    </React.StrictMode>
+  );
+}
+
+if (identityRoot) {
+  identityRoot.hidden = false;
+  if (legacyIdentityRoot) {
+    legacyIdentityRoot.hidden = true;
+    legacyIdentityRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(identityRoot).render(
+    <React.StrictMode>
+      <IdentityPanel />
+    </React.StrictMode>
+  );
+}
+
+if (diagnosticsRoot) {
+  diagnosticsRoot.hidden = false;
+  if (legacyDiagnosticsRoot) {
+    legacyDiagnosticsRoot.hidden = true;
+    legacyDiagnosticsRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(diagnosticsRoot).render(
+    <React.StrictMode>
+      <DiagnosticsPanel />
     </React.StrictMode>
   );
 }

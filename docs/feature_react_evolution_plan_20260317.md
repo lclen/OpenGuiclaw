@@ -1,6 +1,6 @@
 # OpenGuiclaw React 演进方案
 
-> **Status**: Proposed | **Last Updated**: 2026-03-17 | **Purpose**: 基于当前代码结构，给出是否适合迁移到 React 的判断，以及一份可执行的渐进式迁移路线图
+> **Status**: In Progress | **Last Updated**: 2026-03-18 | **Purpose**: 基于当前代码结构，给出是否适合迁移到 React 的判断，以及一份可执行的渐进式迁移路线图，并记录阶段性审计结论
 
 ## Table of Contents
 
@@ -13,6 +13,8 @@
 - [目录建议](#目录建议)
 - [风险与规避](#风险与规避)
 - [完成标准](#完成标准)
+- [阶段审计](#阶段审计)
+- [下一步建议](#下一步建议)
 - [建议的第一步](#建议的第一步)
 
 ---
@@ -428,6 +430,103 @@ frontend/
 - 主交互壳层与高频页面已由 React 接管
 - Alpine 仅保留少量兼容职责，或完全退出
 - 前端具备模块化目录、类型约束、可维护的请求层和状态层
+
+---
+
+## 阶段审计
+
+> 审计时间：2026-03-18  
+> 审计依据：当前仓库代码、`frontend/src/main.tsx` 挂载点、`templates/index.html`、`templates/panels/*.html`、`static/js/*.js`
+
+### 审计结论
+
+**React 演进未全部完成，当前处于“中后期，但尚未收尾”的状态。**
+
+更准确地说：
+
+- React 基座已经建立并稳定工作
+- 多个高频视图已经由 React 接管
+- 但核心状态仍然依附 Alpine 全局宿主对象
+- 设置页主体、聊天状态层、模块化目录与请求层尚未按目标架构完成
+- 当前不能认定为“最终完成标准已满足”
+
+### 当前实现与计划对照
+
+| 阶段 | 计划目标 | 当前状态 | 审计结论 | 证据 |
+| --- | --- | --- | --- | --- |
+| 阶段 0 | 建立 React 基座、Vite、TS、挂载点、产物输出 | 已有 `frontend/`、Vite、TS、`static/app/main.js`、Jinja 页面接入 bundle | **已完成** | `frontend/package.json`、`templates/index.html`、`frontend/src/main.tsx` |
+| 阶段 1 | 先迁壳层，不迁聊天内核 | sidebar、home、workspace modal、settings button、topbar toolbar 已有 React 组件 | **已完成** | `WorkspaceSidebar.tsx`、`HomeWorkspaceDashboard.tsx`、`WorkspaceCreateModal.tsx`、`SettingsButton.tsx`、`ChatThreadToolbar.tsx` |
+| 阶段 2 | 迁移 skills / scheduler | skills 与 scheduler 均已有 React 面板并替换 legacy root | **已完成** | `SkillsQuickPanel.tsx`、`SchedulerPanel.tsx` |
+| 阶段 3 | 迁移聊天展示层 | 消息列表、输入区、顶部线程工具栏均已 React 化 | **基本完成** | `ChatMessageList.tsx`、`ChatComposer.tsx`、`ChatThreadToolbar.tsx` |
+| 阶段 4 | 迁移聊天状态与流式处理 | React 仍通过 `window.__openGuiclawApp` 读取宿主状态，未形成独立 `chatApi/useChatStream/useChatSession` | **未完成** | `bridge/openGuiclaw.ts`、`useWorkspaceShellBridge.ts`、`static/js/app-logic.js` |
+| 阶段 5 | 迁移设置页和配置面板 | 仅 settings 左侧导航与头部 React 化，主体内容仍是 `panel_config.html` Alpine 模板 | **部分完成** | `SettingsOverlay.tsx`、`templates/panels/settings_overlay.html`、`templates/panels/panel_config.html` |
+| 阶段 6 | 收尾和清理，缩减 Alpine 责任 | `mainApp()` 仍承载大量状态；`app-logic.js`、`workspace-logic.js` 仍然很大 | **未完成** | `static/js/app-logic.js`、`static/js/workspace-logic.js` |
+
+### 已完成项
+
+- React 工程已接入并能独立构建
+- `npm run typecheck` 可通过
+- `npm run build` 可通过
+- `skills`、`scheduler`、`home`、`sidebar`、`workspace modal`、`chat 展示层` 已有 React 接管
+- 设置页壳层已有 React 接管：settings 按钮、settings nav、settings header
+- 设置页主体已有 7 个内容区完成 React 化：`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
+
+### 未完成项
+
+- 聊天状态层未从 Alpine / 全局对象抽离
+- 设置页主体仍未大面积按域迁成 React，当前已完成 `archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
+- `panel_config.html` 仍然是高密度 Alpine 模板
+- 目标目录结构中的 `app/`、`features/`、`store/`、`lib/` 尚未建立
+- 未引入计划中的请求层 / 状态层抽象，如 TanStack Query、Zustand 或等价实现
+- `mainApp()` 还不是兼容层，而仍是主要状态中心
+
+### 与“最终完成标准”的差距
+
+以下标准尚未满足：
+
+- Alpine 仅保留少量兼容职责，或完全退出
+- 前端具备模块化目录、可维护的请求层和状态层
+- 主交互壳层虽然大多已接管，但高复杂业务状态尚未真正转移到 React
+
+---
+
+## 下一步建议
+
+### 推荐的下一步
+
+**下一步优先做“阶段 5 的第一块”：把设置页主体从 Alpine 中拆出一个完整 React 子域，先从 `archived` 开始。**
+
+推荐原因：
+
+- 风险低于直接动聊天流式状态
+- 与当前正在修改的设置页工作连续
+- 能真正推进“settings 不只是壳层 React 化，而是内容区也 React 化”
+- `archived` 业务边界相对清晰，适合作为设置主体 React 化的第一块试点
+
+### 建议执行顺序
+
+1. 新建 `frontend/src/features/settings/` 或 `frontend/src/components/settings/` 子目录
+2. 把 `archived` 面板迁成 React 组件，并在 `settings_overlay.html` 中为它预留独立 root
+3. 让 React 直接消费 `/api/workspaces/archived` 及相关归档接口，而不是继续通过 Alpine 模板中转
+4. 完成后再按顺序迁移：
+   - 模型端点配置
+   - role endpoints
+   - 渠道健康检查
+5. 当 settings 主体有 2-3 个 tab 完成 React 化后，再回头抽聊天状态层
+
+### 为什么不是先做阶段 4
+
+聊天状态层抽离是收益最高的一步，但也是当前风险最大的一步。按照现状，更稳妥的顺序是：
+
+- 先用设置页主体 React 化继续扩大“React 真正控制业务区”的范围
+- 同时整理目录结构与数据访问方式
+- 再在结构更清晰的前提下进入聊天状态层抽离
+
+### 具体到当前仓库，我建议的下一个可执行任务
+
+**继续把设置页主体按业务域迁成 React。`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics` 已完成，下一块建议优先迁“模型端点配置”。**
+
+做到这一步后，设置页主体里偏展示型和轻交互型页签已经基本到位，接下来最值得投入的是模型配置和 role endpoints 这些真正仍被 Alpine 重度占用的编辑区。
 
 ---
 

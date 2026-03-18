@@ -72,7 +72,10 @@
           </div>
 
           <div x-show="settingsTab === 'archived'" class="settings-archived-pane">
-            {% include 'panels/panel_archived.html' %}
+            <div data-react-archived-root hidden class="h-full"></div>
+            <div data-legacy-archived-root x-ignore>
+              {% include 'panels/panel_archived.html' %}
+            </div>
           </div>
         </div>
       </section>

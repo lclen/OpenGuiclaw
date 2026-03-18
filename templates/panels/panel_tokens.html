@@ -1,5 +1,5 @@
 <!-- Token Stats (Audit) Panel -->
-<div x-show="activePanel === 'tokens'" class="flex flex-col h-full bg-transparent overflow-hidden"
+<div x-show="activePanel === 'tokens' || configTab === 'tokens'" class="flex flex-col h-full bg-transparent overflow-hidden"
     x-init="loadTokenStats(tokenPeriod)">
 
     <style>

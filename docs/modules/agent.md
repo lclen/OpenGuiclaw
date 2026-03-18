@@ -333,3 +333,43 @@ agent.start_background_tasks()
 4. **上下文压缩**：使用专门的压缩模型减少 Token 消耗
 5. **记忆分层**：短期/中期/长期记忆分层管理
 6. **工具权限控制**：基于人设的工具访问权限
+
+## 附录：Windows / PowerShell 中文编辑建议
+
+> [!IMPORTANT]
+> 在 Windows + PowerShell 环境下修改包含中文的源码、模板或文档时，优先使用 **UTF-8 安全链路**，不要依赖终端默认编码。
+
+### 推荐顺序
+
+1. 先将 PowerShell 控制台切换到 UTF-8。
+2. 优先使用 `python -X utf8` 读取、写入和校验文件。
+3. 需要批量替换、插入或追加时，优先使用 `scripts/utf8_edit.py`。
+4. 仅在输入链路仍不稳定时，使用 Unicode 转义文本落盘。
+
+### 推荐命令
+
+```powershell
+[Console]::InputEncoding  = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding           = [System.Text.UTF8Encoding]::new($false)
+python -X utf8 scripts/utf8_edit.py --path docs/modules/agent.md --show
+```
+
+### `scripts/utf8_edit.py` 适用场景
+
+- 文本替换：`--replace`
+- 末尾追加：`--append`
+- 文件前置：`--prepend`
+- 幂等追加：`--ensure`
+- 定位插入：`--insert-after` / `--insert-before`
+
+### 已验证能力
+
+仓库内已用中文样例真实验证以下能力：
+
+- 追加中文内容
+- 在中文标记后插入内容
+- 用中文查找串执行替换
+- `ensure` 模式避免重复追加
+
+结论：**`utf8_edit.py` 本身可用**；若再次出现乱码，优先怀疑“中文文本在进入命令前就已被终端链路污染”，而不是脚本写盘失败。

@@ -1389,6 +1389,29 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.42) transparent;
+  scrollbar-gutter: stable;
+}
+
+.settings-nav-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-nav-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-nav-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.settings-nav-list:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.42);
+  background-clip: padding-box;
 }
 
 .settings-nav-item {
@@ -1504,12 +1527,48 @@
   color: rgba(241, 245, 249, 0.82) !important;
 }
 
+.settings-main-body .text-white\/55 {
+  color: rgba(241, 245, 249, 0.55) !important;
+}
+
 .settings-main-body .text-white\/75 {
   color: rgba(248, 250, 252, 0.84) !important;
 }
 
+.settings-main-body .text-white\/68 {
+  color: rgba(241, 245, 249, 0.68) !important;
+}
+
+.settings-main-body .text-white\/70 {
+  color: rgba(241, 245, 249, 0.7) !important;
+}
+
+.settings-main-body .text-white\/72 {
+  color: rgba(241, 245, 249, 0.72) !important;
+}
+
 .settings-main-body .text-white\/65 {
   color: rgba(241, 245, 249, 0.78) !important;
+}
+
+.settings-main-body .text-white\/82 {
+  color: rgba(241, 245, 249, 0.82) !important;
+}
+
+.settings-main-body .text-white\/80 {
+  color: rgba(248, 250, 252, 0.8) !important;
+}
+
+.settings-main-body .text-white\/85 {
+  color: rgba(248, 250, 252, 0.85) !important;
+}
+
+.settings-main-body .text-white\/88 {
+  color: rgba(248, 250, 252, 0.88) !important;
+}
+
+.settings-main-body .text-white\/90 {
+  color: rgba(248, 250, 252, 0.9) !important;
 }
 
 .settings-main-body .text-white\/50 {
@@ -1538,6 +1597,25 @@
 .settings-main-body select,
 .settings-main-body textarea {
   color: rgba(248, 250, 252, 0.96);
+}
+
+.memory-panel {
+  color: rgba(241, 245, 249, 0.92);
+}
+
+.memory-panel__subtitle,
+.memory-panel__empty-copy {
+  color: rgba(226, 232, 240, 0.78) !important;
+}
+
+.memory-panel__meta,
+.memory-panel__source,
+.memory-panel__tag {
+  color: rgba(203, 213, 225, 0.74) !important;
+}
+
+.memory-panel__content {
+  color: rgba(241, 245, 249, 0.9) !important;
 }
 
 @media (max-width: 1040px) {
