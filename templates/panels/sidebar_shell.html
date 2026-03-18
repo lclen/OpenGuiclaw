@@ -9,7 +9,7 @@
         <span class="sidebar-logo">鈼?/span>
         <span class="sidebar-home-copy">
           <strong>openGuiclaw</strong>
-          <small>Workspace Hub</small>
+          <small>工作台</small>
         </span>
       </button>
     </div>
@@ -105,10 +105,15 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="showSettings = true">
-        <span class="sidebar-shortcut-icon">鈿?/span>
-        <span>璁剧疆</span>
-      </button>
+      <!-- React settings button (replaces Alpine @click="showSettings = true") -->
+      <div data-react-settings-btn-root hidden></div>
+      <!-- Legacy Alpine settings button -->
+      <div data-legacy-settings-btn>
+        <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="showSettings = true">
+          <span class="sidebar-shortcut-icon">⚙</span>
+          <span>设置</span>
+        </button>
+      </div>
     </div>
   </aside>
 </div>

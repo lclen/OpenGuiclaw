@@ -119,7 +119,10 @@
         <!-- Main panel: home / chat -->
         <div class="main-panel">
             <div class="main-topbar">
-                <button class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed; notifyShellStateChanged()" aria-label="切换侧边栏">
+                <!-- React sidebar toggle (replaces Alpine @click) -->
+                <div data-react-sidebar-toggle-root></div>
+                <!-- Legacy Alpine sidebar toggle (hidden once React mounts) -->
+                <button data-legacy-sidebar-toggle class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed; notifyShellStateChanged()" aria-label="切换侧边栏">
                     ☰
                 </button>
 

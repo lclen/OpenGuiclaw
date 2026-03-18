@@ -986,12 +986,13 @@
         },
 
         async setProactiveMode(m) {
-            this.config.proactive.mode = m;
             const def = this.proactiveDefaults[m];
-            if (def) {
-                this.config.proactive.interval_minutes = def.interval_minutes;
-                this.config.proactive.cooldown_minutes = def.cooldown_minutes;
-            }
+            this.config.proactive = {
+                ...this.config.proactive,
+                mode: m,
+                interval_minutes: def ? def.interval_minutes : this.config.proactive.interval_minutes,
+                cooldown_minutes: def ? def.cooldown_minutes : this.config.proactive.cooldown_minutes
+            };
             await this.saveGlobalConfig();
         },
 
@@ -1134,8 +1135,8 @@
             }
         },
 
-        toggleVrmSystem() {
-            this.vrmSystemEnabled = !this.vrmSystemEnabled;
+        toggleVrmSystem(nextValue) {
+            this.vrmSystemEnabled = typeof nextValue === 'boolean' ? nextValue : !this.vrmSystemEnabled;
             localStorage.setItem('vrmSystemEnabled', this.vrmSystemEnabled);
             // BUG#2 fix: persist vrm toggle to backend config
             if (this._fullConfig) {

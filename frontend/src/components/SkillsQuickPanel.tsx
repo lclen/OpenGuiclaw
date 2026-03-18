@@ -60,7 +60,7 @@ export function SkillsQuickPanel() {
       await hostApp.reloadSkills();
       setSkills(snapshotSkills(hostApp));
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : 'Failed to reload skills');
+      setErrorText(error instanceof Error ? error.message : '刷新技能失败');
     } finally {
       setReloadBusy(false);
     }
@@ -74,7 +74,7 @@ export function SkillsQuickPanel() {
       await hostApp.toggleSkill(skill.name, !skill.enabled);
       setSkills(snapshotSkills(hostApp));
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : 'Failed to update skill');
+      setErrorText(error instanceof Error ? error.message : '更新技能失败');
     } finally {
       setBusySkillName(null);
     }
@@ -90,12 +90,12 @@ export function SkillsQuickPanel() {
     <section className="react-skills-panel">
       <header className="react-skills-panel__header">
         <div>
-          <div className="react-skills-panel__eyebrow">React Pilot</div>
-          <h3 className="react-skills-panel__title">Installed Skills</h3>
+          <div className="react-skills-panel__eyebrow">技能库</div>
+          <h3 className="react-skills-panel__title">已安装技能</h3>
           <p className="react-skills-panel__meta">
-            <span>{enabledCount} active</span>
+            <span>{enabledCount} 已启用</span>
             <span className="react-skills-panel__meta-divider">/</span>
-            <span>{skills.length} total</span>
+            <span>共 {skills.length} 个</span>
           </p>
         </div>
         <button
@@ -104,7 +104,7 @@ export function SkillsQuickPanel() {
           onClick={handleReload}
           disabled={!hostApp || reloadBusy}
         >
-          {reloadBusy ? 'Refreshing...' : 'Refresh'}
+          {reloadBusy ? '刷新中...' : '刷新'}
         </button>
       </header>
 
@@ -114,7 +114,7 @@ export function SkillsQuickPanel() {
           className="react-skills-panel__search"
           value={searchText}
           onChange={(event) => setSearchText(event.target.value)}
-          placeholder="Search installed skills"
+          placeholder="搜索已安装技能"
         />
         <div className="react-skills-panel__filters">
           {(['all', 'enabled', 'disabled'] as StatusFilter[]).map((filter) => (
@@ -124,7 +124,7 @@ export function SkillsQuickPanel() {
               className={`react-skills-panel__filter ${statusFilter === filter ? 'is-active' : ''}`}
               onClick={() => setStatusFilter(filter)}
             >
-              {filter}
+              {filter === 'all' ? '全部' : filter === 'enabled' ? '已启用' : '已禁用'}
             </button>
           ))}
         </div>
@@ -133,10 +133,10 @@ export function SkillsQuickPanel() {
       {errorText ? <div className="react-skills-panel__error">{errorText}</div> : null}
 
       <div className="react-skills-panel__content">
-        {loading ? <div className="react-skills-panel__empty">Loading skills...</div> : null}
+        {loading ? <div className="react-skills-panel__empty">加载技能中...</div> : null}
 
         {!loading && groupedSkills.length === 0 ? (
-          <div className="react-skills-panel__empty">No installed skills match the current filter.</div>
+          <div className="react-skills-panel__empty">没有符合当前筛选条件的技能。</div>
         ) : null}
 
         {!loading
@@ -158,7 +158,7 @@ export function SkillsQuickPanel() {
                             <div className="react-skills-card__heading">
                               <span className="react-skills-card__name">{skill.name}</span>
                               <span className={`react-skills-card__status ${skill.enabled ? 'is-on' : 'is-off'}`}>
-                                {skill.enabled ? 'on' : 'off'}
+                                {skill.enabled ? '开启' : '关闭'}
                               </span>
                             </div>
                             <p className="react-skills-card__description">{skill.description}</p>
@@ -168,7 +168,7 @@ export function SkillsQuickPanel() {
                                 className="react-skills-card__tools-toggle"
                                 onClick={() => toggleExpanded(skill.name)}
                               >
-                                {isExpanded ? 'Hide tools' : `Show tools (${skill.tools.length})`}
+                                {isExpanded ? '收起工具' : `展开工具 (${skill.tools.length})`}
                               </button>
                             ) : null}
                           </div>
@@ -179,7 +179,7 @@ export function SkillsQuickPanel() {
                             onClick={() => handleToggle(skill)}
                             disabled={isBusy || !hostApp}
                           >
-                            {isBusy ? '...' : skill.enabled ? 'Disable' : 'Enable'}
+                            {isBusy ? '...' : skill.enabled ? '禁用' : '启用'}
                           </button>
                         </div>
 

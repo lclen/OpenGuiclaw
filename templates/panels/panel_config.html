@@ -586,8 +586,8 @@
                     <h4 class="text-[13px] font-bold text-white mb-0.5 font-['Outfit']">显示 VRM 形象</h4>
                     <p class="text-[11px] text-white/60 font-medium">关闭后聊天区域自动扩展填满屏幕</p>
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer" @click.prevent="toggleVrmSystem()">
-                    <input type="checkbox" :checked="vrmSystemEnabled" class="sr-only peer" readonly>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="vrmSystemEnabled" @change="toggleVrmSystem(vrmSystemEnabled)" class="sr-only peer">
                     <div
                         class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/40 after:border-white/10 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500">
                     </div>
@@ -614,12 +614,11 @@
                     <h4 class="text-[13px] font-bold text-white mb-0.5 font-['Outfit']">开启日记自动生成</h4>
                     <p class="text-[11px] text-white/60 font-medium">关闭后记忆进化与知识图谱仍会继续运行，仅跳过日记写入</p>
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer" @click.prevent="
-                        config.journal.enable_diary = !config.journal.enable_diary;
-                        saveGlobalConfig();
-                        if (!config.journal.enable_diary && activePanel === 'diary') switchPanel('chat');
-                    ">
-                    <input type="checkbox" :checked="config.journal.enable_diary" class="sr-only peer" readonly>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.journal.enable_diary" @change="
+                            saveGlobalConfig();
+                            if (!config.journal.enable_diary && activePanel === 'diary') switchPanel('chat');
+                        " class="sr-only peer">
                     <div
                         class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-transparent after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white/40 after:border-white/10 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500">
                     </div>
@@ -684,7 +683,8 @@
                         <span class="text-[16px] font-bold text-[var(--stem-green-500)] font-mono"
                             x-text="config.proactive.interval_minutes === null ? 'OFF' : config.proactive.interval_minutes + 'm'"></span>
                     </div>
-                    <input type="range" min="1" max="60" step="1" x-model.number="config.proactive.interval_minutes"
+                    <input type="range" min="1" max="60" step="1" :value="config.proactive.interval_minutes ?? 1"
+                        @input="config.proactive.interval_minutes = Number($event.target.value)"
                         @change="saveGlobalConfig()"
                         class="w-full accent-[var(--stem-green-500)] h-1 bg-black/40 rounded appearance-none cursor-pointer">
                 </div>
@@ -699,7 +699,8 @@
                         <span class="text-[16px] font-bold text-orange-400 font-mono"
                             x-text="config.proactive.cooldown_minutes === null ? 'OFF' : config.proactive.cooldown_minutes + 'm'"></span>
                     </div>
-                    <input type="range" min="1" max="60" step="1" x-model.number="config.proactive.cooldown_minutes"
+                    <input type="range" min="1" max="60" step="1" :value="config.proactive.cooldown_minutes ?? 1"
+                        @input="config.proactive.cooldown_minutes = Number($event.target.value)"
                         @change="saveGlobalConfig()"
                         class="w-full accent-orange-500 h-1 bg-black/40 rounded appearance-none cursor-pointer">
                 </div>
@@ -710,7 +711,22 @@
                 <label
                     class="text-[11px] font-bold text-white/60 uppercase tracking-widest font-['Outfit'] ml-0.5">响应预设方案</label>
                 <div class="flex gap-2 p-1 bg-black/40 border border-white/5 rounded-lg max-w-sm">
-                    <template x-for="m in ['silent', 'normal', 'lively']" :key="m">
+                    <button @click="setProactiveMode('silent')"
+                        :class="config.proactive.mode === 'silent' ? 'bg-white/12 text-white border-white/15 shadow-sm ring-1 ring-white/10' : 'text-white/72 border-transparent hover:text-white/80 hover:bg-white/[0.03]'"
+                        class="flex-1 py-2 rounded-md text-[11px] font-bold transition-all border flex flex-col items-center justify-center gap-0.5">
+                        <span>静默运行</span>
+                    </button>
+                    <button @click="setProactiveMode('normal')"
+                        :class="config.proactive.mode === 'normal' ? 'bg-white/12 text-white border-white/15 shadow-sm ring-1 ring-white/10' : 'text-white/72 border-transparent hover:text-white/80 hover:bg-white/[0.03]'"
+                        class="flex-1 py-2 rounded-md text-[11px] font-bold transition-all border flex flex-col items-center justify-center gap-0.5">
+                        <span>平衡</span>
+                    </button>
+                    <button @click="setProactiveMode('lively')"
+                        :class="config.proactive.mode === 'lively' ? 'bg-white/12 text-white border-white/15 shadow-sm ring-1 ring-white/10' : 'text-white/72 border-transparent hover:text-white/80 hover:bg-white/[0.03]'"
+                        class="flex-1 py-2 rounded-md text-[11px] font-bold transition-all border flex flex-col items-center justify-center gap-0.5">
+                        <span>主动</span>
+                    </button>
+                    <template x-if="false">
                         <button @click="setProactiveMode(m)"
                             :class="config.proactive.mode === m ? 'bg-white/10 text-white border-white/10 shadow-sm' : 'text-white/72 border-transparent hover:text-white/80'"
                             class="flex-1 py-2 rounded-md text-[11px] font-bold transition-all border flex flex-col items-center justify-center gap-0.5">

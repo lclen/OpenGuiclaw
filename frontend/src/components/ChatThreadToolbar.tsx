@@ -33,33 +33,33 @@ function buildSnapshot(app: OpenGuiclawApp): ToolbarSnapshot {
   let title =
     typeof app.getTopbarTitle === 'function'
       ? app.getTopbarTitle()
-      : wsName || 'Select Workspace';
+      : wsName || '选择工作区';
 
   let kicker =
     typeof app.getTopbarKicker === 'function'
       ? app.getTopbarKicker()
       : view === 'chat'
-        ? 'Current Thread'
+        ? '当前线程'
         : view === 'skills'
-          ? 'Skills'
+          ? '技能'
           : view === 'scheduler'
-            ? 'Automation'
-            : 'Workspace';
+            ? '自动化'
+            : '工作区';
 
   if (!title) {
     if (view === 'chat') {
-      title = thread?.title || (threadId ? `${threadId.slice(0, 16)}...` : wsName ? `${wsName} / New Thread` : 'New Thread');
+      title = thread?.title || (threadId ? `${threadId.slice(0, 16)}...` : wsName ? `${wsName} / 新线程` : '新线程');
     } else if (view === 'skills') {
-      title = 'Skills';
+      title = '技能';
     } else if (view === 'scheduler') {
-      title = 'Automation';
+      title = '自动化';
     } else {
-      title = wsName || 'Select Workspace';
+      title = wsName || '选择工作区';
     }
   }
 
   if (!kicker) {
-    kicker = view === 'chat' ? 'Current Thread' : view === 'skills' ? 'Skills' : view === 'scheduler' ? 'Automation' : 'Workspace';
+    kicker = view === 'chat' ? '当前线程' : view === 'skills' ? '技能' : view === 'scheduler' ? '自动化' : '工作区';
   }
 
   return {
@@ -87,7 +87,7 @@ export function ChatThreadToolbar() {
   async function handleArchive() {
     const app = appRef.current;
     if (!app || !state.wsId || !state.threadId || busy) return;
-    if (!window.confirm('Archive this thread? You can restore it later from Archived.')) return;
+    if (!window.confirm('归档此线程？之后可以从"已归档"中恢复。')) return;
 
     setBusy(true);
     try {
@@ -130,10 +130,10 @@ export function ChatThreadToolbar() {
           <button
             type="button"
             className={`react-topbar-icon-btn${state.isPinned ? ' is-active' : ''}`}
-            title={state.isPinned ? 'Unpin thread' : 'Pin thread'}
+            title={state.isPinned ? '取消置顶' : '置顶线程'}
             disabled={busy}
             onClick={handleTogglePin}
-            aria-label={state.isPinned ? 'Unpin thread' : 'Pin thread'}
+            aria-label={state.isPinned ? '取消置顶' : '置顶线程'}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
               <path
@@ -148,10 +148,10 @@ export function ChatThreadToolbar() {
           <button
             type="button"
             className="react-topbar-icon-btn is-danger"
-            title="Archive thread"
+            title="归档线程"
             disabled={busy}
             onClick={handleArchive}
-            aria-label="Archive thread"
+            aria-label="归档线程"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
               <path
@@ -169,12 +169,12 @@ export function ChatThreadToolbar() {
         {state.wsName ? <div className="topbar-chip">{state.wsName}</div> : null}
 
         <button type="button" className="btn-primary" disabled={state.isReceiving} onClick={handleNewThread}>
-          New Thread
+          新线程
         </button>
 
         <div className="topbar-status">
           <span className={`topbar-status-dot${state.isReceiving ? ' busy' : ''}`} />
-          <span>{state.isReceiving ? 'Working' : 'Online'}</span>
+          <span>{state.isReceiving ? '处理中' : '在线'}</span>
         </div>
       </div>
     </div>

@@ -7,14 +7,14 @@ function snapshotTasks(app: OpenGuiclawApp): SchedulerTask[] {
 }
 
 function formatTaskType(taskType?: string) {
-  if (taskType === 'task') return 'AI task';
-  if (taskType === 'reminder') return 'Reminder';
-  if (taskType === 'system') return 'System';
-  return taskType || 'Unknown';
+  if (taskType === 'task') return 'AI 任务';
+  if (taskType === 'reminder') return '提醒';
+  if (taskType === 'system') return '系统';
+  return taskType || '未知';
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return 'Not scheduled';
+  if (!value) return '未安排';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
@@ -46,7 +46,7 @@ export function SchedulerPanel() {
       await hostApp.loadSchedulerTasks();
       setTasks(snapshotTasks(hostApp));
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : 'Failed to refresh tasks');
+      setErrorText(error instanceof Error ? error.message : '刷新任务失败');
     } finally {
       setReloadBusy(false);
     }
@@ -61,7 +61,7 @@ export function SchedulerPanel() {
         setTasks(snapshotTasks(hostApp));
       }
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : 'Task action failed');
+      setErrorText(error instanceof Error ? error.message : '任务操作失败');
     } finally {
       setBusyTaskId(null);
     }
@@ -71,12 +71,12 @@ export function SchedulerPanel() {
     <section className="react-scheduler-panel">
       <header className="react-scheduler-panel__header">
         <div>
-          <div className="react-scheduler-panel__eyebrow">React Pilot</div>
-          <h3 className="react-scheduler-panel__title">Automation</h3>
+          <div className="react-scheduler-panel__eyebrow">自动化</div>
+          <h3 className="react-scheduler-panel__title">计划任务</h3>
           <p className="react-scheduler-panel__meta">
-            <span>{tasks.length} tasks</span>
+            <span>{tasks.length} 个任务</span>
             <span className="react-scheduler-panel__meta-divider">/</span>
-            <span>{runningCount} running</span>
+            <span>{runningCount} 运行中</span>
           </p>
         </div>
 
@@ -87,7 +87,7 @@ export function SchedulerPanel() {
             onClick={handleRefresh}
             disabled={!hostApp || reloadBusy}
           >
-            {reloadBusy ? 'Refreshing...' : 'Refresh'}
+            {reloadBusy ? '刷新中...' : '刷新'}
           </button>
           <button
             type="button"
@@ -95,17 +95,17 @@ export function SchedulerPanel() {
             onClick={() => hostApp?.openSchedulerForm()}
             disabled={!hostApp}
           >
-            New Plan
+            新建计划
           </button>
         </div>
       </header>
 
       {errorText ? <div className="react-scheduler-panel__error">{errorText}</div> : null}
 
-      {loading ? <div className="react-scheduler-panel__empty">Loading automation tasks...</div> : null}
+      {loading ? <div className="react-scheduler-panel__empty">加载自动化任务中...</div> : null}
 
       {!loading && tasks.length === 0 ? (
-        <div className="react-scheduler-panel__empty">No automation plans yet.</div>
+        <div className="react-scheduler-panel__empty">暂无自动化计划。</div>
       ) : null}
 
       {!loading && tasks.length > 0 ? (
@@ -119,15 +119,15 @@ export function SchedulerPanel() {
                     <div className="react-scheduler-card__heading">
                       <h4 className="react-scheduler-card__name">{task.name}</h4>
                       <span className={`react-scheduler-card__pill ${task.enabled ? 'is-on' : 'is-off'}`}>
-                        {task.enabled ? 'enabled' : 'paused'}
+                        {task.enabled ? '已启用' : '已暂停'}
                       </span>
                       {task.status === 'running' ? (
-                        <span className="react-scheduler-card__pill is-running">running</span>
+                        <span className="react-scheduler-card__pill is-running">运行中</span>
                       ) : null}
                       <span className="react-scheduler-card__type">{formatTaskType(task.task_type)}</span>
                     </div>
                     <p className="react-scheduler-card__description">
-                      {task.description || 'No description provided.'}
+                      {task.description || '暂无描述。'}
                     </p>
                   </div>
 
@@ -138,7 +138,7 @@ export function SchedulerPanel() {
                       onClick={() => runTaskAction(task.id, () => hostApp!.toggleSchedulerTask(task.id, !task.enabled))}
                       disabled={!hostApp || isBusy}
                     >
-                      {isBusy ? '...' : task.enabled ? 'Pause' : 'Resume'}
+                      {isBusy ? '...' : task.enabled ? '暂停' : '恢复'}
                     </button>
                     <button
                       type="button"
@@ -146,7 +146,7 @@ export function SchedulerPanel() {
                       onClick={() => runTaskAction(task.id, () => hostApp!.triggerSchedulerTask(task.id))}
                       disabled={!hostApp || isBusy}
                     >
-                      Run
+                      运行
                     </button>
                     {task.deletable !== false && task.task_type !== 'system' ? (
                       <button
@@ -155,7 +155,7 @@ export function SchedulerPanel() {
                         onClick={() => hostApp?.editSchedulerTask(task)}
                         disabled={!hostApp || isBusy}
                       >
-                        Edit
+                        编辑
                       </button>
                     ) : null}
                     {task.deletable !== false && task.task_type !== 'system' ? (
@@ -165,7 +165,7 @@ export function SchedulerPanel() {
                         onClick={() => runTaskAction(task.id, () => hostApp!.deleteSchedulerTask(task.id))}
                         disabled={!hostApp || isBusy}
                       >
-                        Delete
+                        删除
                       </button>
                     ) : null}
                   </div>
@@ -173,11 +173,11 @@ export function SchedulerPanel() {
 
                 <div className="react-scheduler-card__meta">
                   <div className="react-scheduler-card__meta-item">
-                    <span className="react-scheduler-card__meta-label">Last run</span>
+                    <span className="react-scheduler-card__meta-label">上次运行</span>
                     <span className="react-scheduler-card__meta-value">{formatDateTime(task.last_run)}</span>
                   </div>
                   <div className="react-scheduler-card__meta-item">
-                    <span className="react-scheduler-card__meta-label">Next run</span>
+                    <span className="react-scheduler-card__meta-label">下次运行</span>
                     <span className="react-scheduler-card__meta-value is-accent">{formatDateTime(task.next_run)}</span>
                   </div>
                 </div>

@@ -1,3 +1,5 @@
+import { getTabMeta } from '../constants/settingsTabs';
+
 export type SkillConfigField = {
   key: string;
   label: string;
@@ -123,11 +125,23 @@ export type WorkspaceShellSnapshot = {
   currentThreadId: string | null;
   showNewWorkspaceModal: boolean;
   showWorkspaceSwitcher: boolean;
+  showSettings: boolean;
+  settingsTab: string;
   newWorkspaceName: string;
   newWorkspacePath: string;
   newWorkspaceError: string;
   isReceiving: boolean;
 };
+
+export type ShellAction =
+  | { type: 'openSettings'; tab?: string }
+  | { type: 'closeSettings' }
+  | { type: 'switchSettingsTab'; tab: string }
+  | { type: 'openWorkspaceSwitcher' }
+  | { type: 'closeWorkspaceSwitcher' }
+  | { type: 'toggleSidebar' }
+  | { type: 'setSidebarCollapsed'; collapsed: boolean }
+  | { type: 'navigateView'; view: string };
 
 export type OpenGuiclawApp = {
   skills: SkillRecord[];
@@ -154,6 +168,8 @@ export type OpenGuiclawApp = {
   showNewWorkspaceModal?: boolean;
   showWorkspaceSwitcher?: boolean;
   showSettings?: boolean;
+  settingsTab?: string;
+  activePanel?: string;
   sidebarCollapsed?: boolean;
   newWorkspaceName?: string;
   newWorkspacePath?: string;
@@ -213,6 +229,55 @@ declare global {
 
 export function getHostApp(): OpenGuiclawApp | null {
   return window.__openGuiclawApp ?? null;
+}
+
+export function dispatchShellAction(action: ShellAction): void {
+  const app = getHostApp();
+  if (!app) return;
+
+  switch (action.type) {
+    case 'openSettings':
+      app.showSettings = true;
+      if (action.tab && 'settingsTab' in app) {
+        (app as OpenGuiclawApp & { settingsTab: string }).settingsTab = action.tab;
+        const cfgTab = getTabMeta(action.tab).cfgTab;
+        if (cfgTab) {
+          app.activePanel = 'config';
+          window.dispatchEvent(new CustomEvent('set-cfg-tab', { detail: cfgTab }));
+        }
+      }
+      break;
+    case 'closeSettings':
+      app.showSettings = false;
+      break;
+    case 'switchSettingsTab': {
+      const appWithTab = app as OpenGuiclawApp & { settingsTab?: string };
+      appWithTab.settingsTab = action.tab;
+      const cfgTab = getTabMeta(action.tab).cfgTab;
+      if (cfgTab) {
+        app.activePanel = 'config';
+        window.dispatchEvent(new CustomEvent('set-cfg-tab', { detail: cfgTab }));
+      }
+      break;
+    }
+    case 'openWorkspaceSwitcher':
+      app.showWorkspaceSwitcher = true;
+      break;
+    case 'closeWorkspaceSwitcher':
+      app.showWorkspaceSwitcher = false;
+      break;
+    case 'toggleSidebar':
+      app.sidebarCollapsed = !app.sidebarCollapsed;
+      break;
+    case 'setSidebarCollapsed':
+      app.sidebarCollapsed = action.collapsed;
+      break;
+    case 'navigateView':
+      app.openSidebarPanel?.(action.view);
+      break;
+  }
+
+  emitShellUpdate();
 }
 
 export function emitShellUpdate() {

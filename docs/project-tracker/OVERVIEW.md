@@ -47,11 +47,12 @@
 | self-check | 自检系统 | stable | 2026-03-13T15:00:56+08:00 | 持续维护 | core/self_check.py | - |
 | codex-style-workspace-ui | Codex 风格 Workspace UI 重构 | done | 2026-03-17T14:53:55+08:00 | 无（本次交付完毕） | tests/test_workspace_manager.py | - |
 | config-panel-display-bug | 设置面板模型端点显示 bug | done | 2026-03-17T19:03:37+08:00 | 持续维护 | templates/panels/panel_config.html | - |
+| react-frontend-migration | React 前端迁移（逐步替换 Alpine） | in_progress | 2026-03-18T08:13:01+08:00 | 阶段6：按evolution plan推进下一个组件 | frontend/src/components/SettingsOverlay.tsx | - |
 <!-- project-tracker:items:end -->
 
 ## 最近一次会话
 <!-- project-tracker:session:start -->
-已修复：移除 panel_config.html 旧架构遗留的 x-show 条件，设置打开时重新加载端点数据
+阶段5完成：SettingsNav已React化，build通过
 <!-- project-tracker:session:end -->
 
 ## 下一步建议
@@ -79,6 +80,7 @@
 - self-check: 持续维护
 - codex-style-workspace-ui: 无（本次交付完毕）
 - config-panel-display-bug: 持续维护
+- react-frontend-migration: 阶段6：按evolution plan推进下一个组件
 <!-- project-tracker:next:end -->
 
 ## 已知阻塞

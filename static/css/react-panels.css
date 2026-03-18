@@ -676,3 +676,195 @@
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* ── React Settings Button ───────────────────────────────────────────────── */
+.react-settings-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  color: var(--shell-text-muted, rgba(148, 163, 184, 0.8));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.react-settings-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--shell-text, #f8fafc);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.react-settings-icon-btn.is-active {
+  background: rgba(182, 240, 89, 0.12);
+  color: #d9f99d;
+  border-color: rgba(182, 240, 89, 0.22);
+}
+
+.react-settings-full-btn.is-active {
+  background: rgba(182, 240, 89, 0.1);
+  color: #d9f99d;
+}
+
+/* ── React Workspace Switcher ────────────────────────────────────────────── */
+.react-ws-switcher-wrap {
+  position: relative;
+}
+
+.react-ws-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--shell-text-muted, rgba(148, 163, 184, 0.8));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  text-align: left;
+}
+
+.react-ws-switcher-btn:hover,
+.react-ws-switcher-btn.is-open {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--shell-text, #f8fafc);
+}
+
+.react-ws-switcher-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.react-ws-switcher-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-ws-switcher-chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform 0.18s ease;
+}
+
+.react-ws-switcher-chevron.open {
+  transform: rotate(180deg);
+}
+
+/* backdrop to close on outside click */
+.react-ws-switcher-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+}
+
+.react-ws-switcher-dropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(13, 17, 24, 0.97);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.react-ws-switcher-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.6);
+  text-align: center;
+}
+
+.react-ws-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.82);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.react-ws-switcher-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+}
+
+.react-ws-switcher-item.is-active {
+  background: rgba(182, 240, 89, 0.1);
+  color: #d9f99d;
+  font-weight: 700;
+}
+
+.react-ws-switcher-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.react-ws-switcher-item-count {
+  flex-shrink: 0;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.react-ws-switcher-item-check {
+  flex-shrink: 0;
+  color: #86efac;
+}
+
+.react-ws-switcher-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.react-ws-switcher-add {
+  color: rgba(182, 240, 89, 0.8);
+  gap: 6px;
+}
+
+.react-ws-switcher-add:hover {
+  color: #d9f99d;
+  background: rgba(182, 240, 89, 0.08);
+}

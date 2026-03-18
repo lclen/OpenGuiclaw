@@ -1,4 +1,4 @@
-import { emitShellUpdate } from '../bridge/openGuiclaw';
+import { dispatchShellAction, emitShellUpdate } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 function formatThreadTime(hostFormat: ((value?: string | null) => string) | undefined, value?: string | null) {
@@ -13,9 +13,9 @@ function formatThreadTime(hostFormat: ((value?: string | null) => string) | unde
   const diffMs = Date.now() - date.getTime();
   const hourMs = 60 * 60 * 1000;
   const dayMs = 24 * hourMs;
-  if (diffMs < hourMs) return `${Math.max(1, Math.round(diffMs / (60 * 1000)))} min ago`;
-  if (diffMs < dayMs) return `${Math.round(diffMs / hourMs)} hr ago`;
-  return `${Math.round(diffMs / dayMs)} d ago`;
+  if (diffMs < hourMs) return `${Math.max(1, Math.round(diffMs / (60 * 1000)))} 分钟前`;
+  if (diffMs < dayMs) return `${Math.round(diffMs / hourMs)} 小时前`;
+  return `${Math.round(diffMs / dayMs)} 天前`;
 }
 
 export function WorkspaceSidebar() {
@@ -53,16 +53,14 @@ export function WorkspaceSidebar() {
 
   async function handleDeleteThread(workspaceId: string, sessionId: string) {
     if (!hostApp) return;
-    const confirmed = window.confirm('Delete this thread? This cannot be undone.');
+    const confirmed = window.confirm('删除此线程？此操作不可撤销。');
     if (!confirmed) return;
     await hostApp.deleteThread?.(workspaceId, sessionId);
     emitShellUpdate();
   }
 
   function handleOpenSettings() {
-    if (!hostApp) return;
-    hostApp.showSettings = true;
-    emitShellUpdate();
+    dispatchShellAction({ type: 'openSettings' });
   }
 
   function handleOpenWorkspaceModal() {
@@ -81,7 +79,7 @@ export function WorkspaceSidebar() {
           <span className="sidebar-logo">O</span>
           <span className="sidebar-home-copy">
             <strong>openGuiclaw</strong>
-            <small>Workspace Hub</small>
+            <small>工作台</small>
           </span>
         </button>
       </div>

@@ -153,3 +153,48 @@
 - next_step: 验证设置面板能正常显示已有模型端点
 - blockers: 无
 - confidence: high
+
+## 2026-03-17T22:00:53+08:00
+- change_type: feature
+- feature_id: react-frontend-migration
+- summary: 实现聊天顶部工具栏和线程控制 React 化：新建 ChatThreadToolbar 组件（面包屑 + 置顶/归档按钮 + 新线程/状态），扩展 bridge 类型，更新 main.tsx 挂载，替换 index.html topbar 为 React 挂载点 + Alpine legacy fallback，追加 react-panels.css 样式
+- files: frontend/src/components/ChatThreadToolbar.tsx, frontend/src/bridge/openGuiclaw.ts, frontend/src/main.tsx, templates/index.html, static/css/react-panels.css
+- next_step: 下一步：迁移聊天消息展示层（MessageList / AssistantMessage / ToolCallCard）到 React，完成阶段 3
+- blockers: 无
+- confidence: high
+
+## 2026-03-17T23:08:23+08:00
+- change_type: feature
+- feature_id: react-frontend-migration
+- summary: 第二层 React 化：bridge 层加入 ShellAction 类型和 dispatchShellAction 辅助函数；WorkspaceShellSnapshot 补充 showSettings/settingsTab 字段；新增 useShellActions hook；新增 WorkspaceSwitcherButton 和 SettingsButton 组件；main.tsx 挂载两个新组件；sidebar_shell.html 加入 React 挂载点；react-panels.css 追加对应样式
+- files: frontend/src/bridge/openGuiclaw.ts, frontend/src/hooks/useShellActions.ts, frontend/src/components/WorkspaceSwitcherButton.tsx, frontend/src/components/SettingsButton.tsx, frontend/src/main.tsx, templates/panels/sidebar_shell.html, static/css/react-panels.css
+- next_step: 下一步：把 topbar 的 sidebar-toggle 按钮（sidebarCollapsed = !sidebarCollapsed）也收成 React 组件，完成 shell 操作的全面桥接化
+- blockers: 无
+- confidence: high
+
+## 2026-03-17T23:27:32+08:00
+- change_type: refactor
+- feature_id: react-shell-bridge
+- summary: 第二层 React 化收尾：WorkspaceSidebar.handleOpenSettings 改为 dispatchShellAction；新建 SidebarToggleButton 组件替换 Alpine sidebar-toggle 按钮；index.html 加挂载点 data-react-sidebar-toggle-root；main.tsx 挂载 SidebarToggleButton
+- files: frontend/src/components/SidebarToggleButton.tsx, frontend/src/components/WorkspaceSidebar.tsx, frontend/src/main.tsx, templates/index.html
+- next_step: 阶段 5：迁移 panel_config.html 设置面板
+- blockers: 无
+- confidence: high
+
+## 2026-03-18T08:12:55+08:00
+- change_type: feature
+- feature_id: react-frontend-migration
+- summary: 阶段5完成：SettingsNav React化。settings_overlay.html加入data-react-settings-nav-root挂载点和data-legacy-settings-nav标记，main.tsx挂载SettingsNav组件并隐藏legacy aside，npm run build验证通过
+- files: frontend/src/components/SettingsOverlay.tsx, frontend/src/main.tsx, templates/panels/settings_overlay.html
+- next_step: 阶段6：继续按feature_react_evolution_plan推进下一个React化目标
+- blockers: 无
+- confidence: high
+
+## 2026-03-18T08:45:36+08:00
+- change_type: refactor
+- feature_id: react-frontend-migration
+- summary: 阶段6完成：SettingsMainHeader React化 + settingsTabs单一来源。新建constants/settingsTabs.ts作为tab元数据唯一来源；SettingsOverlay.tsx新增SettingsMainHeader组件（标题/副标题/关闭按钮）；settings_overlay.html加入data-react-settings-header-root挂载点；main.tsx挂载SettingsMainHeader并隐藏legacy header；build通过
+- files: frontend/src/constants/settingsTabs.ts, frontend/src/components/SettingsOverlay.tsx, templates/panels/settings_overlay.html, frontend/src/main.tsx
+- next_step: 阶段7：settings主体分块React化（models/integrations/diagnostics优先）或shell.css settings样式拆分
+- blockers: 无
+- confidence: high

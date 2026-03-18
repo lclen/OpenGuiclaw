@@ -68,6 +68,8 @@
                         workspaceLoading: !!this.workspaceLoading,
                         showNewWorkspaceModal: !!this.showNewWorkspaceModal,
                         showWorkspaceSwitcher: !!this.showWorkspaceSwitcher,
+                        showSettings: !!this.showSettings,
+                        settingsTab: this.settingsTab || 'models',
                         newWorkspaceName: this.newWorkspaceName,
                         newWorkspacePath: this.newWorkspacePath,
                         newWorkspaceError: this.newWorkspaceError,

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { emitShellUpdate } from '../bridge/openGuiclaw';
+import { dispatchShellAction } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 export function HomeWorkspaceDashboard() {
@@ -12,16 +12,14 @@ export function HomeWorkspaceDashboard() {
     if (!snapshot.showWorkspaceSwitcher) return undefined;
 
     const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || !hostApp) return;
-      hostApp.showWorkspaceSwitcher = false;
-      emitShellUpdate();
+      if (event.key !== 'Escape') return;
+      dispatchShellAction({ type: 'closeWorkspaceSwitcher' });
     };
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!hostApp || !rootRef.current) return;
+      if (!rootRef.current) return;
       if (rootRef.current.contains(event.target as Node)) return;
-      hostApp.showWorkspaceSwitcher = false;
-      emitShellUpdate();
+      dispatchShellAction({ type: 'closeWorkspaceSwitcher' });
     };
 
     window.addEventListener('keydown', handleKeydown);
@@ -30,18 +28,16 @@ export function HomeWorkspaceDashboard() {
       window.removeEventListener('keydown', handleKeydown);
       window.removeEventListener('mousedown', handlePointerDown);
     };
-  }, [hostApp, snapshot.showWorkspaceSwitcher]);
+  }, [snapshot.showWorkspaceSwitcher]);
 
   async function handleSelectWorkspace(workspaceId: string) {
     await hostApp?.focusWorkspaceHome?.(workspaceId);
-    emitShellUpdate();
   }
 
   async function handleRecentThread(workspaceId: string, sessionId: string) {
     if (!hostApp) return;
     await hostApp.switchWorkspace?.(workspaceId, true);
     await hostApp.loadThread?.(workspaceId, sessionId);
-    emitShellUpdate();
   }
 
   async function handleNewThread() {
@@ -51,29 +47,27 @@ export function HomeWorkspaceDashboard() {
     } else {
       hostApp.openNewWorkspaceModal?.();
     }
-    emitShellUpdate();
   }
 
   function handleOpenSettings() {
-    if (!hostApp) return;
-    hostApp.showSettings = true;
-    emitShellUpdate();
+    dispatchShellAction({ type: 'openSettings' });
   }
 
   function handleOpenWorkspaceModal() {
     hostApp?.openNewWorkspaceModal?.();
-    emitShellUpdate();
   }
 
   function toggleWorkspaceSwitcher() {
-    if (!hostApp) return;
-    hostApp.showWorkspaceSwitcher = !snapshot.showWorkspaceSwitcher;
-    emitShellUpdate();
+    if (snapshot.showWorkspaceSwitcher) {
+      dispatchShellAction({ type: 'closeWorkspaceSwitcher' });
+    } else {
+      dispatchShellAction({ type: 'openWorkspaceSwitcher' });
+    }
   }
 
   const activeWorkspaceName = snapshot.activeWorkspaceId
-    ? snapshot.workspaces.find((workspace) => workspace.id === snapshot.activeWorkspaceId)?.name || 'Current Workspace'
-    : 'Choose your workspace';
+    ? snapshot.workspaces.find((workspace) => workspace.id === snapshot.activeWorkspaceId)?.name || '当前工作区'
+    : '选择工作区';
 
   return (
     <div ref={rootRef} className="home-shell custom-scrollbar">
@@ -83,10 +77,10 @@ export function HomeWorkspaceDashboard() {
         <div className="home-hero-orb">
           <span>O</span>
         </div>
-        <div className="home-kicker">OpenGuiclaw Workspace Hub</div>
-        <h1>Start Building</h1>
+        <div className="home-kicker">OpenGuiclaw 工作台</div>
+        <h1>开始构建</h1>
         <p className="home-hero-copy">
-          Manage projects, threads, and settings with a cleaner shell so the current context always stays in view.
+          用更清晰的方式管理多个项目、线程和设置，把当前上下文始终留在视野中。
         </p>
 
         <div className="home-workspace-picker">
@@ -97,7 +91,7 @@ export function HomeWorkspaceDashboard() {
 
           {snapshot.showWorkspaceSwitcher ? (
             <div className="home-workspace-dropdown">
-              <div className="home-workspace-dropdown-label">Choose your workspace</div>
+              <div className="home-workspace-dropdown-label">选择工作区</div>
 
               <div className="home-workspace-dropdown-list">
                 {snapshot.workspaces.map((workspace) => (
@@ -118,7 +112,7 @@ export function HomeWorkspaceDashboard() {
 
               <button type="button" className="home-workspace-dropdown-add" onClick={handleOpenWorkspaceModal}>
                 <span>+</span>
-                <span>Add workspace</span>
+                <span>添加工作区</span>
               </button>
             </div>
           ) : null}
@@ -127,18 +121,18 @@ export function HomeWorkspaceDashboard() {
         <div className="home-suggestion-grid">
           <button type="button" className="home-suggestion-card" onClick={handleNewThread}>
             <span className="home-suggestion-icon">+</span>
-            <strong>Start New Thread</strong>
-            <p>Open a fresh task context in the current workspace.</p>
+            <strong>开始新线程</strong>
+            <p>在当前工作区中开启一个全新的任务上下文。</p>
           </button>
           <button type="button" className="home-suggestion-card" onClick={handleOpenSettings}>
             <span className="home-suggestion-icon">S</span>
-            <strong>Review Settings</strong>
-            <p>Check models, identity, and integrations without leaving the shell.</p>
+            <strong>整理设置</strong>
+            <p>检查模型、身份和集成，把常用配置放在顺手的位置。</p>
           </button>
           <button type="button" className="home-suggestion-card" onClick={handleOpenWorkspaceModal}>
             <span className="home-suggestion-icon">W</span>
-            <strong>Add Workspace</strong>
-            <p>Connect a project through the native directory picker instead of typing paths by hand.</p>
+            <strong>添加项目</strong>
+            <p>通过目录选择器接入一个新项目，不再手动输入路径。</p>
           </button>
         </div>
       </section>
@@ -148,18 +142,18 @@ export function HomeWorkspaceDashboard() {
           <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ animation: 'spin 1s linear infinite' }}>
             <circle cx="12" cy="12" r="10" strokeWidth="3" strokeDasharray="30 70" strokeLinecap="round" />
           </svg>
-          <span>Loading workspace overview...</span>
+          <span>正在加载工作区概览...</span>
         </div>
       ) : (
         <div className="home-columns">
           <section className="home-surface">
             <div className="home-section-header">
               <div>
-                <div className="home-section-kicker">Projects</div>
-                <h2>Workspaces</h2>
+                <div className="home-section-kicker">项目</div>
+                <h2>工作区</h2>
               </div>
               <button type="button" className="home-link-button" onClick={handleOpenWorkspaceModal}>
-                New Workspace
+                新建工作区
               </button>
             </div>
 
@@ -177,12 +171,12 @@ export function HomeWorkspaceDashboard() {
                       <div className="home-workspace-copy">
                         <div className="home-workspace-title">
                           <span>{workspace.name}</span>
-                          {snapshot.activeWorkspaceId === workspace.id ? <span className="home-badge">Current</span> : null}
+                          {snapshot.activeWorkspaceId === workspace.id ? <span className="home-badge">当前</span> : null}
                         </div>
                         <div className="home-workspace-path">{workspace.workspace_path || ''}</div>
                       </div>
                     </div>
-                    <div className="home-workspace-meta">{`${workspace.thread_count || 0} threads`}</div>
+                    <div className="home-workspace-meta">{`${workspace.thread_count || 0} 个线程`}</div>
                   </button>
                 ))}
               </div>
@@ -191,10 +185,10 @@ export function HomeWorkspaceDashboard() {
                 <svg width="48" height="48" fill="none" stroke="var(--shell-accent)" viewBox="0 0 24 24" style={{ opacity: 0.4 }}>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
                 </svg>
-                <h2>No Workspaces Yet</h2>
-                <p>Create your first project entry and the rest of the shell will become much easier to navigate.</p>
+                <h2>暂无工作区</h2>
+                <p>先创建一个项目入口，后面的对话和设置都会跟着更清晰。</p>
                 <button type="button" className="btn-primary" onClick={handleOpenWorkspaceModal}>
-                  Create First Workspace
+                  创建第一个工作区
                 </button>
               </div>
             )}
@@ -203,8 +197,8 @@ export function HomeWorkspaceDashboard() {
           <section className="home-surface">
             <div className="home-section-header">
               <div>
-                <div className="home-section-kicker">Recent</div>
-                <h2>Recent Threads</h2>
+                <div className="home-section-kicker">最近</div>
+                <h2>最近线程</h2>
               </div>
             </div>
 
@@ -230,7 +224,7 @@ export function HomeWorkspaceDashboard() {
                 )}
               </div>
             ) : (
-              <div className="home-empty-inline">There are no recent threads to revisit yet.</div>
+              <div className="home-empty-inline">最近还没有值得回看的线程记录。</div>
             )}
           </section>
         </div>

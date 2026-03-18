@@ -248,7 +248,7 @@ export function ChatComposer() {
 
         {isDragOver ? (
           <div className="composer-drop-overlay">
-            <span className="composer-drop-copy">Drop files to stage them</span>
+            <span className="composer-drop-copy">拖放文件到此处</span>
           </div>
         ) : null}
 
@@ -275,7 +275,7 @@ export function ChatComposer() {
 
         <div className="composer-main-row">
           <div className="composer-leading">
-            <label className="composer-attach-button" title="Add files">
+            <label className="composer-attach-button" title="添加文件">
               <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -285,8 +285,7 @@ export function ChatComposer() {
                 />
               </svg>
               <input type="file" multiple style={{ display: 'none' }} onChange={handleFileSelection} />
-            </label>
-          </div>
+            </label>          </div>
 
           <textarea
             ref={textareaRef}
@@ -304,7 +303,7 @@ export function ChatComposer() {
             onClick={handlePrimaryAction}
             className={`composer-send-button ${composer.isReceiving ? 'is-abort' : isReady ? 'is-ready' : ''}`}
             disabled={!composer.isReceiving && !isReady}
-            aria-label={composer.isReceiving ? 'Stop response' : 'Send message'}
+            aria-label={composer.isReceiving ? '停止响应' : '发送消息'}
           >
             {composer.isReceiving ? (
               <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -320,12 +319,12 @@ export function ChatComposer() {
 
         <div className="composer-meta-row">
           <div className="composer-meta-left">
-            <span className="composer-meta-chip">{composer.workspaceName || 'No workspace selected'}</span>
+            <span className="composer-meta-chip">{composer.workspaceName || '未选择工作区'}</span>
             {composer.threadTitle ? <span className="composer-meta-chip">{composer.threadTitle}</span> : null}
           </div>
           <div className="composer-meta-right">
-            <span className="composer-meta-text">Enter sends</span>
-            <span className="composer-meta-text">Shift+Enter inserts a line break</span>
+            <span className="composer-meta-text">Enter 发送</span>
+            <span className="composer-meta-text">Shift+Enter 换行</span>
             {composer.contextDisplay ? <span className="composer-meta-text">{composer.contextDisplay}</span> : null}
           </div>
         </div>

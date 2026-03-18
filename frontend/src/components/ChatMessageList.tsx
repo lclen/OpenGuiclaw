@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getHostApp,
   type ChatAskOption,
@@ -48,6 +48,8 @@ export function ChatMessageList() {
     hostApp && Array.isArray(hostApp.messages) ? hostApp.messages.map(cloneChatMessage) : []
   );
   const [errorText, setErrorText] = useState('');
+  // 用于判断是否应该滚底：只跟踪消息数量和最后一条消息的内容/blocks长度
+  const scrollAnchorRef = useRef<{ count: number; lastId: string; lastBlockCount: number } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -87,6 +89,23 @@ export function ChatMessageList() {
   useEffect(() => {
     const container = document.getElementById('chat-container');
     if (!container) return;
+
+    const last = messages[messages.length - 1];
+    const count = messages.length;
+    const lastId = last?.id ?? '';
+    const lastBlockCount = last?.blocks?.length ?? 0;
+
+    const prev = scrollAnchorRef.current;
+    const shouldScroll =
+      !prev ||
+      count !== prev.count ||
+      lastId !== prev.lastId ||
+      lastBlockCount !== prev.lastBlockCount;
+
+    scrollAnchorRef.current = { count, lastId, lastBlockCount };
+
+    if (!shouldScroll) return;
+
     const rafId = window.requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
@@ -116,7 +135,7 @@ export function ChatMessageList() {
     try {
       await hostApp.submitAskUserChoice(message, block, option);
     } catch (error) {
-      setErrorText(error instanceof Error ? error.message : 'Failed to submit option');
+      setErrorText(error instanceof Error ? error.message : '提交选项失败');
     }
   }
 
@@ -149,7 +168,7 @@ export function ChatMessageList() {
     <>
       {errorText ? <div className="chat-react-error">{errorText}</div> : null}
 
-      {threadLoading ? <div className="chat-empty-state">Loading conversation...</div> : null}
+      {threadLoading ? <div className="chat-empty-state">加载对话中...</div> : null}
 
       {!threadLoading && messages.length === 0 ? (
         <div className="chat-empty-state">
@@ -163,8 +182,8 @@ export function ChatMessageList() {
               />
             </svg>
           </div>
-          <p className="chat-empty-title">Conversation ready</p>
-          <p className="chat-empty-sub">Start whenever you are ready.</p>
+          <p className="chat-empty-title">对话已就绪</p>
+          <p className="chat-empty-sub">随时可以开始。</p>
         </div>
       ) : null}
 
@@ -215,7 +234,7 @@ export function ChatMessageList() {
                               d="M19 9l-7 7-7-7"
                             />
                           </svg>
-                          <span>Reasoning</span>
+                          <span>推理过程</span>
                         </div>
                         {!message._thinkCollapsed ? (
                           <div className="chat-think-body md-body font-mono">
@@ -232,7 +251,7 @@ export function ChatMessageList() {
                           <span></span>
                           <span></span>
                         </span>
-                        <span>Thinking</span>
+                        <span>思考中</span>
                       </div>
                     ) : null}
 
@@ -302,7 +321,7 @@ export function ChatMessageList() {
                                         : 'chat-tool-status-done'
                                     }`}
                                   >
-                                    {block.status === 'running' ? 'Running' : 'Done'}
+                                    {block.status === 'running' ? '运行中' : '完成'}
                                   </span>
                                   <svg
                                     width="10"
@@ -358,8 +377,7 @@ export function ChatMessageList() {
                                     />
                                   </svg>
                                 </div>
-                                Task completed
-                              </div>
+                                任务已完成                              </div>
                             ) : null}
 
                             {block.type === 'ask_user' ? (
@@ -380,7 +398,7 @@ export function ChatMessageList() {
                                   </div>
                                 ) : null}
                                 {block.answered ? (
-                                  <div className="chat-ask-answered">Answered: {block.resultStr}</div>
+                                  <div className="chat-ask-answered">已回答：{block.resultStr}</div>
                                 ) : null}
                               </div>
                             ) : null}

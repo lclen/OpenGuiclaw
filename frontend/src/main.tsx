@@ -2,6 +2,9 @@ import { ChatComposer } from './components/ChatComposer';
 import { ChatMessageList } from './components/ChatMessageList';
 import { ChatThreadToolbar } from './components/ChatThreadToolbar';
 import { HomeWorkspaceDashboard } from './components/HomeWorkspaceDashboard';
+import { SettingsButton } from './components/SettingsButton';
+import { SettingsMainHeader, SettingsNav } from './components/SettingsOverlay';
+import { SidebarToggleButton } from './components/SidebarToggleButton';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { SchedulerPanel } from './components/SchedulerPanel';
@@ -26,6 +29,12 @@ const legacyChatComposerRoot = document.querySelector<HTMLElement>('[data-legacy
 const toolbarRoot = document.querySelector<HTMLElement>('[data-react-topbar-toolbar]');
 const legacyTopbarBreadcrumb = document.querySelector<HTMLElement>('[data-legacy-topbar-breadcrumb]');
 const legacyTopbarActions = document.querySelector<HTMLElement>('[data-legacy-topbar-actions]');
+// 第二层：settings 按钮 + workspace switcher
+const settingsBtnRoot = document.querySelector<HTMLElement>('[data-react-settings-btn-root]');
+const legacySettingsBtn = document.querySelector<HTMLElement>('[data-legacy-settings-btn]');
+// 第二层：sidebar toggle 按钮
+const sidebarToggleRoot = document.querySelector<HTMLElement>('[data-react-sidebar-toggle-root]');
+const legacySidebarToggle = document.querySelector<HTMLElement>('[data-legacy-sidebar-toggle]');
 
 if (skillsRoot) {
   skillsRoot.hidden = false;
@@ -131,6 +140,65 @@ if (toolbarRoot) {
   ReactDOM.createRoot(toolbarRoot).render(
     <React.StrictMode>
       <ChatThreadToolbar />
+    </React.StrictMode>
+  );
+}
+
+// ── 第二层：settings 按钮 ─────────────────────────────────────────────────
+if (settingsBtnRoot) {
+  settingsBtnRoot.hidden = false;
+  if (legacySettingsBtn) {
+    legacySettingsBtn.hidden = true;
+    legacySettingsBtn.style.display = 'none';
+  }
+  ReactDOM.createRoot(settingsBtnRoot).render(
+    <React.StrictMode>
+      <SettingsButton variant="full" />
+    </React.StrictMode>
+  );
+}
+
+// ── 第二层：sidebar toggle 按钮 ───────────────────────────────────────────
+if (sidebarToggleRoot) {
+  if (legacySidebarToggle) {
+    legacySidebarToggle.hidden = true;
+    legacySidebarToggle.style.display = 'none';
+  }
+  ReactDOM.createRoot(sidebarToggleRoot).render(
+    <React.StrictMode>
+      <SidebarToggleButton />
+    </React.StrictMode>
+  );
+}
+
+// ── 阶段 5：settings nav ──────────────────────────────────────────────────
+const settingsNavRoot = document.querySelector<HTMLElement>('[data-react-settings-nav-root]');
+const legacySettingsNav = document.querySelector<HTMLElement>('[data-legacy-settings-nav]');
+
+if (settingsNavRoot) {
+  if (legacySettingsNav) {
+    legacySettingsNav.hidden = true;
+    legacySettingsNav.style.display = 'none';
+  }
+  ReactDOM.createRoot(settingsNavRoot).render(
+    <React.StrictMode>
+      <SettingsNav />
+    </React.StrictMode>
+  );
+}
+
+// ── 阶段 6：settings main header ──────────────────────────────────────────
+const settingsHeaderRoot = document.querySelector<HTMLElement>('[data-react-settings-header-root]');
+const legacySettingsHeader = document.querySelector<HTMLElement>('[data-legacy-settings-header]');
+
+if (settingsHeaderRoot) {
+  if (legacySettingsHeader) {
+    legacySettingsHeader.hidden = true;
+    legacySettingsHeader.style.display = 'none';
+  }
+  ReactDOM.createRoot(settingsHeaderRoot).render(
+    <React.StrictMode>
+      <SettingsMainHeader />
     </React.StrictMode>
   );
 }
