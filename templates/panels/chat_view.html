@@ -19,7 +19,7 @@
 
     <!-- Active chat -->
     <div x-show="currentThreadId" class="chat-thread-shell">
-
+        <div class="chat-thread-content" style="flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;">
         <!-- Message list -->
         <div id="chat-container"
              data-react-chat-root
@@ -290,6 +290,8 @@
             </div>
             </div>
         </div>
+        </div>
+        <div data-react-vrm-drawer-root hidden style="flex:0 0 auto;min-width:0;min-height:0;display:flex;position:relative;overflow:hidden;"></div>
     </div>
 
 </div>

@@ -64,6 +64,7 @@ def start_backend_process(port: int) -> subprocess.Popen:
     logging.info(f"Starting backend subsystem on port {port}...")
     env = os.environ.copy()
     env["PYTHONPATH"] = _project_root
+    env["OPENGUICLAW_WATCHDOG"] = "1"
     
     # In frozen mode (PyInstaller), sys.executable is the venv python provided by launcher
     # In dev mode, it's just the current python

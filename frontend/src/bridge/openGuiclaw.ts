@@ -32,6 +32,42 @@ export type SchedulerTask = {
   last_run?: string | null;
   next_run?: string | null;
   deletable?: boolean;
+  delivery_targets?: Array<{
+    kind: string;
+    workspace_id?: string | null;
+    session_id?: string | null;
+    channel?: string | null;
+    chat_id?: string | null;
+  }>;
+  target_workspace_id?: string | null;
+  target_session_id?: string | null;
+  target_kind?: string | null;
+  target_channel?: string | null;
+  target_chat_id?: string | null;
+  last_execution?: SchedulerExecution | null;
+};
+
+export type SchedulerExecution = {
+  id: string;
+  task_id: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  status?: string;
+  result_summary?: string | null;
+  error?: string | null;
+  trigger_source?: string | null;
+  delivery_targets?: Array<{
+    kind: string;
+    workspace_id?: string | null;
+    session_id?: string | null;
+    channel?: string | null;
+    chat_id?: string | null;
+  }>;
+  target_workspace_id?: string | null;
+  target_session_id?: string | null;
+  target_kind?: string | null;
+  target_channel?: string | null;
+  target_chat_id?: string | null;
 };
 
 export type ChatAskOption = {
@@ -86,6 +122,7 @@ export type Workspace = {
   name: string;
   workspace_path?: string | null;
   thread_count?: number;
+  is_default?: boolean;
 };
 
 export type RecentThread = {
@@ -100,6 +137,7 @@ export type WorkspaceSummary = {
   name: string;
   workspace_path?: string | null;
   thread_count?: number;
+  is_default?: boolean;
   recent_sessions?: RecentThread[];
 };
 
@@ -127,9 +165,12 @@ export type WorkspaceShellSnapshot = {
   showWorkspaceSwitcher: boolean;
   showSettings: boolean;
   settingsTab: string;
+  previousViewBeforeSettings?: string;
   newWorkspaceName: string;
   newWorkspacePath: string;
   newWorkspaceError: string;
+  vrmSystemEnabled: boolean;
+  showVrm: boolean;
   isReceiving: boolean;
 };
 
@@ -146,6 +187,7 @@ export type ShellAction =
 export type OpenGuiclawApp = {
   skills: SkillRecord[];
   schedulerTasks: SchedulerTask[];
+  schedulerExecutions?: SchedulerExecution[];
   messages: ChatMessage[];
   workspaces: Workspace[];
   homeData: HomeData | null;
@@ -169,6 +211,16 @@ export type OpenGuiclawApp = {
   showWorkspaceSwitcher?: boolean;
   showSettings?: boolean;
   settingsTab?: string;
+  configTab?: string;
+  previousViewBeforeSettings?: string;
+  vrmSystemEnabled?: boolean;
+  showVrm?: boolean;
+  config?: {
+    browser_choice?: string;
+    proactive?: Record<string, unknown>;
+    journal?: Record<string, unknown>;
+    channels?: Record<string, unknown>;
+  };
   activePanel?: string;
   sidebarCollapsed?: boolean;
   newWorkspaceName?: string;
@@ -201,6 +253,9 @@ export type OpenGuiclawApp = {
   toggleWorkspaceGroup?: (wsId: string) => Promise<void>;
   openSidebarThread?: (wsId: string, sessionId: string) => Promise<void>;
   openSidebarPanel?: (view: string) => Promise<void> | void;
+  switchPanel?: (panel: string) => Promise<void> | void;
+  toggleVrmSystem?: (nextValue?: boolean) => void;
+  toggleVrm?: () => void;
   openNewWorkspaceModal?: () => void;
   pickWorkspacePath?: () => Promise<void>;
   createWorkspace?: (name?: string, path?: string) => Promise<void>;
@@ -211,6 +266,8 @@ export type OpenGuiclawApp = {
   reloadSkills: () => Promise<void>;
   toggleSkill: (name: string, enabled: boolean) => Promise<void>;
   loadSchedulerTasks: () => Promise<void>;
+  loadSchedulerExecutions?: () => Promise<void>;
+  refreshSchedulerData?: () => Promise<void>;
   toggleSchedulerTask: (taskId: string, enabled: boolean) => Promise<void>;
   triggerSchedulerTask: (taskId: string) => Promise<void>;
   deleteSchedulerTask: (taskId: string) => Promise<void>;
@@ -237,26 +294,41 @@ export function dispatchShellAction(action: ShellAction): void {
 
   switch (action.type) {
     case 'openSettings':
+      if (app.currentView !== 'settings') {
+        app.previousViewBeforeSettings = app.currentView || 'home';
+      }
       app.showSettings = true;
+      app.currentView = 'settings';
       if (action.tab && 'settingsTab' in app) {
         (app as OpenGuiclawApp & { settingsTab: string }).settingsTab = action.tab;
-        const cfgTab = getTabMeta(action.tab).cfgTab;
+        const tabMeta = getTabMeta(action.tab);
+        const cfgTab = tabMeta.cfgTab;
         if (cfgTab) {
           app.activePanel = 'config';
+          app.configTab = cfgTab;
           window.dispatchEvent(new CustomEvent('set-cfg-tab', { detail: cfgTab }));
+        } else if (tabMeta.panel) {
+          app.activePanel = tabMeta.panel;
+          void app.switchPanel?.(tabMeta.panel);
         }
       }
       break;
     case 'closeSettings':
       app.showSettings = false;
+      app.currentView = app.previousViewBeforeSettings || 'home';
       break;
     case 'switchSettingsTab': {
       const appWithTab = app as OpenGuiclawApp & { settingsTab?: string };
       appWithTab.settingsTab = action.tab;
-      const cfgTab = getTabMeta(action.tab).cfgTab;
+      const tabMeta = getTabMeta(action.tab);
+      const cfgTab = tabMeta.cfgTab;
       if (cfgTab) {
         app.activePanel = 'config';
+        app.configTab = cfgTab;
         window.dispatchEvent(new CustomEvent('set-cfg-tab', { detail: cfgTab }));
+      } else if (tabMeta.panel) {
+        app.activePanel = tabMeta.panel;
+        void app.switchPanel?.(tabMeta.panel);
       }
       break;
     }
@@ -273,6 +345,7 @@ export function dispatchShellAction(action: ShellAction): void {
       app.sidebarCollapsed = action.collapsed;
       break;
     case 'navigateView':
+      app.showSettings = false;
       app.openSidebarPanel?.(action.view);
       break;
   }

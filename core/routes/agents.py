@@ -1,4 +1,6 @@
 """Agent profiles, models, diagnostics, scheduler, and token-stats routes."""
+
+import sys
 import json
 import os
 import sqlite3
@@ -156,6 +158,7 @@ async def list_available_models():
 @router.get("/api/diagnostics")
 async def get_diagnostics():
     import importlib.util, platform, sys, time, urllib.request
+    restart_mode = "watchdog" if os.environ.get("OPENGUICLAW_WATCHDOG") == "1" else ("reload" if "--reload" in sys.argv else "unsupported")
     def check_module(name):
         return importlib.util.find_spec(name) is not None
     def check_network():
@@ -177,6 +180,11 @@ async def get_diagnostics():
             "python_executable": sys.executable,
             "app_dir": str(_APP_BASE),
             "frozen": getattr(sys, "frozen", False),
+        },
+        "restart": {
+            "supported": restart_mode in {"watchdog", "reload"},
+            "mode": restart_mode,
+            "reason": None if restart_mode in {"watchdog", "reload"} else "当前运行模式不带 watchdog，也未启用 uvicorn --reload。"
         },
         "network": {"proxies": proxies, "connectivity": check_network()},
         "dependencies": {
@@ -221,7 +229,13 @@ async def export_diagnostics():
 @router.get("/api/scheduler/tasks")
 async def list_tasks():
     scheduler = _require_scheduler()
-    return {"tasks": [t.to_dict() for t in scheduler.list_tasks()]}
+    tasks = []
+    for task in scheduler.list_tasks():
+        item = task.to_dict()
+        latest_execution = scheduler.get_latest_execution(task.id)
+        item["last_execution"] = latest_execution.to_dict() if latest_execution else None
+        tasks.append(item)
+    return {"tasks": tasks}
 
 
 @router.post("/api/scheduler/tasks")
@@ -239,6 +253,12 @@ async def create_task(req: Request):
             task_type=TaskType(data.get("task_type", "task")),
             reminder_message=data.get("reminder_message"),
             action=data.get("action"),
+            delivery_targets=data.get("delivery_targets") or [],
+            target_kind=data.get("target_kind"),
+            target_workspace_id=data.get("target_workspace_id"),
+            target_session_id=data.get("target_session_id"),
+            target_channel=data.get("target_channel"),
+            target_chat_id=data.get("target_chat_id"),
         )
         if not data.get("enabled", True):
             task.disable()
@@ -280,9 +300,18 @@ async def toggle_task(task_id: str, req: Request):
 @router.post("/api/scheduler/tasks/{task_id}/trigger")
 async def trigger_task(task_id: str):
     scheduler = _require_scheduler()
-    if not await scheduler.trigger_now(task_id):
+    execution = await scheduler.trigger_now(task_id, trigger_source="manual_trigger")
+    if not execution:
         raise HTTPException(status_code=404, detail="Task not found")
-    return {"status": "success"}
+    return {"status": "success", "execution": execution.to_dict()}
+
+
+@router.get("/api/scheduler/executions")
+async def list_task_executions(task_id: str | None = None, limit: int = 50):
+    scheduler = _require_scheduler()
+    limit = max(1, min(limit, 200))
+    executions = scheduler.get_executions(task_id=task_id, limit=limit)
+    return {"executions": [execution.to_dict() for execution in executions]}
 
 # ── Token stats ───────────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .task import ScheduledTask, TaskStatus, TriggerType
+from .task import ScheduledTask, TaskExecution, TaskStatus, TriggerType
 from .triggers import Trigger
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class TaskScheduler:
 
         self._tasks: dict[str, ScheduledTask] = {}
         self._triggers: dict[str, Trigger] = {}
+        self._executions: list[TaskExecution] = []
 
         self._running = False
         self._scheduler_task: asyncio.Task | None = None
@@ -56,6 +57,7 @@ class TaskScheduler:
         self._paused = False
 
         self._load_tasks()
+        self._load_executions()
 
     async def start(self) -> None:
         """启动调度器"""
@@ -99,6 +101,7 @@ class TaskScheduler:
             await asyncio.sleep(2)
 
         self._save_tasks()
+        self._save_executions()
         logger.info("TaskScheduler stopped")
 
     @property
@@ -172,6 +175,8 @@ class TaskScheduler:
             if hasattr(task, key):
                 setattr(task, key, value)
 
+        if hasattr(task, "normalize_target"):
+            task.normalize_target()
         task.updated_at = datetime.now()
 
         if "trigger_config" in updates or "trigger_type" in updates:
@@ -214,14 +219,18 @@ class TaskScheduler:
             tasks = [t for t in tasks if t.enabled]
         return sorted(tasks, key=lambda t: t.next_run or datetime.max)
 
-    async def trigger_now(self, task_id: str) -> bool:
-        """立即触发任务（后台异步执行，立即返回）"""
+    async def trigger_now(self, task_id: str, trigger_source: str = "manual_trigger") -> TaskExecution | None:
+        """立即触发任务（后台异步执行，立即返回执行记录）"""
         task = self._tasks.get(task_id)
         if not task:
-            return False
+            return None
+        if task_id in self._running_tasks:
+            return self.get_latest_execution(task_id, statuses={"running"})
         # 在后台运行，不阻塞 HTTP 响应
-        asyncio.create_task(self._run_task_safe(task))
-        return True
+        self._running_tasks.add(task_id)
+        execution = self._create_execution(task, trigger_source=trigger_source)
+        asyncio.create_task(self._run_task_safe(task, execution))
+        return execution
 
     async def _scheduler_loop(self) -> None:
         """调度循环"""
@@ -244,7 +253,8 @@ class TaskScheduler:
                         trigger_time = task.next_run - timedelta(seconds=self.advance_seconds)
                         if now >= trigger_time:
                             self._running_tasks.add(task_id)
-                            asyncio.create_task(self._run_task_safe(task))
+                            execution = self._create_execution(task, trigger_source="scheduler")
+                            asyncio.create_task(self._run_task_safe(task, execution))
 
                 await asyncio.sleep(self.check_interval)
             except asyncio.CancelledError:
@@ -253,25 +263,26 @@ class TaskScheduler:
                 logger.error(f"Scheduler loop error: {e}")
                 await asyncio.sleep(1)
 
-    async def _run_task_safe(self, task: ScheduledTask) -> None:
+    async def _run_task_safe(self, task: ScheduledTask, execution: TaskExecution) -> None:
         """安全地执行任务"""
         try:
             async with self._semaphore:
-                await self._execute_task(task)
+                await self._execute_task(task, execution)
         finally:
             self._running_tasks.discard(task.id)
 
-    async def _execute_task(self, task: ScheduledTask) -> None:
+    async def _execute_task(self, task: ScheduledTask, execution: TaskExecution) -> None:
         """执行任务"""
         logger.info(f"Executing task: {task.id} ({task.name})")
         task.mark_running()
         self._save_tasks()
+        self._save_executions()
 
         try:
             success = True
-            error_msg = ""
+            result_text = ""
             if self.executor:
-                success, error_msg = await self.executor(task)
+                success, result_text = await self.executor(task)
             else:
                 logger.warning(f"No executor configured for task {task.id}")
 
@@ -279,21 +290,31 @@ class TaskScheduler:
                 trigger = self._triggers.get(task.id)
                 next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
                 task.mark_completed(next_run)
+                execution.mark_success(self._summarize_result(result_text))
                 logger.info(f"Task {task.id} completed successfully")
             else:
-                task.mark_failed(error_msg)
+                task.mark_failed(result_text)
                 trigger = self._triggers.get(task.id)
                 next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
                 if next_run:
                     task.next_run = next_run
-                logger.warning(f"Task {task.id} reported failure: {error_msg}")
+                execution.mark_failed(
+                    error=result_text,
+                    result_summary=self._summarize_result(result_text),
+                )
+                logger.warning(f"Task {task.id} reported failure: {result_text}")
 
         except Exception as e:
             error_msg = str(e)
             task.mark_failed(error_msg)
+            execution.mark_failed(
+                error=error_msg,
+                result_summary=self._summarize_result(error_msg),
+            )
             logger.error(f"Task {task.id} failed: {error_msg}", exc_info=True)
 
         self._save_tasks()
+        self._save_executions()
 
     def _update_next_run(self, task: ScheduledTask) -> None:
         """更新任务的下一次运行时间"""
@@ -392,6 +413,29 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
 
+    def _load_executions(self) -> None:
+        executions_file = self.storage_path / "executions.json"
+
+        if not executions_file.exists():
+            self._try_recover_json(executions_file)
+        if not executions_file.exists():
+            return
+
+        try:
+            with open(executions_file, encoding="utf-8") as f:
+                data = json.load(f)
+
+            self._executions = []
+            for item in data:
+                try:
+                    self._executions.append(TaskExecution.from_dict(item))
+                except Exception as e:
+                    logger.warning(f"Failed to load execution: {e}")
+
+            logger.info(f"Loaded {len(self._executions)} executions from storage")
+        except Exception as e:
+            logger.error(f"Failed to load executions: {e}")
+
     def _save_tasks(self) -> None:
         self._save_meta()
         tasks_file = self.storage_path / "scheduler_tasks.json"
@@ -406,6 +450,15 @@ class TaskScheduler:
                 pass
         except Exception as e:
             logger.error(f"Failed to save tasks: {e}")
+
+    def _save_executions(self) -> None:
+        executions_file = self.storage_path / "executions.json"
+        try:
+            data = [execution.to_dict() for execution in self._executions]
+            self._atomic_write_json(executions_file, data)
+        except Exception as e:
+            logger.error(f"Failed to save executions: {e}")
+
     def _load_meta(self) -> None:
         """Load scheduler-wide settings."""
         meta_file = self.storage_path / "scheduler_meta.json"
@@ -424,3 +477,36 @@ class TaskScheduler:
             self._atomic_write_json(meta_file, {"paused": self._paused})
         except Exception as e:
             logger.error(f"Failed to save scheduler meta: {e}")
+
+    def _create_execution(self, task: ScheduledTask, trigger_source: str) -> TaskExecution:
+        execution = TaskExecution.create(task, trigger_source=trigger_source)
+        self._executions.append(execution)
+        self._save_executions()
+        return execution
+
+    def get_executions(self, task_id: str | None = None, limit: int | None = None) -> list[TaskExecution]:
+        executions = self._executions
+        if task_id:
+            executions = [execution for execution in executions if execution.task_id == task_id]
+        executions = sorted(executions, key=lambda execution: execution.started_at, reverse=True)
+        if limit is not None:
+            executions = executions[:limit]
+        return executions
+
+    def get_latest_execution(
+        self,
+        task_id: str,
+        statuses: set[str] | None = None,
+    ) -> TaskExecution | None:
+        for execution in self.get_executions(task_id=task_id):
+            if statuses is None or execution.status in statuses:
+                return execution
+        return None
+
+    def _summarize_result(self, text: str | None, limit: int = 240) -> str | None:
+        if text is None:
+            return None
+        summary = str(text).strip()
+        if len(summary) <= limit:
+            return summary
+        return summary[: limit - 1].rstrip() + "…"

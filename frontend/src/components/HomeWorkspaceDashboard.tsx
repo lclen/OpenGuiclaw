@@ -102,7 +102,10 @@ export function HomeWorkspaceDashboard() {
                     onClick={() => handleSelectWorkspace(workspace.id)}
                   >
                     <span className="home-workspace-dropdown-icon">W</span>
-                    <span className="home-workspace-dropdown-name">{workspace.name}</span>
+                    <span className="home-workspace-dropdown-name">
+                      {workspace.name}
+                      {workspace.is_default ? ' · 默认' : ''}
+                    </span>
                     {snapshot.activeWorkspaceId === workspace.id ? (
                       <span className="home-workspace-dropdown-check">OK</span>
                     ) : null}
@@ -171,6 +174,7 @@ export function HomeWorkspaceDashboard() {
                       <div className="home-workspace-copy">
                         <div className="home-workspace-title">
                           <span>{workspace.name}</span>
+                          {workspace.is_default ? <span className="home-badge">默认</span> : null}
                           {snapshot.activeWorkspaceId === workspace.id ? <span className="home-badge">当前</span> : null}
                         </div>
                         <div className="home-workspace-path">{workspace.workspace_path || ''}</div>

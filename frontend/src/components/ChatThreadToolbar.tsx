@@ -11,6 +11,8 @@ type ToolbarSnapshot = {
   isPinned: boolean;
   isReceiving: boolean;
   currentView: string;
+  vrmSystemEnabled: boolean;
+  showVrm: boolean;
 };
 
 const EMPTY: ToolbarSnapshot = {
@@ -21,7 +23,9 @@ const EMPTY: ToolbarSnapshot = {
   wsName: '',
   isPinned: false,
   isReceiving: false,
-  currentView: 'home'
+  currentView: 'home',
+  vrmSystemEnabled: false,
+  showVrm: false
 };
 
 function buildSnapshot(app: OpenGuiclawApp): ToolbarSnapshot {
@@ -70,7 +74,9 @@ function buildSnapshot(app: OpenGuiclawApp): ToolbarSnapshot {
     wsName,
     isPinned: !!thread?.pinned,
     isReceiving: !!app.isReceiving,
-    currentView: view
+    currentView: view,
+    vrmSystemEnabled: !!app.vrmSystemEnabled,
+    showVrm: !!app.showVrm
   };
 }
 
@@ -115,6 +121,12 @@ export function ChatThreadToolbar() {
     app.newSession?.();
   }
 
+  function handleToggleVrm() {
+    const app = appRef.current;
+    if (!app || !state.vrmSystemEnabled) return;
+    app.toggleVrm?.();
+  }
+
   const inChat = state.currentView === 'chat';
   const hasThread = !!state.threadId;
 
@@ -127,6 +139,25 @@ export function ChatThreadToolbar() {
 
       {inChat && hasThread ? (
         <div className="react-topbar-thread-actions">
+          {state.vrmSystemEnabled ? (
+            <button
+              type="button"
+              className={`react-topbar-icon-btn${state.showVrm ? ' is-active' : ''}`}
+              title={state.showVrm ? '隐藏 VRM 形象' : '显示 VRM 形象'}
+              onClick={handleToggleVrm}
+              aria-label={state.showVrm ? '隐藏 VRM 形象' : '显示 VRM 形象'}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"
+                />
+              </svg>
+            </button>
+          ) : null}
+
           <button
             type="button"
             className={`react-topbar-icon-btn${state.isPinned ? ' is-active' : ''}`}

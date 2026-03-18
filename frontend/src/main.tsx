@@ -2,20 +2,26 @@ import { ChatComposer } from './components/ChatComposer';
 import { ChatMessageList } from './components/ChatMessageList';
 import { ChatThreadToolbar } from './components/ChatThreadToolbar';
 import { ArchivedPanel } from './components/ArchivedPanel';
+import { AgentSettingsPanel } from './components/AgentSettingsPanel';
+import { DiaryPanel } from './components/DiaryPanel';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { HomeWorkspaceDashboard } from './components/HomeWorkspaceDashboard';
 import { IdentityPanel } from './components/IdentityPanel';
 import { IntegrationsPanel } from './components/IntegrationsPanel';
 import { MemoryPanel } from './components/MemoryPanel';
 import { McpServersPanel } from './components/McpServersPanel';
+import { ModelsPanel } from './components/ModelsPanel';
+import { PersonaPanel } from './components/PersonaPanel';
+import { SettingsMainHeader } from './components/SettingsMainHeader';
+import { SettingsNav } from './components/SettingsNav';
 import { SettingsButton } from './components/SettingsButton';
-import { SettingsMainHeader, SettingsNav } from './components/SettingsOverlay';
 import { SidebarToggleButton } from './components/SidebarToggleButton';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { SchedulerPanel } from './components/SchedulerPanel';
 import { SkillsQuickPanel } from './components/SkillsQuickPanel';
 import { TokenStatsPanel } from './components/TokenStatsPanel';
+import { VrmDrawer } from './components/VrmDrawer';
 import { WorkspaceCreateModal } from './components/WorkspaceCreateModal';
 import { WorkspaceSidebar } from './components/WorkspaceSidebar';
 
@@ -33,6 +39,8 @@ const chatRoot = document.querySelector<HTMLElement>('[data-react-chat-root]');
 const legacyChatRoot = document.querySelector<HTMLElement>('[data-legacy-chat-message-root]');
 const chatComposerRoot = document.querySelector<HTMLElement>('[data-react-chat-composer-root]');
 const legacyChatComposerRoot = document.querySelector<HTMLElement>('[data-legacy-chat-composer-root]');
+const vrmDrawerRoot = document.querySelector<HTMLElement>('[data-react-vrm-drawer-root]');
+const settingsVrmRoot = document.querySelector<HTMLElement>('[data-react-settings-vrm-root]');
 const toolbarRoot = document.querySelector<HTMLElement>('[data-react-topbar-toolbar]');
 const legacyTopbarBreadcrumb = document.querySelector<HTMLElement>('[data-legacy-topbar-breadcrumb]');
 const legacyTopbarActions = document.querySelector<HTMLElement>('[data-legacy-topbar-actions]');
@@ -134,6 +142,24 @@ if (chatComposerRoot) {
   );
 }
 
+if (vrmDrawerRoot) {
+  vrmDrawerRoot.hidden = false;
+  ReactDOM.createRoot(vrmDrawerRoot).render(
+    <React.StrictMode>
+      <VrmDrawer mode="chat" />
+    </React.StrictMode>
+  );
+}
+
+if (settingsVrmRoot) {
+  settingsVrmRoot.hidden = false;
+  ReactDOM.createRoot(settingsVrmRoot).render(
+    <React.StrictMode>
+      <VrmDrawer mode="settings" />
+    </React.StrictMode>
+  );
+}
+
 if (toolbarRoot) {
   toolbarRoot.hidden = false;
   if (legacyTopbarBreadcrumb) {
@@ -211,6 +237,12 @@ const identityRoot = document.querySelector<HTMLElement>('[data-react-identity-r
 const legacyIdentityRoot = document.querySelector<HTMLElement>('[data-legacy-identity-root]');
 const diagnosticsRoot = document.querySelector<HTMLElement>('[data-react-diagnostics-root]');
 const legacyDiagnosticsRoot = document.querySelector<HTMLElement>('[data-legacy-diagnostics-root]');
+const modelsRoot = document.querySelector<HTMLElement>('[data-react-models-root]');
+const legacyModelsRoot = document.querySelector<HTMLElement>('[data-legacy-models-root]');
+const agentRoot = document.querySelector<HTMLElement>('[data-react-agent-root]');
+const legacyAgentRoot = document.querySelector<HTMLElement>('[data-legacy-agent-root]');
+const diaryRoot = document.querySelector<HTMLElement>('[data-react-diary-root]');
+const personaRoot = document.querySelector<HTMLElement>('[data-react-persona-root]');
 
 if (settingsHeaderRoot) {
   if (legacySettingsHeader) {
@@ -311,6 +343,50 @@ if (diagnosticsRoot) {
   ReactDOM.createRoot(diagnosticsRoot).render(
     <React.StrictMode>
       <DiagnosticsPanel />
+    </React.StrictMode>
+  );
+}
+
+if (modelsRoot) {
+  modelsRoot.hidden = false;
+  if (legacyModelsRoot) {
+    legacyModelsRoot.hidden = true;
+    legacyModelsRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(modelsRoot).render(
+    <React.StrictMode>
+      <ModelsPanel />
+    </React.StrictMode>
+  );
+}
+
+if (agentRoot) {
+  agentRoot.hidden = false;
+  if (legacyAgentRoot) {
+    legacyAgentRoot.hidden = true;
+    legacyAgentRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(agentRoot).render(
+    <React.StrictMode>
+      <AgentSettingsPanel />
+    </React.StrictMode>
+  );
+}
+
+if (diaryRoot) {
+  diaryRoot.hidden = false;
+  ReactDOM.createRoot(diaryRoot).render(
+    <React.StrictMode>
+      <DiaryPanel />
+    </React.StrictMode>
+  );
+}
+
+if (personaRoot) {
+  personaRoot.hidden = false;
+  ReactDOM.createRoot(personaRoot).render(
+    <React.StrictMode>
+      <PersonaPanel />
     </React.StrictMode>
   );
 }

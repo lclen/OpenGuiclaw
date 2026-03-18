@@ -17,6 +17,7 @@ Endpoints:
   GET    /api/workspaces/{workspace_id}/files         — 文件树
   GET    /api/home                                    — Global Home 总览数据
 """
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -56,6 +57,28 @@ def _not_found(workspace_id: str):
     raise HTTPException(status_code=404, detail=f"Workspace not found: {workspace_id}")
 
 
+def _pick_workspace_folder_native() -> Optional[str]:
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes('-topmost', True)
+    except Exception:
+        pass
+
+    try:
+        selected = filedialog.askdirectory(
+            title='选择工作区目录',
+            mustexist=True,
+            parent=root,
+        )
+        return selected or None
+    finally:
+        root.destroy()
+
+
 # ── Workspace endpoints ───────────────────────────────────────────────────────
 
 @router.get("/api/workspaces")
@@ -63,6 +86,11 @@ async def list_workspaces():
     """返回所有非归档工作区列表，每项附带 thread_count。"""
     wm = _wm()
     workspaces = wm.list_workspaces(include_archived=False)
+    default_workspace_id = None
+    try:
+        default_workspace_id = wm.get_default_workspace(create_if_missing=True).id
+    except Exception:
+        default_workspace_id = None
     result = []
     for ws in workspaces:
         try:
@@ -71,6 +99,7 @@ async def list_workspaces():
             thread_count = 0
         item = ws.model_dump()
         item["thread_count"] = thread_count
+        item["is_default"] = ws.id == default_workspace_id
         result.append(item)
     return result
 
@@ -94,6 +123,18 @@ async def create_workspace(body: CreateWorkspaceRequest):
         raise HTTPException(status_code=422, detail=str(e))
     except DuplicateWorkspacePathError as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+
+
+@router.post('/api/workspaces/pick-folder')
+async def pick_workspace_folder():
+    """打开系统目录选择窗口并返回选中的目录。"""
+    try:
+        selected = await asyncio.to_thread(_pick_workspace_folder_native)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'打开目录选择器失败：{e}')
+    return {'path': selected}
 
 
 @router.get("/api/workspaces/{workspace_id}")
@@ -262,6 +303,11 @@ async def get_home():
     """Global Home 总览数据：最近工作区 + 每个工作区最近线程。"""
     wm = _wm()
     workspaces = wm.list_workspaces(include_archived=False)
+    default_workspace_id = None
+    try:
+        default_workspace_id = wm.get_default_workspace(create_if_missing=True).id
+    except Exception:
+        default_workspace_id = None
 
     recent_workspaces: List[Dict[str, Any]] = []
     for ws in workspaces[:10]:
@@ -271,6 +317,7 @@ async def get_home():
             sessions = []
         recent_workspaces.append({
             **ws.model_dump(),
+            "is_default": ws.id == default_workspace_id,
             "recent_sessions": [s.model_dump() for s in sessions],
         })
 

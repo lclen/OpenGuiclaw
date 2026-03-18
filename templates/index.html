@@ -17,6 +17,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
     <!-- Shell CSS -->
     <link rel="stylesheet" href="/static/css/shell.css">
+    <link rel="stylesheet" href="/static/css/settings-shell.css">
     <link rel="stylesheet" href="/static/css/chat-codex.css">
     <link rel="stylesheet" href="/static/css/react-panels.css">
     <link rel="stylesheet" href="/static/css/workspace-shell-react.css">
@@ -114,11 +115,13 @@
 
     <!-- App Shell -->
     <div class="app-shell">
-        {% include "panels/sidebar_shell.html" %}
+        <div x-show="currentView !== 'settings'" class="app-shell-sidebar">
+            {% include "panels/sidebar_shell.html" %}
+        </div>
 
         <!-- Main panel: home / chat -->
         <div class="main-panel">
-            <div class="main-topbar">
+            <div x-show="currentView !== 'settings'" class="main-topbar">
                 <!-- React sidebar toggle (replaces Alpine @click) -->
                 <div data-react-sidebar-toggle-root></div>
                 <!-- Legacy Alpine sidebar toggle (hidden once React mounts) -->
@@ -165,11 +168,11 @@
             <div x-show="currentView === 'scheduler'" class="shell-view">
                 {% include "panels/panel_scheduler.html" %}
             </div>
+            <div x-show="currentView === 'settings'" class="shell-view shell-view--settings">
+                {% include "panels/settings_view.html" %}
+            </div>
         </div>
     </div>
-
-    <!-- Settings Overlay -->
-    {% include "panels/settings_overlay.html" %}
 
     <!-- New Workspace Modal -->
     <div data-react-workspace-modal-root hidden></div>
@@ -254,6 +257,7 @@
     </script>
     <script>
         function loadVRMScripts() {
+            var vrmAssetVersion = '20260318-react-vrm';
             var scripts = [
                 '/static/js/vrm-core.js',
                 '/static/js/vrm-animation.js',
@@ -261,7 +265,9 @@
                 '/static/js/vrm-interaction.js',
                 '/static/js/vrm-manager.js',
                 '/static/js/app.js'
-            ];
+            ].map(function (src) {
+                return src + '?v=' + encodeURIComponent(vrmAssetVersion);
+            });
             var chain = Promise.resolve();
             scripts.forEach(function (src) {
                 chain = chain.then(function () {

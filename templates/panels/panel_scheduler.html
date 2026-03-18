@@ -20,9 +20,9 @@
                 </div>
             </template>
 
-            <button @click="loadSchedulerTasks()"
+            <button @click="refreshSchedulerData()"
                 class="w-8 h-8 flex items-center justify-center text-[var(--noble-black-400)] hover:text-white hover:bg-white/5 rounded-lg transition-all"
-                title="刷新任务列表">
+                title="刷新自动化数据">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
                         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -35,15 +35,30 @@
         </div>
     </div>
 
+    <div x-show="!showSchedulerForm" class="px-5 pt-4 shrink-0">
+        <div class="inline-flex rounded-xl border border-white/5 bg-[var(--noble-black-900)]/70 p-1 gap-1">
+            <button @click="schedulerViewTab = 'tasks'"
+                :class="schedulerViewTab === 'tasks' ? 'bg-[var(--noble-black-600)] text-white border-white/10' : 'text-[var(--noble-black-400)] hover:text-white'"
+                class="px-3.5 py-2 rounded-lg border border-transparent font-bold text-[10px] uppercase tracking-wider transition-all">
+                任务列表
+            </button>
+            <button @click="schedulerViewTab = 'executions'"
+                :class="schedulerViewTab === 'executions' ? 'bg-[var(--noble-black-600)] text-white border-white/10' : 'text-[var(--noble-black-400)] hover:text-white'"
+                class="px-3.5 py-2 rounded-lg border border-transparent font-bold text-[10px] uppercase tracking-wider transition-all">
+                执行历史
+            </button>
+        </div>
+    </div>
+
     <!-- Empty State -->
-    <div x-show="!showSchedulerForm && schedulerTasks.length === 0"
+    <div x-show="!showSchedulerForm && schedulerViewTab === 'tasks' && schedulerTasks.length === 0"
         class="flex-1 flex flex-col items-center justify-center text-[var(--noble-black-500)] py-20 opacity-30">
         <p class="text-[12px] font-bold uppercase tracking-widest">暂无活跃计划项</p>
         <p class="text-[10px] mt-2 font-medium">点击上方按钮开始配置自动化工作流</p>
     </div>
 
     <!-- Task List -->
-    <div x-show="!showSchedulerForm && schedulerTasks.length > 0"
+    <div x-show="!showSchedulerForm && schedulerViewTab === 'tasks' && schedulerTasks.length > 0"
         class="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-2.5">
         <template x-for="task in schedulerTasks" :key="task.id">
             <div
@@ -146,6 +161,64 @@
                             x-text="task.next_run ? new Date(task.next_run).toLocaleString() : '等待信号'"></span>
                     </div>
                 </div>
+                <div class="mt-2.5 bg-black/20 rounded-lg p-2 border border-white/5">
+                    <span
+                        class="block text-[8px] font-bold uppercase text-[var(--noble-black-500)] mb-1">投递目标</span>
+                    <span class="text-[10px] font-medium text-[var(--noble-black-300)]"
+                        x-text="getSchedulerTargetSummary(task)"></span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Execution History -->
+    <div x-show="!showSchedulerForm && schedulerViewTab === 'executions' && schedulerExecutions.length === 0"
+        class="flex-1 flex flex-col items-center justify-center text-[var(--noble-black-500)] py-20 opacity-30">
+        <p class="text-[12px] font-bold uppercase tracking-widest">暂无执行记录</p>
+        <p class="text-[10px] mt-2 font-medium">当自动化任务开始运行后，这里会显示每一次执行结果</p>
+    </div>
+
+    <div x-show="!showSchedulerForm && schedulerViewTab === 'executions' && schedulerExecutions.length > 0"
+        class="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-2.5">
+        <template x-for="execution in schedulerExecutions" :key="execution.id">
+            <div class="bg-[var(--noble-black-800)] border border-white/5 rounded-xl p-4 hover:bg-[var(--noble-black-700)] transition-all">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                            <h3 class="text-[13px] font-bold text-[var(--noble-black-100)]" x-text="execution.task_id"></h3>
+                            <span class="px-1.5 py-0.5 text-[8.5px] font-bold rounded uppercase border"
+                                :class="getSchedulerExecutionStatusClass(execution.status)"
+                                x-text="getSchedulerExecutionStatusLabel(execution.status)"></span>
+                            <span class="px-1.5 py-0.5 text-[8.5px] font-bold rounded uppercase bg-[var(--noble-black-900)] text-[var(--noble-black-400)] border border-white/5"
+                                x-text="execution.trigger_source || 'scheduler'"></span>
+                        </div>
+                        <p class="text-[11px] leading-relaxed text-[var(--noble-black-300)] break-words"
+                            x-text="execution.result_summary || execution.error || '暂无摘要'"></p>
+                    </div>
+                    <div class="shrink-0 text-right">
+                        <div class="text-[9px] uppercase tracking-wider text-[var(--noble-black-500)] font-bold">Execution ID</div>
+                        <div class="text-[10px] font-mono text-[var(--noble-black-300)]" x-text="execution.id"></div>
+                    </div>
+                </div>
+
+                <div class="mt-3.5 grid grid-cols-2 gap-2 text-sm">
+                    <div class="bg-black/20 rounded-lg p-2 border border-white/5">
+                        <span class="block text-[8px] font-bold uppercase text-[var(--noble-black-500)] mb-1">开始时间</span>
+                        <span class="text-[10px] font-mono font-medium text-[var(--noble-black-300)]"
+                            x-text="execution.started_at ? new Date(execution.started_at).toLocaleString() : '未知'"></span>
+                    </div>
+                    <div class="bg-black/20 rounded-lg p-2 border border-white/5">
+                        <span class="block text-[8px] font-bold uppercase text-[var(--noble-black-500)] mb-1">结束时间</span>
+                        <span class="text-[10px] font-mono font-medium text-[var(--noble-black-300)]"
+                            x-text="execution.finished_at ? new Date(execution.finished_at).toLocaleString() : '执行中'"></span>
+                    </div>
+                </div>
+
+                <div class="mt-2.5 bg-black/20 rounded-lg p-2 border border-white/5">
+                    <span class="block text-[8px] font-bold uppercase text-[var(--noble-black-500)] mb-1">投递目标</span>
+                    <span class="text-[10px] font-medium text-[var(--noble-black-300)]"
+                        x-text="getSchedulerExecutionTargetSummary(execution)"></span>
+                </div>
             </div>
         </template>
     </div>
@@ -204,6 +277,71 @@
                         class="block text-[10px] font-bold text-[var(--noble-black-500)] uppercase tracking-wider mb-1.5 px-1">任务备注描述</label>
                     <input type="text" x-model="schedulerFormData.description" placeholder="可选备注说明..."
                         class="w-full px-3.5 py-2.5 bg-[var(--noble-black-800)] border border-white/5 rounded-lg text-white text-[12px] focus:outline-none">
+                </div>
+                <div>
+                    <label
+                        class="block text-[10px] font-bold text-[var(--noble-black-500)] uppercase tracking-wider mb-2 px-1">投递目标</label>
+                    <div class="grid grid-cols-1 gap-2">
+                        <label class="flex items-center gap-3 px-3.5 py-3 bg-[var(--noble-black-900)] border border-white/5 rounded-lg">
+                            <input type="checkbox" x-model="schedulerFormData.delivery_workspace_enabled" class="rounded border-white/10 bg-[var(--noble-black-800)] text-[var(--stem-green-500)] focus:ring-0">
+                            <div>
+                                <div class="text-[11px] font-bold text-white uppercase tracking-wider">工作区收件箱</div>
+                                <div class="text-[10px] text-[var(--noble-black-500)] mt-0.5">将结果写入工作区的自动化收件箱线程</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-3 px-3.5 py-3 bg-[var(--noble-black-900)] border border-white/5 rounded-lg"
+                            :class="!hasSchedulerDesktopTargetAvailable() ? 'opacity-50' : ''">
+                            <input type="checkbox" x-model="schedulerFormData.delivery_desktop_enabled" :disabled="!hasSchedulerDesktopTargetAvailable()" class="rounded border-white/10 bg-[var(--noble-black-800)] text-[var(--stem-green-500)] focus:ring-0">
+                            <div>
+                                <div class="text-[11px] font-bold text-white uppercase tracking-wider">当前桌面对话</div>
+                                <div class="text-[10px] text-[var(--noble-black-500)] mt-0.5">同步通知当前激活的桌面聊天线程</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-3 px-3.5 py-3 bg-[var(--noble-black-900)] border border-white/5 rounded-lg">
+                            <input type="checkbox" x-model="schedulerFormData.delivery_im_enabled" class="rounded border-white/10 bg-[var(--noble-black-800)] text-[var(--stem-green-500)] focus:ring-0">
+                            <div>
+                                <div class="text-[11px] font-bold text-white uppercase tracking-wider">IM 会话</div>
+                                <div class="text-[10px] text-[var(--noble-black-500)] mt-0.5">回投到指定的钉钉 / 飞书 / Telegram 会话</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div x-show="schedulerFormData.delivery_workspace_enabled" class="mt-3 space-y-1.5">
+                        <select x-model="schedulerFormData.target_workspace_id"
+                            class="w-full px-3.5 py-2.5 bg-[var(--noble-black-800)] border border-white/5 rounded-lg text-white text-[12px] focus:outline-none">
+                            <template x-for="workspace in workspaces" :key="workspace.id">
+                                <option :value="workspace.id"
+                                    x-text="workspace.is_default ? `${workspace.name} · 默认工作区` : workspace.name"></option>
+                            </template>
+                        </select>
+                        <p class="text-[10px] text-[var(--noble-black-500)] px-1">
+                            自动化结果会写入该工作区的“自动化收件箱”线程。
+                        </p>
+                    </div>
+
+                    <div x-show="schedulerFormData.delivery_desktop_enabled" class="mt-3 space-y-1.5">
+                        <div
+                            class="w-full px-3.5 py-2.5 bg-[var(--noble-black-800)] border border-white/5 rounded-lg text-white text-[12px] font-medium">
+                            <span x-text="getSchedulerDesktopSessionLabel(schedulerFormData.target_desktop_session_id)"></span>
+                        </div>
+                        <p class="text-[10px] text-[var(--noble-black-500)] px-1">
+                            计划任务会回到上方显示的桌面聊天线程；如当前有激活线程，新建时会默认绑定它。
+                        </p>
+                    </div>
+
+                    <div x-show="schedulerFormData.delivery_im_enabled" class="mt-3 space-y-1.5">
+                        <select x-model="schedulerFormData.target_im_session_id"
+                            class="w-full px-3.5 py-2.5 bg-[var(--noble-black-800)] border border-white/5 rounded-lg text-white text-[12px] focus:outline-none">
+                            <option value="">请选择 IM 会话</option>
+                            <template x-for="session in imSessions" :key="session.id">
+                                <option :value="session.id"
+                                    x-text="`${session.channel}/${session.chat_id}${session.last_message ? ' · ' + session.last_message : ''}`"></option>
+                            </template>
+                        </select>
+                        <p class="text-[10px] text-[var(--noble-black-500)] px-1">
+                            将结果回投到原 IM 会话，并同步写入本地 IM session 记录。
+                        </p>
+                    </div>
                 </div>
             </div>
 

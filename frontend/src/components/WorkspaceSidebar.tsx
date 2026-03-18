@@ -147,7 +147,10 @@ export function WorkspaceSidebar() {
                 onClick={() => handleToggleWorkspace(workspace.id)}
               >
                 <span className="sidebar-workspace-folder">W</span>
-                <span className="sidebar-workspace-name">{workspace.name}</span>
+                <span className="sidebar-workspace-name">
+                  {workspace.name}
+                  {workspace.is_default ? ' · 默认' : ''}
+                </span>
                 <span className="sidebar-workspace-count">{workspace.thread_count || threads.length || 0}</span>
                 <span className={`sidebar-workspace-chevron${expanded ? ' open' : ''}`}>^</span>
               </button>

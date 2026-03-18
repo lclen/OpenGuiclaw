@@ -9,6 +9,11 @@ type DiagnosticsPayload = {
     app_dir?: string;
     frozen?: boolean;
   };
+  restart?: {
+    supported?: boolean;
+    mode?: string;
+    reason?: string | null;
+  };
   network?: {
     proxies?: Record<string, string | null>;
     connectivity?: {
@@ -174,6 +179,16 @@ export function DiagnosticsPanel() {
                   <span>运行方式</span>
                   <strong>{result.system?.frozen ? '打包运行' : '源码运行'}</strong>
                 </div>
+                <div className="diagnostics-panel__kv-row">
+                  <span>自动重启</span>
+                  <strong>{result.restart?.supported ? '支持（watchdog）' : '不支持（开发模式）'}</strong>
+                </div>
+                {result.restart?.reason ? (
+                  <div className="diagnostics-panel__kv-row">
+                    <span>重启说明</span>
+                    <strong>{result.restart.reason}</strong>
+                  </div>
+                ) : null}
               </div>
             </section>
 

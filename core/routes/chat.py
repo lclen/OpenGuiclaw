@@ -9,6 +9,10 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from core.automation_context import (
+    reset_automation_source_context,
+    set_automation_source_context,
+)
 from core.state import app_state, _APP_BASE, logger, get_profile_store
 
 # ── Active stream registry ────────────────────────────────────────────────────
@@ -70,6 +74,11 @@ async def chat_sync(request: ChatRequest):
         raise HTTPException(status_code=500, detail="Agent not initialized")
 
     system_prompt_override, allowed_skills, skills_mode, orig_model = _resolve_agent_overrides(request)
+    current_session_id = getattr(getattr(agent, "sessions", None), "current", None)
+    source_token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id=getattr(current_session_id, "session_id", None),
+    )
     try:
         response = agent.chat(
             request.message,
@@ -82,6 +91,7 @@ async def chat_sync(request: ChatRequest):
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
     finally:
+        reset_automation_source_context(source_token)
         if orig_model is not None:
             agent.model = orig_model
 
@@ -177,6 +187,11 @@ async def chat_stream(request: ChatRequest):
     system_prompt_override, allowed_skills, skills_mode, orig_model = _resolve_agent_overrides(request)
 
     async def event_generator():
+        current_session = getattr(getattr(agent, "sessions", None), "current", None)
+        source_token = set_automation_source_context(
+            source_kind="desktop",
+            source_session_id=getattr(current_session, "session_id", None),
+        )
         try:
             async for chunk in agent.chat_stream(
                 request.message,
@@ -190,6 +205,7 @@ async def chat_stream(request: ChatRequest):
             logger.error(f"Streaming error: {e}")
             yield dict(data=json.dumps({"type": "error", "content": str(e)}))
         finally:
+            reset_automation_source_context(source_token)
             if orig_model is not None:
                 agent.model = orig_model
 
@@ -480,6 +496,10 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
 
     async def event_generator():
         nonlocal session
+        source_token = set_automation_source_context(
+            source_kind="desktop",
+            source_session_id=session_id,
+        )
         try:
             # Build system prompt using agent's method (reads persona, memory, etc.)
             system_prompt = agent._build_system_prompt(
@@ -599,6 +619,7 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
             logger.error(f"Workspace stream error [{workspace_id}/{session_id}]: {e}")
             yield dict(data=json.dumps({"type": "error", "content": str(e)}))
         finally:
+            reset_automation_source_context(source_token)
             # Write session ONLY to workspace directory — never to global data/sessions/
             try:
                 _save_ws_session_data(workspace_id, session.to_dict())

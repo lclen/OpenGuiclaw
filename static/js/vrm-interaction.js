@@ -200,8 +200,16 @@ class VRMInteraction {
             }
 
             if (e.button === 1) { // 中键
-                // 只有点击到模型才开始拖拽（射线检测）
-                if (!this._hitTestModel(e.clientX, e.clientY)) {
+                // 中键平移优先保证“可用性”：
+                // 只要鼠标位于 canvas 内就允许开始拖拽，避免精确射线检测过严导致经常无法触发。
+                const rect = canvas.getBoundingClientRect();
+                const insideCanvas =
+                    e.clientX >= rect.left &&
+                    e.clientX <= rect.right &&
+                    e.clientY >= rect.top &&
+                    e.clientY <= rect.bottom;
+
+                if (!insideCanvas) {
                     return; // 未命中模型，不拦截事件
                 }
                 this.isDragging = true;
@@ -341,6 +349,7 @@ class VRMInteraction {
         // 3. 鼠标释放
         this.mouseUpHandler = async (e) => {
             if (this.isDragging) {
+                const completedDragMode = this.dragMode;
                 e.preventDefault();
                 e.stopPropagation();
                 this.isDragging = false;
@@ -350,8 +359,11 @@ class VRMInteraction {
                 // 拖拽结束后恢复按钮的 pointer-events
                 this._restoreButtonPointerEvents();
 
-                // 拖拽结束后：若超出屏幕范围，执行回弹
-                await this._snapModelIntoScreen({ animate: true });
+                // 仅在“平移模型”结束后执行回弹；
+                // 旋转视角时不应修改模型位置，否则会表现为“拖视角时模型也在移动”。
+                if (completedDragMode === 'pan') {
+                    await this._snapModelIntoScreen({ animate: true });
+                }
 
                 // 【已禁用】自动保存位置，改为通过 UI 上的“保存配置”按钮手动进行
                 // await this._savePositionAfterInteraction();
@@ -452,6 +464,13 @@ class VRMInteraction {
 
         // 绑定事件
         canvas.addEventListener('mousedown', this.mouseDownHandler);
+        // 某些浏览器/触控板对中键拖拽不会稳定触发传统 mousedown(button=1)，
+        // 因此补一个 pointerdown 兜底，让中键平移更稳定。
+        this.pointerDownHandler = (e) => {
+            if (e.pointerType !== 'mouse' || e.button !== 1) return;
+            this.mouseDownHandler(e);
+        };
+        canvas.addEventListener('pointerdown', this.pointerDownHandler);
         document.addEventListener('mousemove', this.dragHandler); // 绑定到 document 以支持拖出画布
         document.addEventListener('mouseup', this.mouseUpHandler);
         canvas.addEventListener('mouseenter', this.mouseEnterHandler);
@@ -583,6 +602,10 @@ class VRMInteraction {
         if (this.mouseDownHandler) {
             canvas.removeEventListener('mousedown', this.mouseDownHandler);
             this.mouseDownHandler = null;
+        }
+        if (this.pointerDownHandler) {
+            canvas.removeEventListener('pointerdown', this.pointerDownHandler);
+            this.pointerDownHandler = null;
         }
         if (this.dragHandler) {
             document.removeEventListener('mousemove', this.dragHandler);

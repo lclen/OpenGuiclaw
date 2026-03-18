@@ -83,7 +83,8 @@
     <!-- ══════════════════════════ TAB: 模型接入 ══════════════════════════ -->
     <div x-show="configTab === 'models'" x-transition:enter="transition ease-out duration-200"
         x-transition:enter-start="opacity-0 translate-y-2" class="flex-1 flex flex-col overflow-hidden">
-        <div class="flex-1 overflow-y-auto min-h-0 custom-scrollbar px-6 py-6 space-y-8">
+        <div data-react-models-root hidden class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 py-6"></div>
+        <div data-legacy-models-root x-ignore class="flex-1 overflow-y-auto min-h-0 custom-scrollbar px-6 py-6 space-y-8">
 
             <!-- section: 核心对话端点 -->
             <div class="space-y-3">
@@ -566,6 +567,8 @@
     <div x-show="configTab === 'agent_sys'" x-transition:enter="transition ease-out duration-200"
         x-transition:enter-start="opacity-0 translate-y-2"
         class="flex-1 overflow-y-auto min-h-0 custom-scrollbar px-6 py-6 space-y-8">
+        <div data-react-agent-root hidden class="flex-1 min-h-0 overflow-y-auto custom-scrollbar"></div>
+        <div data-legacy-agent-root x-ignore>
 
         <!-- VRM Display Toggle -->
         <div class="space-y-4">
@@ -755,6 +758,7 @@
                     </div>
                 </label>
             </div>
+        </div>
         </div>
     </div>
 

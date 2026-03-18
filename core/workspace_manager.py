@@ -68,6 +68,7 @@ class WorkspaceInfo(BaseModel):
     persona_file: Optional[str] = None
     model_overrides: Optional[Dict[str, Any]] = None  # renamed from model_config to avoid pydantic v2 clash
     archived: bool = False
+    is_default: bool = False
 
 
 class SessionSummary(BaseModel):
@@ -348,10 +349,14 @@ class WorkspaceManager:
                         continue
                     pinned = data.get("pinned", False)
                     messages = data.get("messages", [])
-                    # Derive a title from the first user message
-                    title = None
-                    for msg in messages:
-                        if msg.get("role") == "user":
+                    # Prefer explicit title for system/inbox threads, then derive
+                    # a title from the first user or assistant message.
+                    title = data.get("title")
+                    if not title:
+                        for msg in messages:
+                            role = msg.get("role")
+                            if role not in {"user", "assistant"}:
+                                continue
                             content = msg.get("content", "")
                             if isinstance(content, str) and content.strip():
                                 title = content.strip()[:60]
@@ -620,6 +625,105 @@ class WorkspaceManager:
             logger.info(
                 f"Created default workspace {default_ws.id!r} -> {default_ws.workspace_path!r}"
             )
+
+    def get_default_workspace(self, create_if_missing: bool = True) -> WorkspaceInfo:
+        """
+        Return the global/default workspace.
+
+        Preference order:
+        1. Active workspace named "Default Workspace" at app root
+        2. Any active workspace at app root
+        3. Any active workspace named "Default Workspace"
+        4. Create a new default workspace at app root (if allowed)
+        """
+        with self._lock:
+            app_root = self._data_dir.parent.resolve()
+            name_and_path_match: list[WorkspaceInfo] = []
+            path_match: list[WorkspaceInfo] = []
+            name_match: list[WorkspaceInfo] = []
+
+            for ws_id in self._all_workspace_ids():
+                try:
+                    info = self._read_workspace_json(ws_id)
+                except Exception:
+                    continue
+                if info.archived:
+                    continue
+
+                try:
+                    resolved = Path(info.workspace_path).resolve()
+                except Exception:
+                    resolved = None
+
+                if info.name == "Default Workspace" and resolved == app_root:
+                    name_and_path_match.append(info)
+                elif resolved == app_root:
+                    path_match.append(info)
+                elif info.name == "Default Workspace":
+                    name_match.append(info)
+
+            if name_and_path_match:
+                return name_and_path_match[0]
+            if path_match:
+                return path_match[0]
+            if name_match:
+                return name_match[0]
+
+            if not create_if_missing:
+                raise WorkspaceNotFoundError("Default workspace not found")
+
+            now = _utcnow()
+            default_ws = WorkspaceInfo(
+                id=_new_workspace_id(),
+                name="Default Workspace",
+                workspace_path=str(app_root),
+                created_at=now,
+                updated_at=now,
+                archived=False,
+                is_default=True,
+            )
+            self._write_workspace_json(default_ws)
+            logger.info(
+                f"Created missing default workspace {default_ws.id!r} -> {default_ws.workspace_path!r}"
+            )
+            return default_ws
+
+    def ensure_system_session(
+        self,
+        workspace_id: str,
+        thread_type: str,
+        title: str,
+        pinned: bool = False,
+    ) -> str:
+        """Return a stable system thread id for the workspace, creating it if needed."""
+        with self._lock:
+            self._read_workspace_json(workspace_id)
+            sessions_dir = self._sessions_dir(workspace_id)
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+
+            for path in sessions_dir.glob("*.json"):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data.get("system_thread_type") != thread_type:
+                        continue
+                    if data.get("title") != title or data.get("pinned") != bool(pinned):
+                        data["title"] = title
+                        data["pinned"] = bool(pinned)
+                        self._write_session_json(workspace_id, data)
+                    return data["session_id"]
+                except Exception as e:
+                    logger.warning(f"Failed to inspect system session {path.name}: {e}")
+
+            from core.session import Session
+
+            session = Session()
+            session_data = session.to_dict()
+            session_data["title"] = title
+            session_data["system_thread_type"] = thread_type
+            session_data["pinned"] = bool(pinned)
+            self._write_session_json(workspace_id, session_data)
+            return session.session_id
 
 
 # ── Singleton factory ─────────────────────────────────────────────────────────

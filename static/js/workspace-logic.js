@@ -35,9 +35,12 @@
 
             obj.showSettings = false;
             obj.settingsTab = 'models';
+            obj.previousViewBeforeSettings = 'home';
             obj.settingsTabs = [
                 { id: 'models', cfgTab: 'models', title: '模型', description: '管理聊天、嵌入和工具调用的主模型端点' },
                 { id: 'agent', cfgTab: 'agent_sys', title: 'Agent', description: '调整代理行为、系统提示与运行偏好' },
+                { id: 'diary', cfgTab: null, panel: 'diary', title: '日记', description: '查看认知日志回溯与每日思维整理记录' },
+                { id: 'persona', cfgTab: null, panel: 'persona', title: 'VRM 模型', description: '管理角色资料、VRM 形象、表情与动作资源' },
                 { id: 'mcp', cfgTab: 'mcp', title: 'MCP 工具', description: '配置 Model Context Protocol 外部工具服务器' },
                 { id: 'memory', cfgTab: 'memory', title: '记忆管理', description: '查看、编辑和清理 AI 长期记忆条目' },
                 { id: 'tokens', cfgTab: 'tokens', title: 'Token 统计', description: '查看 Token 用量、请求次数与模型分布趋势' },
@@ -71,10 +74,24 @@
                         showWorkspaceSwitcher: !!this.showWorkspaceSwitcher,
                         showSettings: !!this.showSettings,
                         settingsTab: this.settingsTab || 'models',
+                        previousViewBeforeSettings: this.previousViewBeforeSettings || 'home',
                         newWorkspaceName: this.newWorkspaceName,
                         newWorkspacePath: this.newWorkspacePath,
                         newWorkspaceError: this.newWorkspaceError,
+                        vrmSystemEnabled: !!this.vrmSystemEnabled,
+                        showVrm: !!this.showVrm,
                         isReceiving: !!this.isReceiving
+                    }
+                }));
+            };
+            obj.notifyWorkspaceModalStateChanged = function () {
+                window.dispatchEvent(new CustomEvent('openguiclaw:shell-updated', {
+                    detail: {
+                        showNewWorkspaceModal: !!this.showNewWorkspaceModal,
+                        showWorkspaceSwitcher: !!this.showWorkspaceSwitcher,
+                        newWorkspaceName: this.newWorkspaceName,
+                        newWorkspacePath: this.newWorkspacePath,
+                        newWorkspaceError: this.newWorkspaceError
                     }
                 }));
             };
@@ -146,6 +163,36 @@
                 this.notifyChatStateChanged();
             };
 
+            obj.openSettingsView = function (tabId) {
+                if (this.currentView !== 'settings') {
+                    this.previousViewBeforeSettings = this.currentView || 'home';
+                }
+                this.showSettings = true;
+                this.currentView = 'settings';
+                if (tabId) {
+                    this.settingsTab = tabId;
+                    var tabMeta = Array.isArray(this.settingsTabs)
+                        ? this.settingsTabs.find(function (tab) { return tab.id === tabId; })
+                        : null;
+                    if (tabMeta && tabMeta.cfgTab) {
+                        this.activePanel = 'config';
+                        this.configTab = tabMeta.cfgTab;
+                    } else if (tabMeta && tabMeta.panel) {
+                        this.activePanel = tabMeta.panel;
+                        if (typeof this.switchPanel === 'function') {
+                            this.switchPanel(tabMeta.panel);
+                        }
+                    }
+                }
+                this.notifyShellStateChanged();
+            };
+
+            obj.closeSettingsView = function () {
+                this.showSettings = false;
+                this.currentView = this.previousViewBeforeSettings || 'home';
+                this.notifyShellStateChanged();
+            };
+
             // ── 保存原始 init，扩展后调用 ────────────────────────────────
             var _baseInit = obj.init.bind(obj);
             var _baseAbortReceiving = typeof obj.abortReceiving === 'function'
@@ -190,17 +237,17 @@
 
             obj.setNewWorkspaceName = function (value) {
                 this.newWorkspaceName = typeof value === 'string' ? value : '';
-                this.notifyShellStateChanged();
+                this.notifyWorkspaceModalStateChanged();
             };
 
             obj.setNewWorkspacePath = function (value) {
                 this.newWorkspacePath = typeof value === 'string' ? value : '';
-                this.notifyShellStateChanged();
+                this.notifyWorkspaceModalStateChanged();
             };
 
             obj.closeNewWorkspaceModal = function () {
                 this.showNewWorkspaceModal = false;
-                this.notifyShellStateChanged();
+                this.notifyWorkspaceModalStateChanged();
             };
 
             obj.getCurrentThread = function () {
@@ -329,10 +376,12 @@
                 if (this.currentView === 'home') return 'New Thread';
                 if (this.currentView === 'skills') return 'Skill Library';
                 if (this.currentView === 'scheduler') return 'Automation';
+                if (this.currentView === 'settings') return 'Settings';
                 return 'Active Workspace';
             };
 
             obj.openSidebarPanel = async function (view) {
+                this.showSettings = false;
                 if (view === 'skills') {
                     this.currentView = 'skills';
                     this.activePanel = 'skills';
@@ -422,31 +471,40 @@
                 this.showNewWorkspaceModal = true;
                 this.showWorkspaceSwitcher = false;
                 this.newWorkspaceError = '';
-                this.notifyShellStateChanged();
-                this.notifyShellStateChanged();
+                this.notifyWorkspaceModalStateChanged();
             };
 
             obj.pickWorkspacePath = async function () {
-                this.newWorkspaceError = '';
-                this.notifyShellStateChanged();
+                if (this.newWorkspaceError) {
+                    this.newWorkspaceError = '';
+                    this.notifyWorkspaceModalStateChanged();
+                }
                 try {
-                    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.select_workspace_folder)) {
-                        this.newWorkspaceError = '当前环境不支持原生目录选择器，请在桌面版 openGuiclaw 中使用。';
-                        return;
+                    var selected = null;
+
+                    if (window.pywebview && window.pywebview.api && window.pywebview.api.select_workspace_folder) {
+                        selected = await window.pywebview.api.select_workspace_folder();
+                    } else {
+                        var response = await fetch('/api/workspaces/pick-folder', { method: 'POST' });
+                        var payload = await response.json();
+                        if (!response.ok) {
+                            throw new Error((payload && payload.detail) || '当前环境无法打开目录选择器');
+                        }
+                        selected = payload && payload.path;
                     }
 
-                    var selected = await window.pywebview.api.select_workspace_folder();
                     if (!selected) return;
 
                     this.newWorkspacePath = selected;
                     if (!this.newWorkspaceName) {
-                        var normalized = selected.replace(/[\\\\/]+$/, '');
-                        var parts = normalized.split(/[\\\\/]/);
+                        var normalized = selected.replace(/[\\/]+$/, '');
+                        var parts = normalized.split(/[\\/]/);
                         this.newWorkspaceName = parts[parts.length - 1] || '';
                     }
-                    this.notifyShellStateChanged();
+                    this.notifyWorkspaceModalStateChanged();
                 } catch (e) {
                     this.newWorkspaceError = '打开目录选择器失败：' + e.message;
+                    this.notifyWorkspaceModalStateChanged();
                 }
             };
 

@@ -1,6 +1,7 @@
 """Config, identity, endpoints, model config, and system control routes."""
 import json
 import os
+import sys
 import time
 import uuid as _uuid
 from typing import Optional
@@ -11,6 +12,15 @@ from pydantic import BaseModel
 from core.state import app_state, _APP_BASE, logger
 
 router = APIRouter(tags=["config"])
+_RELOAD_TRIGGER_PATH = _APP_BASE / "core" / "_reload_trigger.py"
+
+
+def _detect_restart_mode() -> str:
+    if os.environ.get("OPENGUICLAW_WATCHDOG") == "1":
+        return "watchdog"
+    if "--reload" in sys.argv:
+        return "reload"
+    return "unsupported"
 
 
 # ── Built-in provider presets ─────────────────────────────────────────────────
@@ -704,11 +714,35 @@ async def save_mcp_servers(request: Request):
 
 @router.post("/api/system/restart")
 async def restart_backend(background_tasks: BackgroundTasks):
-    """Exit the process so the launcher watchdog can restart it."""
-    def _do_restart():
-        import time as _time
-        _time.sleep(0.15)
-        logger.info("[System] Exiting backend process for watchdog restart...")
-        os._exit(0)
-    background_tasks.add_task(_do_restart)
-    return {"status": "ok", "message": "Backend is restarting"}
+    """Restart backend in watchdog mode or trigger uvicorn --reload in dev mode."""
+    restart_mode = _detect_restart_mode()
+
+    if restart_mode == "watchdog":
+        def _do_restart():
+            import time as _time
+            _time.sleep(0.15)
+            logger.info("[System] Exiting backend process for watchdog restart...")
+            os._exit(0)
+
+        background_tasks.add_task(_do_restart)
+        return {"status": "ok", "message": "Backend is restarting", "mode": "watchdog"}
+
+    if restart_mode == "reload":
+        def _trigger_reload():
+            import time as _time
+            _time.sleep(0.15)
+            stamp = int(time.time() * 1000)
+            _RELOAD_TRIGGER_PATH.write_text(
+                '"""Dedicated reload trigger file for uvicorn --reload development mode."""\n\n'
+                f"RELOAD_TRIGGER_VERSION = {stamp}\n",
+                encoding="utf-8"
+            )
+            logger.info("[System] Triggered uvicorn reload via %s", _RELOAD_TRIGGER_PATH)
+
+        background_tasks.add_task(_trigger_reload)
+        return {"status": "ok", "message": "Backend reload triggered", "mode": "reload"}
+
+    raise HTTPException(
+        status_code=409,
+        detail="当前运行模式不支持自动重启。请手动重启后端进程。"
+    )

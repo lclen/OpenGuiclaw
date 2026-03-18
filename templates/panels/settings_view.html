@@ -1,0 +1,105 @@
+<div class="settings-page"
+     x-init="
+        if (!settingsTab) settingsTab = 'models';
+        if (settingsTab === 'store') settingsTab = 'persona';
+        const syncSettingsView = () => {
+            if (currentView === 'settings') {
+                showSettings = true;
+                const current = settingsTabs.find(tab => tab.id === settingsTab);
+                if (current && current.cfgTab) {
+                    activePanel = 'config';
+                    configTab = current.cfgTab;
+                    $dispatch('set-cfg-tab', current.cfgTab);
+                } else if (current && current.panel) {
+                    activePanel = current.panel;
+                    if (typeof switchPanel === 'function') switchPanel(current.panel);
+                } else if (settingsTab === 'archived') {
+                    activePanel = 'config';
+                }
+                if (typeof $data.loadChatEndpoints === 'function') $data.loadChatEndpoints();
+                if (typeof $data.loadRoleEndpoints === 'function') $data.loadRoleEndpoints();
+                notifyShellStateChanged();
+            } else if (showSettings) {
+                showSettings = false;
+                notifyShellStateChanged();
+            }
+        };
+        syncSettingsView();
+        $watch('currentView', function(v) {
+            syncSettingsView();
+        });
+        $watch('settingsTab', function() {
+            if (currentView === 'settings') syncSettingsView();
+        });
+     "
+     @keydown.escape.window="if (currentView === 'settings') closeSettingsView()">
+  <div class="settings-panel settings-panel--page">
+    <div class="settings-shell">
+      <div data-react-settings-nav-root></div>
+      <aside data-legacy-settings-nav x-ignore class="settings-nav">
+        <div class="settings-nav-header">
+          <div class="settings-nav-kicker">OpenGuiclaw</div>
+          <h2>设置中心</h2>
+          <p>把模型、身份和工具接入整理到同一处，减少层级和认知切换。</p>
+        </div>
+
+        <div class="settings-nav-list">
+          <template x-for="tab in settingsTabs" :key="tab.id">
+            <button class="settings-nav-item"
+                    :class="settingsTab === tab.id ? 'active' : ''"
+                    @click="
+                      settingsTab = tab.id;
+                      if (tab.cfgTab) {
+                        activePanel = 'config';
+                        $dispatch('set-cfg-tab', tab.cfgTab);
+                      } else if (tab.panel && typeof switchPanel === 'function') {
+                        switchPanel(tab.panel);
+                      }
+                    ">
+              <span class="settings-nav-title" x-text="tab.title"></span>
+              <span class="settings-nav-description" x-text="tab.description"></span>
+            </button>
+          </template>
+        </div>
+      </aside>
+
+      <section class="settings-main">
+        <div data-react-settings-header-root></div>
+        <div data-legacy-settings-header class="settings-main-header">
+          <div>
+            <div class="settings-main-kicker">Workspace Preferences</div>
+            <h3 x-text="(settingsTabs.find(tab => tab.id === settingsTab) || settingsTabs[0]).title"></h3>
+            <p x-text="(settingsTabs.find(tab => tab.id === settingsTab) || settingsTabs[0]).description"></p>
+          </div>
+          <button class="settings-close" @click="closeSettingsView()">返回</button>
+        </div>
+
+        <div class="settings-main-body">
+          <div x-show="['models','agent','mcp','memory','tokens','integrations','identity','diagnostics'].includes(settingsTab)" style="flex:1; min-height:0; overflow:hidden;">
+            {% include 'panels/panel_config.html' %}
+          </div>
+
+          <div x-show="settingsTab === 'diary'" style="flex:1; min-height:0; overflow:hidden;">
+            <div data-react-diary-root hidden class="h-full"></div>
+          </div>
+
+          <div x-show="settingsTab === 'persona'" style="flex:1 1 auto; min-height:0; overflow:hidden; display:flex;">
+            <div style="display:flex; flex:1 1 auto; width:100%; height:100%; min-height:0; min-width:0; overflow:hidden;">
+              <div style="display:flex; flex:1 1 auto; height:100%; min-width:0; min-height:0; overflow:hidden;">
+                <div data-react-persona-root hidden class="h-full min-h-0 overflow-y-auto custom-scrollbar" style="flex:1 1 auto; height:100%; min-height:0; min-width:0;"></div>
+              </div>
+              <div data-react-settings-vrm-root hidden style="flex:0 0 auto; height:100%; min-width:0; min-height:0; display:flex; position:relative; overflow:hidden;"></div>
+            </div>
+          </div>
+
+          <div x-show="settingsTab === 'archived'" class="settings-archived-pane">
+            <div data-react-archived-root hidden class="h-full"></div>
+            <div data-legacy-archived-root x-ignore>
+              {% include 'panels/panel_archived.html' %}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

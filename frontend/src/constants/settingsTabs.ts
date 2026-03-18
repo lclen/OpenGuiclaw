@@ -5,9 +5,19 @@
  * React 组件（SettingsNav、SettingsMainHeader）统一从这里导入，
  * 不再各自维护副本。
  */
-export const SETTINGS_TABS = [
+export type SettingsTabMeta = {
+  id: string;
+  cfgTab: string | null;
+  panel?: string;
+  title: string;
+  description: string;
+};
+
+export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
   { id: 'models',       cfgTab: 'models',     title: '模型',        description: '管理聊天、嵌入和工具调用的主模型端点' },
   { id: 'agent',        cfgTab: 'agent_sys',  title: 'Agent',       description: '调整代理行为、系统提示与运行偏好' },
+  { id: 'diary',        cfgTab: null,         panel: 'diary',       title: '日记',        description: '查看认知日志回溯与每日思维整理记录' },
+  { id: 'persona',      cfgTab: null,         panel: 'persona',     title: 'VRM 模型',    description: '管理角色资料、VRM 形象、表情与动作资源' },
   { id: 'mcp',          cfgTab: 'mcp',        title: 'MCP 工具',    description: '配置 Model Context Protocol 外部工具服务器' },
   { id: 'memory',       cfgTab: 'memory',     title: '记忆管理',     description: '查看、编辑和清理 AI 长期记忆条目' },
   { id: 'tokens',       cfgTab: 'tokens',     title: 'Token 统计',   description: '查看 Token 用量、请求次数与模型分布趋势' },

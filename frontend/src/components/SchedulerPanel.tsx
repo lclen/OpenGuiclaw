@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { type OpenGuiclawApp, type SchedulerTask } from '../bridge/openGuiclaw';
+import { useMemo, useState } from 'react';
+import { type OpenGuiclawApp, type SchedulerExecution, type SchedulerTask } from '../bridge/openGuiclaw';
 import { useHostCollection } from '../hooks/useHostCollection';
 
 function snapshotTasks(app: OpenGuiclawApp): SchedulerTask[] {
@@ -20,6 +20,47 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString();
 }
 
+function formatExecutionStatus(status?: string) {
+  if (status === 'running') return '执行中';
+  if (status === 'success') return '成功';
+  if (status === 'failed') return '失败';
+  return status || '未知';
+}
+
+function formatExecutionStatusClass(status?: string) {
+  if (status === 'running') return 'react-scheduler-card__pill is-running';
+  if (status === 'success') return 'react-scheduler-card__pill is-on';
+  if (status === 'failed') return 'react-scheduler-card__pill is-danger';
+  return 'react-scheduler-card__pill';
+}
+
+function getDeliveryTargets(item: SchedulerTask | SchedulerExecution) {
+  if (Array.isArray(item.delivery_targets) && item.delivery_targets.length > 0) {
+    return item.delivery_targets;
+  }
+  return [{
+    kind: item.target_kind || 'workspace_inbox',
+    workspace_id: item.target_workspace_id || undefined,
+    session_id: item.target_session_id || undefined,
+    channel: item.target_channel || undefined,
+    chat_id: item.target_chat_id || undefined,
+  }];
+}
+
+function formatTargetSummary(item: SchedulerTask | SchedulerExecution) {
+  return getDeliveryTargets(item).map((target) => {
+    if (target.kind === 'desktop_session' && target.session_id) {
+      return `桌面对话 · ${target.session_id}`;
+    }
+    if (target.kind === 'im_session') {
+      const channel = target.channel || 'im';
+      const chatId = target.chat_id || target.session_id || 'unknown';
+      return `IM 会话 · ${channel}/${chatId}`;
+    }
+    return `工作区收件箱 · ${target.workspace_id || '默认工作区'}`;
+  }).join(' / ');
+}
+
 export function SchedulerPanel() {
   const {
     hostApp,
@@ -30,20 +71,29 @@ export function SchedulerPanel() {
     setErrorText
   } = useHostCollection<SchedulerTask>({
     eventName: 'openguiclaw:scheduler-updated',
-    load: (app) => app.loadSchedulerTasks(),
+    load: (app) => app.refreshSchedulerData?.() ?? app.loadSchedulerTasks(),
     snapshot: snapshotTasks
   });
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [reloadBusy, setReloadBusy] = useState(false);
+  const [viewTab, setViewTab] = useState<'tasks' | 'executions'>('tasks');
 
   const runningCount = tasks.filter((task) => task.status === 'running').length;
+  const executions = useMemo(
+    () => (Array.isArray(hostApp?.schedulerExecutions) ? hostApp!.schedulerExecutions.map((item) => ({ ...item })) : []),
+    [hostApp?.schedulerExecutions]
+  );
+  const taskNameMap = useMemo(
+    () => new Map(tasks.map((task) => [task.id, task.name])),
+    [tasks]
+  );
 
   async function handleRefresh() {
     if (!hostApp) return;
     setReloadBusy(true);
     setErrorText('');
     try {
-      await hostApp.loadSchedulerTasks();
+      await (hostApp.refreshSchedulerData?.() ?? hostApp.loadSchedulerTasks());
       setTasks(snapshotTasks(hostApp));
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : '刷新任务失败');
@@ -52,11 +102,12 @@ export function SchedulerPanel() {
     }
   }
 
-  async function runTaskAction(taskId: string, action: () => Promise<void>) {
+  async function runTaskAction(taskId: string, action: () => Promise<void>, nextTab?: 'tasks' | 'executions') {
     setBusyTaskId(taskId);
     setErrorText('');
     try {
       await action();
+      if (nextTab) setViewTab(nextTab);
       if (hostApp) {
         setTasks(snapshotTasks(hostApp));
       }
@@ -100,15 +151,36 @@ export function SchedulerPanel() {
         </div>
       </header>
 
+      <div className="react-scheduler-panel__tabbar">
+        <button
+          type="button"
+          className={`react-scheduler-panel__tab ${viewTab === 'tasks' ? 'is-active' : ''}`}
+          onClick={() => setViewTab('tasks')}
+        >
+          任务列表
+        </button>
+        <button
+          type="button"
+          className={`react-scheduler-panel__tab ${viewTab === 'executions' ? 'is-active' : ''}`}
+          onClick={() => setViewTab('executions')}
+        >
+          执行历史
+        </button>
+      </div>
+
       {errorText ? <div className="react-scheduler-panel__error">{errorText}</div> : null}
 
       {loading ? <div className="react-scheduler-panel__empty">加载自动化任务中...</div> : null}
 
-      {!loading && tasks.length === 0 ? (
+      {!loading && viewTab === 'tasks' && tasks.length === 0 ? (
         <div className="react-scheduler-panel__empty">暂无自动化计划。</div>
       ) : null}
 
-      {!loading && tasks.length > 0 ? (
+      {!loading && viewTab === 'executions' && executions.length === 0 ? (
+        <div className="react-scheduler-panel__empty">暂无执行记录。</div>
+      ) : null}
+
+      {!loading && viewTab === 'tasks' && tasks.length > 0 ? (
         <div className="react-scheduler-panel__content">
           {tasks.map((task) => {
             const isBusy = busyTaskId === task.id;
@@ -143,7 +215,7 @@ export function SchedulerPanel() {
                     <button
                       type="button"
                       className="react-scheduler-card__icon-btn"
-                      onClick={() => runTaskAction(task.id, () => hostApp!.triggerSchedulerTask(task.id))}
+                      onClick={() => runTaskAction(task.id, () => hostApp!.triggerSchedulerTask(task.id), 'executions')}
                       disabled={!hostApp || isBusy}
                     >
                       运行
@@ -181,9 +253,61 @@ export function SchedulerPanel() {
                     <span className="react-scheduler-card__meta-value is-accent">{formatDateTime(task.next_run)}</span>
                   </div>
                 </div>
+
+                <div className="react-scheduler-card__meta react-scheduler-card__meta--single">
+                  <div className="react-scheduler-card__meta-item">
+                    <span className="react-scheduler-card__meta-label">投递目标</span>
+                    <span className="react-scheduler-card__meta-value">{formatTargetSummary(task)}</span>
+                  </div>
+                </div>
               </article>
             );
           })}
+        </div>
+      ) : null}
+
+      {!loading && viewTab === 'executions' && executions.length > 0 ? (
+        <div className="react-scheduler-panel__content">
+          {executions.map((execution) => (
+            <article className="react-scheduler-card" key={execution.id}>
+              <div className="react-scheduler-card__row">
+                <div className="react-scheduler-card__main">
+                  <div className="react-scheduler-card__heading">
+                    <h4 className="react-scheduler-card__name">{taskNameMap.get(execution.task_id) || execution.task_id}</h4>
+                    <span className={formatExecutionStatusClass(execution.status)}>
+                      {formatExecutionStatus(execution.status)}
+                    </span>
+                    <span className="react-scheduler-card__type">{execution.trigger_source || 'scheduler'}</span>
+                  </div>
+                  <p className="react-scheduler-card__description">
+                    {execution.result_summary || execution.error || '暂无摘要。'}
+                  </p>
+                </div>
+                <div className="react-scheduler-card__actions">
+                  <span className="react-scheduler-card__meta-label">ID</span>
+                  <span className="react-scheduler-card__meta-value">{execution.id}</span>
+                </div>
+              </div>
+
+              <div className="react-scheduler-card__meta">
+                <div className="react-scheduler-card__meta-item">
+                  <span className="react-scheduler-card__meta-label">开始时间</span>
+                  <span className="react-scheduler-card__meta-value">{formatDateTime(execution.started_at)}</span>
+                </div>
+                <div className="react-scheduler-card__meta-item">
+                  <span className="react-scheduler-card__meta-label">结束时间</span>
+                  <span className="react-scheduler-card__meta-value is-accent">{formatDateTime(execution.finished_at)}</span>
+                </div>
+              </div>
+
+              <div className="react-scheduler-card__meta react-scheduler-card__meta--single">
+                <div className="react-scheduler-card__meta-item">
+                  <span className="react-scheduler-card__meta-label">投递目标</span>
+                  <span className="react-scheduler-card__meta-value">{formatTargetSummary(execution)}</span>
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
       ) : null}
     </section>

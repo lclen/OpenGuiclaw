@@ -13,6 +13,10 @@ from typing import Dict, Any
 
 from .base import ChannelAdapter
 from .types import UnifiedMessage, OutgoingMessage, MessageContent
+from core.automation_context import (
+    reset_automation_source_context,
+    set_automation_source_context,
+)
 from core.session import Session
 
 logger = logging.getLogger(__name__)
@@ -154,6 +158,12 @@ class ChannelGateway:
                 self.agent.sessions.save(im_session)
             
             try:
+                source_token = set_automation_source_context(
+                    source_kind="im",
+                    source_session_id=session_id,
+                    source_channel=message.channel,
+                    source_chat_id=message.chat_id,
+                )
                 # 发送正在输入状态
                 await adapter.send_typing(message.chat_id)
 
@@ -187,6 +197,7 @@ class ChannelGateway:
                 await adapter.send_message(out_msg)
 
             finally:
+                reset_automation_source_context(source_token)
                 # 保存 IM 会话状态
                 self.agent.sessions.save(self.agent.sessions._current)
                 

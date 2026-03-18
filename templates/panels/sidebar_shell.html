@@ -105,11 +105,11 @@
     </div>
 
     <div class="sidebar-footer">
-      <!-- React settings button (replaces Alpine @click="showSettings = true") -->
+      <!-- React settings button (replaces Alpine @click="openSettingsView()") -->
       <div data-react-settings-btn-root hidden></div>
       <!-- Legacy Alpine settings button -->
       <div data-legacy-settings-btn>
-        <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="showSettings = true">
+        <button class="sidebar-shortcut-btn sidebar-footer-btn" @click="openSettingsView()">
           <span class="sidebar-shortcut-icon">⚙</span>
           <span>设置</span>
         </button>

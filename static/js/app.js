@@ -5,6 +5,7 @@ class App {
     constructor() {
         this.vrmManager = null;
         this.isInitialized = false;
+        this.vrmInitPromise = null;
 
         // UI 元素
         this.chatContainer = document.getElementById('chat-container');
@@ -12,12 +13,26 @@ class App {
         this.sendTtn = document.getElementById('send-btn');
     }
 
+    _isSettingsVrmPreview() {
+        const container = document.getElementById('canvas-container');
+        const settingsRoot = document.querySelector('[data-react-settings-vrm-root]');
+        return !!(container && settingsRoot && settingsRoot.contains(container));
+    }
+
+    _normalizeSettingsVrmPreview() {
+        const manager = this.vrmManager;
+        const scene = manager?.currentModel?.scene;
+        const shadowY = manager?._shadowMesh?.position?.y;
+        if (!scene || !Number.isFinite(shadowY)) return;
+        scene.position.set(scene.position.x, -shadowY, scene.position.z);
+    }
+
     async init() {
         if (this.isInitialized) return;
 
         try {
             console.log("[App] 初始化 3D 引擎...");
-            await this.initVRM();
+            await this.ensureVRMReady();
 
             console.log("[App] 初始化事件监听...");
             this.initEvents();
@@ -29,6 +44,47 @@ class App {
         }
     }
 
+    async ensureVRMReady() {
+        const currentCanvas = document.getElementById('vrm-canvas');
+        const currentContainer = document.getElementById('canvas-container');
+
+        if (this.vrmManager) {
+            const managerCanvas = this.vrmManager.canvas || this.vrmManager.renderer?.domElement || null;
+            const managerContainer = this.vrmManager.container || null;
+            const canvasChanged = !!currentCanvas && managerCanvas !== currentCanvas;
+            const containerChanged = !!currentContainer && managerContainer !== currentContainer;
+            const managerDetached =
+                (managerCanvas && !managerCanvas.isConnected) ||
+                (managerContainer && !managerContainer.isConnected);
+
+            if (canvasChanged || containerChanged || managerDetached) {
+                console.log('[App] 检测到 VRM 容器发生切换，准备重新绑定渲染目标');
+                try {
+                    if (typeof this.vrmManager.dispose === 'function') {
+                        await this.vrmManager.dispose();
+                    }
+                } catch (error) {
+                    console.warn('[App] 清理旧 VRM 实例失败，继续重建:', error);
+                }
+                this.vrmManager = null;
+            }
+        }
+
+        if (this.vrmManager) return true;
+        if (this.vrmInitPromise) return this.vrmInitPromise;
+
+        this.vrmInitPromise = this.initVRM()
+            .catch((error) => {
+                console.error("[App] VRM 初始化异常:", error);
+                return false;
+            })
+            .finally(() => {
+                this.vrmInitPromise = null;
+            });
+
+        return this.vrmInitPromise;
+    }
+
     async initVRM() {
         while (!window.VRMManager) {
             console.warn("[App] 等待 VRMManager 加载...");
@@ -36,7 +92,11 @@ class App {
         }
 
         const canvas = document.getElementById('vrm-canvas');
-        if (!canvas) throw new Error("找不到 Canvas 容器");
+        const container = document.getElementById('canvas-container');
+        if (!canvas || !container) {
+            console.warn("[App] VRM 容器尚未挂载，跳过本次初始化");
+            return false;
+        }
 
         try {
             this.vrmManager = new window.VRMManager();
@@ -91,6 +151,11 @@ class App {
 
             if (loadSuccess) {
                 console.log("[App] VRM 模型加载成功。");
+                const errEl = document.getElementById('vrm-load-error');
+                if (errEl) {
+                    errEl.textContent = '';
+                    errEl.style.display = 'none';
+                }
 
                 // If there were no server preferences loaded, apply the default optimized camera/model placement
                 // Note: apply to the VRM model's scene node, not the Three.js Scene root
@@ -111,14 +176,22 @@ class App {
                     console.log("[App] 应用原生默认的优化观察视角");
                 }
 
+                if (this._isSettingsVrmPreview()) {
+                    this._normalizeSettingsVrmPreview();
+                }
+
                 if (this.vrmManager.interaction && this.vrmManager.interaction.setupInteraction) {
                     this.vrmManager.interaction.setupInteraction();
                 }
+                return true;
             } else {
                 console.error("[App] VRM 模型加载失败。");
+                return false;
             }
         } catch (e) {
             console.error("[App] VRM 初始化异常:", e);
+            this.vrmManager = null;
+            return false;
         }
     }
 

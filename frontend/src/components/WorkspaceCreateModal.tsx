@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { emitShellUpdate } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 export function WorkspaceCreateModal() {
   const { hostApp, snapshot } = useWorkspaceShellBridge();
   const [submitting, setSubmitting] = useState(false);
+  const [pickingPath, setPickingPath] = useState(false);
 
   useEffect(() => {
     if (!snapshot.showNewWorkspaceModal) return undefined;
@@ -12,7 +12,6 @@ export function WorkspaceCreateModal() {
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       hostApp?.closeNewWorkspaceModal?.();
-      emitShellUpdate();
     };
 
     window.addEventListener('keydown', handleKeydown);
@@ -20,8 +19,16 @@ export function WorkspaceCreateModal() {
   }, [hostApp, snapshot.showNewWorkspaceModal]);
 
   async function handlePickPath() {
-    await hostApp?.pickWorkspacePath?.();
-    emitShellUpdate();
+    if (!hostApp || pickingPath) return;
+    setPickingPath(true);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+    try {
+      await hostApp.pickWorkspacePath?.();
+    } finally {
+      setPickingPath(false);
+    }
   }
 
   async function handleCreate() {
@@ -29,7 +36,6 @@ export function WorkspaceCreateModal() {
     setSubmitting(true);
     try {
       await hostApp.createWorkspace?.(snapshot.newWorkspaceName, snapshot.newWorkspacePath);
-      emitShellUpdate();
     } finally {
       setSubmitting(false);
     }
@@ -37,12 +43,10 @@ export function WorkspaceCreateModal() {
 
   function handleClose() {
     hostApp?.closeNewWorkspaceModal?.();
-    emitShellUpdate();
   }
 
   function handleNameChange(value: string) {
     hostApp?.setNewWorkspaceName?.(value);
-    emitShellUpdate();
   }
 
   if (!snapshot.showNewWorkspaceModal) return null;
@@ -82,8 +86,8 @@ export function WorkspaceCreateModal() {
           <div className="workspace-field">
             <span className="workspace-field-label">Project Folder</span>
             <div className="workspace-path-row">
-              <button type="button" className="workspace-picker-button" onClick={handlePickPath}>
-                Choose Folder
+              <button type="button" className="workspace-picker-button" onClick={handlePickPath} disabled={pickingPath}>
+                {pickingPath ? 'Opening...' : 'Choose Folder'}
               </button>
               <div className={`workspace-path-preview${snapshot.newWorkspacePath ? ' has-value' : ''}`}>
                 {snapshot.newWorkspacePath || 'No folder selected'}

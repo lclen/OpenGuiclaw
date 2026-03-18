@@ -469,12 +469,12 @@ frontend/
 - `npm run build` 可通过
 - `skills`、`scheduler`、`home`、`sidebar`、`workspace modal`、`chat 展示层` 已有 React 接管
 - 设置页壳层已有 React 接管：settings 按钮、settings nav、settings header
-- 设置页主体已有 7 个内容区完成 React 化：`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
+- 设置页主体已有 8 个内容区完成 React 化：`models`、`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
 
 ### 未完成项
 
 - 聊天状态层未从 Alpine / 全局对象抽离
-- 设置页主体仍未大面积按域迁成 React，当前已完成 `archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
+- 设置页主体仍未大面积按域迁成 React，当前已完成 `models`、`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics`
 - `panel_config.html` 仍然是高密度 Alpine 模板
 - 目标目录结构中的 `app/`、`features/`、`store/`、`lib/` 尚未建立
 - 未引入计划中的请求层 / 状态层抽象，如 TanStack Query、Zustand 或等价实现
@@ -524,7 +524,7 @@ frontend/
 
 ### 具体到当前仓库，我建议的下一个可执行任务
 
-**继续把设置页主体按业务域迁成 React。`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics` 已完成，下一块建议优先迁“模型端点配置”。**
+**继续把设置页主体按业务域迁成 React。`models`、`archived`、`mcp`、`memory`、`tokens`、`integrations`、`identity`、`diagnostics` 已完成，下一块建议优先迁 `agent`。**
 
 做到这一步后，设置页主体里偏展示型和轻交互型页签已经基本到位，接下来最值得投入的是模型配置和 role endpoints 这些真正仍被 Alpine 重度占用的编辑区。
 

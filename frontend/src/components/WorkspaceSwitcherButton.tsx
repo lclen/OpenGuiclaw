@@ -114,7 +114,10 @@ export function WorkspaceSwitcherButton() {
                     className={`react-ws-switcher-item${isActive ? ' is-active' : ''}`}
                     onClick={() => handleSelect(ws.id)}
                   >
-                    <span className="react-ws-switcher-item-name">{ws.name}</span>
+                    <span className="react-ws-switcher-item-name">
+                      {ws.name}
+                      {ws.is_default ? ' · 默认' : ''}
+                    </span>
                     {ws.thread_count != null && (
                       <span className="react-ws-switcher-item-count">{ws.thread_count}</span>
                     )}

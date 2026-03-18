@@ -108,11 +108,24 @@
 
         // Scheduler
         schedulerTasks: [],
+        schedulerExecutions: [],
+        schedulerViewTab: 'tasks',
         showSchedulerForm: false,
         schedulerFormData: {
             id: null,
             name: '',
             description: '',
+            delivery_workspace_enabled: true,
+            delivery_desktop_enabled: false,
+            delivery_im_enabled: false,
+            delivery_targets: [],
+            target_kind: 'workspace_inbox',
+            target_workspace_id: '',
+            target_session_id: '',
+            target_desktop_session_id: '',
+            target_im_session_id: '',
+            target_channel: '',
+            target_chat_id: '',
             task_type: 'task',
             prompt: '',
             reminder_message: '',
@@ -222,7 +235,7 @@
             this.loadAnimations();
             this.loadCurrentSession();
             this.loadGlobalConfig();
-            this.loadSchedulerTasks();
+            this.refreshSchedulerData();
             this.loadModelConfig();
             this.loadChatEndpoints();
             this.loadRoleEndpoints();
@@ -930,9 +943,21 @@
             const modal = document.getElementById('restart-modal');
             if (modal) modal.style.display = 'flex';
             try {
-                await fetch('/api/system/restart', { method: 'POST' });
+                const resp = await fetch('/api/system/restart', { method: 'POST' });
+                if (!resp.ok) {
+                    let detail = `HTTP ${resp.status}`;
+                    try {
+                        const payload = await resp.json();
+                        if (payload && payload.detail) detail = payload.detail;
+                    } catch (_) { /* ignore parse failure */ }
+                    throw new Error(detail);
+                }
             } catch (e) {
-                console.warn("Restart request error (ignored):", e);
+                console.warn("Restart request failed:", e);
+                this.pushLog('error', `❌ 无法自动重启: ${e.message}`);
+                alert(`无法自动重启: ${e.message}`);
+                if (modal) modal.style.display = 'none';
+                return;
             }
 
             // 先短暂等待，确保旧进程已经退出，避免轮询到旧进程
@@ -947,6 +972,7 @@
                     const r = await fetch('/api/health', { cache: 'no-store' });
                     if (r.ok) {
                         clearInterval(poll);
+                        this.requiresRestart = false;
                         const statusDiv = modal?.querySelector?.('div[style*="font-size:11px"]');
                         if (statusDiv) statusDiv.textContent = '服务就绪，由于不需要刷新页面所以不需要跳转';
                         setTimeout(() => {
@@ -1099,13 +1125,44 @@
                     } else if (ev.type === 'proactive' && ev.message) {
                         this.pushLog('system', `👀 视觉系统观察到屏幕新动态 (已禁用自动搭话)`);
                     } else if (ev.type === 'chat_event') {
-                        // Real-time chat update from scheduler or other background tasks
-                        this.loadCurrentSession().then(() => {
-                            this.$nextTick(() => this.scrollToBottom());
-                        });
+                        // Real-time chat update from scheduler or other background tasks.
+                        // When the shell is using workspace-scoped threads, refresh the
+                        // active workspace thread instead of the legacy global session.
+                        const eventSessionId = ev.session_id || null;
+                        const eventSessionIds = Array.isArray(ev.session_ids)
+                            ? ev.session_ids.filter(id => typeof id === 'string' && id)
+                            : (eventSessionId ? [eventSessionId] : []);
+                        const workspaceIds = Array.isArray(ev.workspace_ids) ? ev.workspace_ids : [];
+                        const activeWorkspaceId = this.activeWorkspaceId || null;
+                        const currentThreadId = this.currentThreadId || null;
+                        const matchesWorkspaceThread =
+                            !!activeWorkspaceId &&
+                            !!currentThreadId &&
+                            eventSessionIds.includes(currentThreadId) &&
+                            (workspaceIds.length === 0 || workspaceIds.includes(activeWorkspaceId));
+
+                        if (activeWorkspaceId && typeof this.loadWorkspaceThreads === 'function') {
+                            if (workspaceIds.length === 0 || workspaceIds.includes(activeWorkspaceId)) {
+                                this.loadWorkspaceThreads(activeWorkspaceId, true);
+                            }
+                        }
+
+                        if (matchesWorkspaceThread && typeof this.loadThread === 'function') {
+                            this.loadThread(activeWorkspaceId, currentThreadId).then(() => {
+                                this.$nextTick(() => this.scrollToBottom());
+                            });
+                        } else if (this.currentSessionId && eventSessionIds.includes(this.currentSessionId) && typeof this.loadSession === 'function') {
+                            this.loadSession(this.currentSessionId, true).then(() => {
+                                this.$nextTick(() => this.scrollToBottom());
+                            });
+                        } else {
+                            this.loadCurrentSession().then(() => {
+                                this.$nextTick(() => this.scrollToBottom());
+                            });
+                        }
                         // Do NOT force switch panel to 'chat' to avoid annoying UI jumps during automated tasks
                     } else if (ev.type === 'scheduler_updated') {
-                        this.loadSchedulerTasks();
+                        this.refreshSchedulerData();
                     }
                 } catch { }
             };
@@ -1138,6 +1195,10 @@
         toggleVrmSystem(nextValue) {
             this.vrmSystemEnabled = typeof nextValue === 'boolean' ? nextValue : !this.vrmSystemEnabled;
             localStorage.setItem('vrmSystemEnabled', this.vrmSystemEnabled);
+            if (!this.vrmSystemEnabled && this.showVrm) {
+                this.showVrm = false;
+                localStorage.setItem('showVrm', 'false');
+            }
             // BUG#2 fix: persist vrm toggle to backend config
             if (this._fullConfig) {
                 if (!this._fullConfig.journal) this._fullConfig.journal = {};
@@ -1147,6 +1208,9 @@
             if (!this.vrmSystemEnabled && (this.activePanel === 'persona' || this.activePanel === 'store')) {
                 this.switchPanel('chat');
             }
+            if (typeof this.notifyShellStateChanged === 'function') {
+                this.notifyShellStateChanged();
+            }
             // 稍后触发 resize 防止页面布局更新时 3D 画布渲染错乱
             setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 520);
         },
@@ -1154,6 +1218,9 @@
         toggleVrm() {
             this.showVrm = !this.showVrm;
             localStorage.setItem('showVrm', this.showVrm);
+            if (typeof this.notifyShellStateChanged === 'function') {
+                this.notifyShellStateChanged();
+            }
             if (this.showVrm) {
                 // 等待 CSS transition (500ms) 完成后再让 Three.js resize
                 setTimeout(() => {
@@ -2300,7 +2367,11 @@
         // ═══════════════ Scheduler Management ═══════════════
         notifySchedulerChanged() {
             window.dispatchEvent(new CustomEvent('openguiclaw:scheduler-updated', {
-                detail: { schedulerTasks: this.schedulerTasks }
+                detail: {
+                    schedulerTasks: this.schedulerTasks,
+                    schedulerExecutions: this.schedulerExecutions,
+                    schedulerViewTab: this.schedulerViewTab
+                }
             }));
         },
 
@@ -2317,11 +2388,226 @@
             }
         },
 
-        openSchedulerForm() {
+        async loadSchedulerExecutions() {
+            try {
+                const res = await fetch('/api/scheduler/executions?limit=100');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.schedulerExecutions = data.executions || [];
+                    this.notifySchedulerChanged();
+                }
+            } catch (e) {
+                console.error('Failed to load scheduler executions', e);
+            }
+        },
+
+        async refreshSchedulerData() {
+            await Promise.all([
+                this.loadSchedulerTasks(),
+                this.loadSchedulerExecutions(),
+            ]);
+        },
+
+        getSchedulerExecutionStatusLabel(status) {
+            return {
+                running: '执行中',
+                success: '成功',
+                failed: '失败',
+            }[status] || status || '未知';
+        },
+
+        getSchedulerExecutionStatusClass(status) {
+            return {
+                running: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+                success: 'bg-[var(--stem-green-500)]/10 text-[var(--stem-green-500)] border-[var(--stem-green-500)]/20',
+                failed: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
+            }[status] || 'bg-[var(--noble-black-800)] text-[var(--noble-black-400)] border-white/5';
+        },
+
+        getSchedulerExecutionTargetSummary(execution) {
+            if (!execution) return '';
+            const targets = Array.isArray(execution.delivery_targets) ? execution.delivery_targets : [];
+            if (targets.length > 0) {
+                return targets.map((target) => {
+                    if (target.kind === 'desktop_session' && target.session_id) {
+                        return `桌面对话 · ${target.session_id}`;
+                    }
+                    if (target.kind === 'im_session') {
+                        const channel = target.channel || ((target.session_id || '').split('_')[0] || 'im');
+                        const chatId = target.chat_id || ((target.session_id || '').split('_').slice(1).join('_'));
+                        return `IM 会话 · ${channel}/${chatId}`;
+                    }
+                    const workspace = (this.workspaces || []).find(item => item && item.id === target.workspace_id);
+                    return `工作区收件箱 · ${(workspace && workspace.name) || '默认工作区'}`;
+                }).join(' / ');
+            }
+            if (execution.target_kind === 'desktop_session' && execution.target_session_id) {
+                return `桌面对话 · ${execution.target_session_id}`;
+            }
+            if (execution.target_kind === 'im_session') {
+                const channel = execution.target_channel || 'im';
+                const chatId = execution.target_chat_id || execution.target_session_id || 'unknown';
+                return `IM 会话 · ${channel}/${chatId}`;
+            }
+            const workspace = (this.workspaces || []).find(item => item && item.id === execution.target_workspace_id);
+            return `工作区收件箱 · ${(workspace && workspace.name) || '默认工作区'}`;
+        },
+
+        getSchedulerDefaultWorkspaceId() {
+            if (this.activeWorkspaceId) return this.activeWorkspaceId;
+            if (Array.isArray(this.workspaces) && this.workspaces.length > 0) {
+                const defaultWorkspace = this.workspaces.find(workspace => workspace && workspace.is_default);
+                if (defaultWorkspace && defaultWorkspace.id) return defaultWorkspace.id;
+                if (this.workspaces[0] && this.workspaces[0].id) return this.workspaces[0].id;
+            }
+            return '';
+        },
+
+        isImSessionId(sessionId) {
+            return ['dingtalk_', 'feishu_', 'telegram_'].some(prefix => (sessionId || '').startsWith(prefix));
+        },
+
+        getSchedulerCurrentDesktopSessionId() {
+            if (this.currentThreadId && !this.isImSessionId(this.currentThreadId)) {
+                return this.currentThreadId;
+            }
+            return '';
+        },
+
+        hasSchedulerDesktopTargetAvailable() {
+            return !!(
+                this.getSchedulerCurrentDesktopSessionId()
+                || (this.schedulerFormData && this.schedulerFormData.target_desktop_session_id)
+            );
+        },
+
+        getSchedulerDesktopSessionLabel(sessionId) {
+            const resolvedSessionId = sessionId || this.getSchedulerCurrentDesktopSessionId();
+            if (!resolvedSessionId) return '当前没有可绑定的桌面对话';
+            const currentSessionId = this.getSchedulerCurrentDesktopSessionId();
+            const workspaceName = (this.activeWorkspace && this.activeWorkspace.name) || '当前工作区';
+            if (currentSessionId && resolvedSessionId === currentSessionId) {
+                return `${workspaceName} / ${resolvedSessionId}`;
+            }
+            return `已绑定桌面对话 / ${resolvedSessionId}`;
+        },
+
+        findImSession(sessionId) {
+            return (this.imSessions || []).find(session => session && session.id === sessionId) || null;
+        },
+
+        getSchedulerImSessionLabel(sessionId) {
+            const session = this.findImSession(sessionId);
+            if (!session) return sessionId || '未选择 IM 会话';
+            const preview = session.last_message ? ` · ${session.last_message}` : '';
+            return `${session.channel}/${session.chat_id}${preview}`;
+        },
+
+        getSchedulerTargetSummary(task) {
+            if (!task) return '';
+            const targets = Array.isArray(task.delivery_targets) ? task.delivery_targets : [];
+            if (targets.length > 0) {
+                return targets.map((target) => {
+                    if (target.kind === 'desktop_session' && target.session_id) {
+                        return `桌面对话 · ${target.session_id}`;
+                    }
+                    if (target.kind === 'im_session') {
+                        const channel = target.channel || ((target.session_id || '').split('_')[0] || 'im');
+                        const chatId = target.chat_id || ((target.session_id || '').split('_').slice(1).join('_'));
+                        return `IM 会话 · ${channel}/${chatId}`;
+                    }
+                    const workspace = (this.workspaces || []).find(item => item && item.id === target.workspace_id);
+                    return `工作区收件箱 · ${(workspace && workspace.name) || '默认工作区'}`;
+                }).join(' / ');
+            }
+            if (task.target_kind === 'desktop_session' && task.target_session_id) {
+                return `当前桌面对话 · ${task.target_session_id}`;
+            }
+            if (task.target_kind === 'im_session' && (task.target_channel || task.target_session_id)) {
+                const channel = task.target_channel || ((task.target_session_id || '').split('_')[0] || 'im');
+                const chatId = task.target_chat_id || ((task.target_session_id || '').split('_').slice(1).join('_'));
+                return `IM 会话 · ${channel}/${chatId}`;
+            }
+            const workspace = (this.workspaces || []).find(item => item && item.id === task.target_workspace_id);
+            return `工作区收件箱 · ${(workspace && workspace.name) || '默认工作区'}`;
+        },
+
+        normalizeSchedulerTargetForm() {
+            const formData = this.schedulerFormData;
+            const deliveryTargets = [];
+
+            if (formData.delivery_workspace_enabled) {
+                formData.target_workspace_id = formData.target_workspace_id || this.getSchedulerDefaultWorkspaceId();
+                deliveryTargets.push({
+                    kind: 'workspace_inbox',
+                    workspace_id: formData.target_workspace_id || null,
+                });
+            }
+
+            if (formData.delivery_desktop_enabled) {
+                const currentDesktopSessionId = this.getSchedulerCurrentDesktopSessionId();
+                formData.target_desktop_session_id = formData.target_desktop_session_id || currentDesktopSessionId || '';
+                if (!formData.target_desktop_session_id) {
+                    this.pushLog('error', '当前没有可绑定的桌面对话');
+                    return false;
+                }
+                deliveryTargets.push({
+                    kind: 'desktop_session',
+                    session_id: formData.target_desktop_session_id,
+                });
+            }
+
+            if (formData.delivery_im_enabled) {
+                const session = this.findImSession(formData.target_im_session_id);
+                if (!session) {
+                    this.pushLog('error', '请选择一个 IM 会话作为投递目标');
+                    return false;
+                }
+                formData.target_im_session_id = session.id;
+                formData.target_channel = session.channel || '';
+                formData.target_chat_id = session.chat_id || '';
+                deliveryTargets.push({
+                    kind: 'im_session',
+                    session_id: formData.target_im_session_id,
+                    channel: formData.target_channel,
+                    chat_id: formData.target_chat_id,
+                });
+            }
+
+            if (deliveryTargets.length === 0) {
+                this.pushLog('error', '请至少选择一个投递目标');
+                return false;
+            }
+
+            formData.delivery_targets = deliveryTargets;
+            const primary = deliveryTargets[0];
+            formData.target_kind = primary.kind;
+            formData.target_workspace_id = primary.workspace_id || formData.target_workspace_id || '';
+            formData.target_session_id = primary.session_id || formData.target_session_id || '';
+            formData.target_desktop_session_id = formData.target_desktop_session_id || '';
+            formData.target_im_session_id = formData.target_im_session_id || '';
+            formData.target_channel = primary.channel || '';
+            formData.target_chat_id = primary.chat_id || '';
+            return true;
+        },
+
+        async openSchedulerForm() {
+            await this.fetchIMData();
             this.schedulerFormData = {
                 id: null,
                 name: '',
                 description: '',
+                delivery_workspace_enabled: true,
+                delivery_desktop_enabled: false,
+                delivery_im_enabled: false,
+                delivery_targets: [],
+                target_kind: 'workspace_inbox',
+                target_workspace_id: this.getSchedulerDefaultWorkspaceId(),
+                target_session_id: '',
+                target_desktop_session_id: this.getSchedulerCurrentDesktopSessionId() || '',
+                target_im_session_id: '',
+                target_channel: '',
+                target_chat_id: '',
                 task_type: 'task',
                 prompt: '',
                 reminder_message: '',
@@ -2351,12 +2637,24 @@
             this.showSchedulerForm = false;
         },
 
-        editSchedulerTask(task) {
+        async editSchedulerTask(task) {
+            await this.fetchIMData();
             // copy task data to form
             this.schedulerFormData = {
                 id: task.id,
                 name: task.name,
                 description: task.description || '',
+                delivery_workspace_enabled: false,
+                delivery_desktop_enabled: false,
+                delivery_im_enabled: false,
+                delivery_targets: Array.isArray(task.delivery_targets) ? task.delivery_targets : [],
+                target_kind: task.target_kind || (task.target_session_id ? (this.isImSessionId(task.target_session_id) ? 'im_session' : 'desktop_session') : 'workspace_inbox'),
+                target_workspace_id: task.target_workspace_id || this.getSchedulerDefaultWorkspaceId(),
+                target_session_id: task.target_session_id || '',
+                target_desktop_session_id: '',
+                target_im_session_id: '',
+                target_channel: task.target_channel || '',
+                target_chat_id: task.target_chat_id || '',
                 task_type: task.task_type || 'task',
                 prompt: task.prompt || '',
                 reminder_message: task.reminder_message || '',
@@ -2370,6 +2668,33 @@
                 trigger_preset_weekday: '1',
                 trigger_preset_day: '1'
             };
+
+            const deliveryTargets = Array.isArray(task.delivery_targets) && task.delivery_targets.length > 0
+                ? task.delivery_targets
+                : [{
+                    kind: this.schedulerFormData.target_kind,
+                    workspace_id: task.target_workspace_id || null,
+                    session_id: task.target_session_id || null,
+                    channel: task.target_channel || null,
+                    chat_id: task.target_chat_id || null,
+                }];
+            this.schedulerFormData.delivery_workspace_enabled = deliveryTargets.some(target => target.kind === 'workspace_inbox');
+            this.schedulerFormData.delivery_desktop_enabled = deliveryTargets.some(target => target.kind === 'desktop_session');
+            this.schedulerFormData.delivery_im_enabled = deliveryTargets.some(target => target.kind === 'im_session');
+            const desktopTarget = deliveryTargets.find(target => target.kind === 'desktop_session');
+            if (desktopTarget && desktopTarget.session_id) {
+                this.schedulerFormData.target_desktop_session_id = desktopTarget.session_id;
+            } else {
+                this.schedulerFormData.target_desktop_session_id = this.getSchedulerCurrentDesktopSessionId() || '';
+            }
+            const imTarget = deliveryTargets.find(target => target.kind === 'im_session');
+            if (imTarget && imTarget.session_id) {
+                this.schedulerFormData.target_im_session_id = imTarget.session_id;
+                this.schedulerFormData.target_channel = imTarget.channel || '';
+                this.schedulerFormData.target_chat_id = imTarget.chat_id || '';
+            } else {
+                this.schedulerFormData.target_im_session_id = '';
+            }
 
             if (task.trigger_type === 'once') {
                 if (task.trigger_config && (task.trigger_config.run_at || task.trigger_config.run_date)) {
@@ -2431,6 +2756,7 @@
                 this.pushLog('error', '提醒文本内容不能为空');
                 return;
             }
+            if (!this.normalizeSchedulerTargetForm()) return;
 
             let triggerConfig = {};
             let finalTriggerType = formData.trigger_type;
@@ -2476,6 +2802,12 @@
             const payload = {
                 name: formData.name,
                 description: formData.description,
+                delivery_targets: formData.delivery_targets || [],
+                target_kind: formData.target_kind,
+                target_workspace_id: formData.target_workspace_id || null,
+                target_session_id: formData.target_session_id || null,
+                target_channel: formData.target_channel || null,
+                target_chat_id: formData.target_chat_id || null,
                 trigger_type: finalTriggerType,
                 trigger_config: triggerConfig,
                 task_type: formData.task_type,
@@ -2501,7 +2833,7 @@
                 if (res.ok) {
                     this.pushLog('system', formData.id ? '成功更新计划任务' : '成功创建计划任务');
                     this.closeSchedulerForm();
-                    await this.loadSchedulerTasks();
+                    await this.refreshSchedulerData();
                 } else {
                     const err = await res.json();
                     this.pushLog('error', `保存计划任务失败: ${err.detail}`);
@@ -2518,7 +2850,7 @@
                 const res = await fetch(`/api/scheduler/tasks/${taskId}`, { method: 'DELETE' });
                 if (res.ok) {
                     this.pushLog('system', '计划任务已删除');
-                    await this.loadSchedulerTasks();
+                    await this.refreshSchedulerData();
                 } else {
                     const err = await res.json();
                     this.pushLog('error', `删除失败: ${err.detail}`);
@@ -2535,7 +2867,7 @@
                 });
                 if (res.ok) {
                     this.pushLog('system', enabled ? '已启用任务' : '已停用任务');
-                    await this.loadSchedulerTasks();
+                    await this.refreshSchedulerData();
                 } else {
                     this.pushLog('error', '切换状态失败');
                 }
@@ -2546,8 +2878,11 @@
             try {
                 const res = await fetch(`/api/scheduler/tasks/${taskId}/trigger`, { method: 'POST' });
                 if (res.ok) {
-                    this.pushLog('system', '任务执行指令已发送');
-                    await this.loadSchedulerTasks();
+                    const data = await res.json();
+                    const executionId = data.execution && data.execution.id ? ` (${data.execution.id})` : '';
+                    this.pushLog('system', `任务执行指令已发送${executionId}`);
+                    this.schedulerViewTab = 'executions';
+                    await this.refreshSchedulerData();
                 } else {
                     this.pushLog('error', '触发任务失败');
                 }
