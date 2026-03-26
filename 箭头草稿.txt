@@ -1,0 +1,1056 @@
+
+metadata:
+  name: Arrows Icons - Free (Community)
+  components:
+    '3:184':
+      id: '3:184'
+      key: 2f79d4d0ab08d4b73f6f2e81f04b333ce8193255
+      name: Carret_Up
+    '3:183':
+      id: '3:183'
+      key: 24b2b5e530c8612f437bb48a11e1123fcc577868
+      name: Carret_Down
+    '3:182':
+      id: '3:182'
+      key: cfe108bec0910a51e07b8df9446972ff72075ef6
+      name: Carret_Right
+    '3:181':
+      id: '3:181'
+      key: 6324bcf4dfbf44a7ad59b32ed5e04fea028a4454
+      name: Carret_Left
+    '3:180':
+      id: '3:180'
+      key: 739d0c9786a7ef86df4c5a17503db70870602572
+      name: Arrow_Up
+    '3:179':
+      id: '3:179'
+      key: e8f5ed9f373c8e9032dbefbc65315530293e2a25
+      name: Arrow_Down
+    '3:178':
+      id: '3:178'
+      key: dc0c8aec53cbbda62bd9770f4d709e34dcc0e720
+      name: Arrow_Right
+    '3:177':
+      id: '3:177'
+      key: 8357dbe60f796da50bc34704234d242be2a8f2c5
+      name: Arrow_Left
+    '3:176':
+      id: '3:176'
+      key: 02bcfc74c66e50a978406459ad84e5a41a3107b7
+      name: Arrow_Up_Left
+    '3:175':
+      id: '3:175'
+      key: 2b2b2c7f92063d81ded22961bcec1d9d22630ea9
+      name: Arrow_Down_Right
+    '3:174':
+      id: '3:174'
+      key: 29e482033bb13594d9ae99f52c9793316d3319a8
+      name: Arrow_Up_Right
+    '3:173':
+      id: '3:173'
+      key: cb5221f0367844e806ad411417982778b56c7c58
+      name: Arrow_Down_Left
+    '8:310':
+      id: '8:310'
+      key: 3886ba359829131148638f4ba0edbebd17268fe0
+      name: Arrow_Up_Down
+    '9:360':
+      id: '9:360'
+      key: 007f1dc8993c56e83cfa85be3088e21d51e0e2e4
+      name: Arrow_Down_Up
+    '8:306':
+      id: '8:306'
+      key: d7b3e8e06c34e9e5b6e445a0b72542ac4e37fa44
+      name: Arrow_Right_Left
+    '9:367':
+      id: '9:367'
+      key: 7b2bd09ce54d877c17f5c2787e030d12ab14c214
+      name: Arrow_Left_Right
+    '3:172':
+      id: '3:172'
+      key: c49d09013507155121162e23aac416d0004c4147
+      name: Expand
+    '3:171':
+      id: '3:171'
+      key: c50cfd6bc6b958d4bb3d118372a48145d5c530a5
+      name: Shrink
+    '3:170':
+      id: '3:170'
+      key: ee947c255f2bb6341bfa4eff26e8a1edb5c801b8
+      name: More
+    '3:169':
+      id: '3:169'
+      key: 6e057cf3209deadc4a6a8b49e32dd3e80d4bec43
+      name: Less
+    '9:318':
+      id: '9:318'
+      key: c1714762e8bc0c9cd0ec644eca378634ea540039
+      name: Reload 1
+    '9:325':
+      id: '9:325'
+      key: bf5d749b8f69696e4816b7d11ac8dd7d1bea97d3
+      name: Reload 2
+    '14:11':
+      id: '14:11'
+      key: 854142533cf59dc6d67e65979568b50ec5bf7d64
+      name: Back
+    '14:10':
+      id: '14:10'
+      key: a3b7680b9bab5a77ff9886fc0edf21876f7d83a1
+      name: Forward
+    '9:344':
+      id: '9:344'
+      key: c71acb2b25841ac519771fbccc83ca8647e64054
+      name: Undo_Down
+    '9:345':
+      id: '9:345'
+      key: d22647c33f434523247b825bbe27296ca793a6fa
+      name: Redo_Down
+    '9:347':
+      id: '9:347'
+      key: d4fa567bf4ac66d5ad9399c4ae9861ba01a453ed
+      name: Undo_Up
+    '9:346':
+      id: '9:346'
+      key: 62e447a08b98ea5b3407c949c43efe6664c8b0e1
+      name: Redo_Up
+    '3:168':
+      id: '3:168'
+      key: 51ed99d345006198777a3c192406aaab484ee71b
+      name: Down_Duo
+    '3:167':
+      id: '3:167'
+      key: cc05fa34c5533d4576bc8843667010272bcf300f
+      name: Up_Duo
+    '3:166':
+      id: '3:166'
+      key: db4607e9ecd15a285129f6ed20319ef5ed7c1d9f
+      name: Right_Duo
+    '3:165':
+      id: '3:165'
+      key: 9121cb1254c1bd432cbfeff53df20bec58345769
+      name: Left_Duo
+    '3:209':
+      id: '3:209'
+      key: 21bebc482b141620c8e25b5f7a83d905f334244b
+      name: Circle_Carret_Left
+    '3:208':
+      id: '3:208'
+      key: 1ed5390c661132719f9960aa08a4434228c4fc69
+      name: Circle_Carret_Right
+    '3:207':
+      id: '3:207'
+      key: 3ac68537bc0271f0c9c90ff50aae6cc0a7d8c55b
+      name: Circle_Carret_Down
+    '3:206':
+      id: '3:206'
+      key: 925d7e2fb272d16159c1e3482aed8b368d6ac0c1
+      name: Circle_Carret_Up
+    '6:244':
+      id: '6:244'
+      key: 1dc41ac6bf748f197f9882e9e01d1811c1e4422b
+      name: Circle_Arrow_Left
+    '6:243':
+      id: '6:243'
+      key: 9f16dcae3c6ca7c1f4d7bdd41533d19d14ff240e
+      name: Circle_Arrow_Right
+    '6:242':
+      id: '6:242'
+      key: 4a91599e46de7e23d8b1e132c492783370905fdd
+      name: Circle_Arrow_Down
+    '6:241':
+      id: '6:241'
+      key: bee3972b12e721c19cdff41859bd95f251ff38f2
+      name: Circle_Arrow_Up
+  componentSets: {}
+nodes:
+  - id: '0:1'
+    name: ➜ Arrow Icons
+    type: CANVAS
+    children:
+      - id: '3:184'
+        name: Carret_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:18'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_8N3OS6
+            strokes: stroke_4OT1BU
+      - id: '3:183'
+        name: Carret_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:23'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_8N3OS6
+            strokes: stroke_4OT1BU
+      - id: '3:182'
+        name: Carret_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:29'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_I2M4X1
+            strokes: stroke_4OT1BU
+      - id: '3:181'
+        name: Carret_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:28'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_I2M4X1
+            strokes: stroke_4OT1BU
+      - id: '3:180'
+        name: Arrow_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:71'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Y6OUNQ
+            strokes: stroke_4OT1BU
+      - id: '3:179'
+        name: Arrow_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:70'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Y6OUNQ
+            strokes: stroke_4OT1BU
+      - id: '3:178'
+        name: Arrow_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:69'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_BKQKLQ
+            strokes: stroke_4OT1BU
+      - id: '3:177'
+        name: Arrow_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '1:68'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_26DIMH
+            strokes: stroke_4OT1BU
+      - id: '3:176'
+        name: Arrow_Up_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:114'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_ZSV142
+            strokes: stroke_4OT1BU
+      - id: '3:175'
+        name: Arrow_Down_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:113'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_ZSV142
+            strokes: stroke_4OT1BU
+      - id: '3:174'
+        name: Arrow_Up_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:112'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_99IY1X
+            strokes: stroke_4OT1BU
+      - id: '3:173'
+        name: Arrow_Down_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:111'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_PUI367
+            strokes: stroke_4OT1BU
+      - id: '8:310'
+        name: Arrow_Up_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '8:297'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_ZGMJ0R
+            strokes: stroke_4OT1BU
+          - id: '8:298'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_JZWRN1
+            strokes: stroke_4OT1BU
+      - id: '9:360'
+        name: Arrow_Down_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:358'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_ZGMJ0R
+            strokes: stroke_4OT1BU
+          - id: '9:359'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_JZWRN1
+            strokes: stroke_4OT1BU
+      - id: '8:306'
+        name: Arrow_Right_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '8:303'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_XW39A4
+            strokes: stroke_4OT1BU
+          - id: '8:304'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_S0NCHH
+            strokes: stroke_4OT1BU
+      - id: '9:367'
+        name: Arrow_Left_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:365'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_S0NCHH
+            strokes: stroke_4OT1BU
+          - id: '9:366'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_XW39A4
+            strokes: stroke_4OT1BU
+      - id: '3:172'
+        name: Expand
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:110'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_BOJPXU
+            strokes: stroke_4OT1BU
+      - id: '3:171'
+        name: Shrink
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:109'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+      - id: '3:170'
+        name: More
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:162'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_49XTU6
+            strokes: stroke_4OT1BU
+          - id: '3:161'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Q8PCRP
+            strokes: stroke_4OT1BU
+      - id: '3:169'
+        name: Less
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:164'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_P81BWS
+            strokes: stroke_4OT1BU
+          - id: '3:163'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_EPGM52
+            strokes: stroke_4OT1BU
+      - id: '9:318'
+        name: Reload 1
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:315'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_JRCEEN
+            strokes: stroke_4OT1BU
+          - id: '9:317'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_VNHOY1
+            strokes: stroke_4OT1BU
+      - id: '9:325'
+        name: Reload 2
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:323'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_JRCEEN
+            strokes: stroke_4OT1BU
+          - id: '9:324'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_VNHOY1
+            strokes: stroke_4OT1BU
+      - id: '14:11'
+        name: Back
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '14:6'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_EA9M36
+            strokes: stroke_4OT1BU
+      - id: '14:10'
+        name: Forward
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '14:9'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_EA9M36
+            strokes: stroke_4OT1BU
+      - id: '9:344'
+        name: Undo_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:339'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_ZLPH9D
+            strokes: stroke_4OT1BU
+          - id: '9:340'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_L39T2T
+            strokes: stroke_4OT1BU
+      - id: '9:345'
+        name: Redo_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:342'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_YFQV10
+            strokes: stroke_4OT1BU
+          - id: '9:343'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_L39T2T
+            strokes: stroke_4OT1BU
+      - id: '9:347'
+        name: Undo_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:327'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_93LJ9Z
+            strokes: stroke_4OT1BU
+          - id: '9:328'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_W7P1VK
+            strokes: stroke_4OT1BU
+      - id: '9:346'
+        name: Redo_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '9:336'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_4NJKKJ
+            strokes: stroke_4OT1BU
+          - id: '9:337'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_W7P1VK
+            strokes: stroke_4OT1BU
+      - id: '3:168'
+        name: Down_Duo
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:159'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_49XTU6
+            strokes: stroke_4OT1BU
+          - id: '3:158'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Q8PCRP
+            strokes: stroke_4OT1BU
+      - id: '3:167'
+        name: Up_Duo
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:156'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Q8PCRP
+            strokes: stroke_4OT1BU
+          - id: '3:157'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_49XTU6
+            strokes: stroke_4OT1BU
+      - id: '3:166'
+        name: Right_Duo
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:154'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_28YTTY
+            strokes: stroke_4OT1BU
+          - id: '3:155'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_8EYU70
+            strokes: stroke_4OT1BU
+      - id: '3:165'
+        name: Left_Duo
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:151'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_28YTTY
+            strokes: stroke_4OT1BU
+          - id: '3:153'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_8EYU70
+            strokes: stroke_4OT1BU
+      - id: '3:209'
+        name: Circle_Carret_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:194'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '3:193'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_TSB8AR
+            strokes: stroke_4OT1BU
+      - id: '3:208'
+        name: Circle_Carret_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:196'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '3:197'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_TSB8AR
+            strokes: stroke_4OT1BU
+      - id: '3:207'
+        name: Circle_Carret_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:199'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '3:201'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_N55HS7
+            strokes: stroke_4OT1BU
+      - id: '3:206'
+        name: Circle_Carret_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '3:203'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '3:205'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_N55HS7
+            strokes: stroke_4OT1BU
+      - id: '6:244'
+        name: Circle_Arrow_Left
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '6:232'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '6:233'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_NT64R8
+            strokes: stroke_4OT1BU
+          - id: '6:239'
+            name: Vector 2
+            type: IMAGE-SVG
+            layout: layout_6AR6T8
+            strokes: stroke_4OT1BU
+      - id: '6:243'
+        name: Circle_Arrow_Right
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '6:229'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '6:230'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_Y8KCQS
+            strokes: stroke_4OT1BU
+          - id: '6:240'
+            name: Vector 2
+            type: IMAGE-SVG
+            layout: layout_6AR6T8
+            strokes: stroke_4OT1BU
+      - id: '6:242'
+        name: Circle_Arrow_Down
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '6:226'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '6:236'
+            name: Vector 1
+            type: IMAGE-SVG
+            layout: layout_HTL5TK
+            strokes: stroke_4OT1BU
+          - id: '6:227'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_XRO0TS
+            strokes: stroke_4OT1BU
+      - id: '6:241'
+        name: Circle_Arrow_Up
+        type: COMPONENT
+        layout: layout_5MPNVF
+        children:
+          - id: '6:223'
+            name: Ellipse 1
+            type: ELLIPSE
+            layout: layout_64UBVO
+            strokes: stroke_4OT1BU
+          - id: '6:224'
+            name: Vector
+            type: IMAGE-SVG
+            layout: layout_KWGQJC
+            strokes: stroke_4OT1BU
+          - id: '6:237'
+            name: Vector 1
+            type: IMAGE-SVG
+            layout: layout_HTL5TK
+            strokes: stroke_4OT1BU
+globalVars:
+  styles:
+    layout_5MPNVF:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 24
+        height: 24
+    layout_8N3OS6:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 10.5
+      dimensions:
+        width: 6
+        height: 3
+    stroke_4OT1BU:
+      colors:
+        - '#151515'
+      strokeWeight: 1px
+    layout_I2M4X1:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10.5
+        'y': 9
+      dimensions:
+        width: 3
+        height: 6
+    layout_Y6OUNQ:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 8
+      dimensions:
+        width: 6
+        height: 8
+    layout_BKQKLQ:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 7
+        'y': 9
+      dimensions:
+        width: 8
+        height: 6
+    layout_26DIMH:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 9
+      dimensions:
+        width: 8
+        height: 6
+    layout_ZSV142:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9.17
+        'y': 9.17
+      dimensions:
+        width: 5.66
+        height: 5.66
+    layout_99IY1X:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8.17
+        'y': 9.17
+      dimensions:
+        width: 5.66
+        height: 5.66
+    layout_PUI367:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10.17
+        'y': 9.17
+      dimensions:
+        width: 5.66
+        height: 5.66
+    layout_ZGMJ0R:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 7.5
+        'y': 8
+      dimensions:
+        width: 4
+        height: 8
+    layout_JZWRN1:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 12.5
+        'y': 8
+      dimensions:
+        width: 4
+        height: 8
+    layout_XW39A4:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 7.5
+      dimensions:
+        width: 8
+        height: 4
+    layout_S0NCHH:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 12.5
+      dimensions:
+        width: 8
+        height: 4
+    layout_BOJPXU:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 7.5
+      dimensions:
+        width: 7.5
+        height: 9
+    layout_64UBVO:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 7
+        'y': 7
+      dimensions:
+        width: 10
+        height: 10
+    layout_49XTU6:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 13.5
+      dimensions:
+        width: 6
+        height: 3
+    layout_Q8PCRP:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 7.5
+      dimensions:
+        width: 6
+        height: 3
+    layout_P81BWS:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 14
+      dimensions:
+        width: 6
+        height: 3
+    layout_EPGM52:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 9
+        'y': 7
+      dimensions:
+        width: 6
+        height: 3
+    layout_JRCEEN:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8.5
+        'y': 8
+      dimensions:
+        width: 7
+        height: 3
+    layout_VNHOY1:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8.5
+        'y': 13
+      dimensions:
+        width: 7
+        height: 3
+    layout_EA9M36:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8.5
+        'y': 11
+      dimensions:
+        width: 7
+        height: 3
+    layout_ZLPH9D:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 11
+      dimensions:
+        width: 2
+        height: 4
+    layout_L39T2T:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 9
+      dimensions:
+        width: 8
+        height: 4
+    layout_YFQV10:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 14
+        'y': 11
+      dimensions:
+        width: 2
+        height: 4
+    layout_93LJ9Z:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 9
+      dimensions:
+        width: 2
+        height: 4
+    layout_W7P1VK:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 8
+        'y': 11
+      dimensions:
+        width: 8
+        height: 4
+    layout_4NJKKJ:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 14
+        'y': 9
+      dimensions:
+        width: 2
+        height: 4
+    layout_28YTTY:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 13.5
+        'y': 9
+      dimensions:
+        width: 3
+        height: 6
+    layout_8EYU70:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 7.5
+        'y': 9
+      dimensions:
+        width: 3
+        height: 6
+    layout_TSB8AR:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 11
+        'y': 10
+      dimensions:
+        width: 2
+        height: 4
+    layout_N55HS7:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10
+        'y': 11
+      dimensions:
+        width: 4
+        height: 2
+    layout_NT64R8:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10
+        'y': 10
+      dimensions:
+        width: 2
+        height: 4
+    layout_6AR6T8:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10
+        'y': 12
+      dimensions:
+        width: 4
+        height: 0
+    layout_Y8KCQS:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 12
+        'y': 10
+      dimensions:
+        width: 2
+        height: 4
+    layout_HTL5TK:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 12
+        'y': 10
+      dimensions:
+        width: 0
+        height: 4
+    layout_XRO0TS:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10
+        'y': 12
+      dimensions:
+        width: 4
+        height: 2
+    layout_KWGQJC:
+      mode: none
+      sizing: {}
+      locationRelativeToParent:
+        x: 10
+        'y': 10
+      dimensions:
+        width: 4
+        height: 2
+

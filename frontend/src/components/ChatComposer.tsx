@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { getHostApp, type ComposerCommand, type OpenGuiclawApp, waitForHostApp } from '../bridge/openGuiclaw';
+import { UiButton } from './ui/UiButton';
+import { UiInputShell } from './ui/UiInputShell';
+import { UiMenuSurface, UiMenuItem } from './ui/UiMenu';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type ComposerSnapshot = {
   inputText: string;
@@ -215,7 +219,6 @@ export function ChatComposer() {
 
       <div
         className="chat-composer-card"
-        style={isDragOver ? { borderColor: 'rgba(182,240,89,0.6)', background: 'rgba(182,240,89,0.05)' } : undefined}
         onDragOver={(event) => {
           event.preventDefault();
           setIsDragOver(true);
@@ -227,54 +230,37 @@ export function ChatComposer() {
         onDrop={handleDrop}
         onPaste={handlePaste}
       >
-        {composer.showCommandMenu && composer.filteredCommands.length > 0 ? (
-          <div className="composer-command-menu">
-            {composer.filteredCommands.map((command, index) => (
-              <button
-                key={command.command}
-                type="button"
-                className={`composer-command-item ${index === composer.commandSelectedIndex ? 'is-active' : ''}`}
-                onClick={() => handleCommandClick(command)}
-              >
-                <span className="composer-command-icon">{command.icon || '/'}</span>
-                <span className="composer-command-copy">
-                  <span className="composer-command-name">{command.command}</span>
-                  <span className="composer-command-desc">{command.desc || ''}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        {isDragOver ? (
-          <div className="composer-drop-overlay">
-            <span className="composer-drop-copy">拖放文件到此处</span>
-          </div>
-        ) : null}
-
-        {composer.stagedFiles.length > 0 ? (
-          <div className="composer-staged-files">
-            {composer.stagedFiles.map((file, index) => (
-              <div className="staged-file-chip" key={`${file.name}-${index}`}>
-                <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                  />
-                </svg>
-                <span className="staged-file-chip-name">{file.name}</span>
-                <button type="button" className="staged-file-chip-remove" onClick={() => handleRemoveFile(index)}>
-                  x
-                </button>
+        <UiInputShell
+          className="chat-composer-shell-inner"
+          dragOver={isDragOver}
+          header={
+            composer.showCommandMenu && composer.filteredCommands.length > 0 ? (
+              <UiMenuSurface className="composer-command-menu">
+                {composer.filteredCommands.map((command, index) => (
+                  <UiMenuItem
+                    key={command.command}
+                    className={`composer-command-item ${index === composer.commandSelectedIndex ? 'is-active' : ''}`}
+                    active={index === composer.commandSelectedIndex}
+                    onClick={() => handleCommandClick(command)}
+                    leading={<span className="composer-command-icon">{command.icon || '/'}</span>}
+                  >
+                    <span className="composer-command-copy">
+                      <span className="composer-command-name">{command.command}</span>
+                      <span className="composer-command-desc">{command.desc || ''}</span>
+                    </span>
+                  </UiMenuItem>
+                ))}
+              </UiMenuSurface>
+            ) : null
+          }
+          overlay={
+            isDragOver ? (
+              <div className="composer-drop-overlay">
+                <span className="composer-drop-copy">拖放文件到此处</span>
               </div>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="composer-main-row">
-          <div className="composer-leading">
+            ) : null
+          }
+          leading={
             <label className="composer-attach-button" title="添加文件">
               <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -285,7 +271,62 @@ export function ChatComposer() {
                 />
               </svg>
               <input type="file" multiple style={{ display: 'none' }} onChange={handleFileSelection} />
-            </label>          </div>
+            </label>
+          }
+          trailing={
+            <UiButton
+              variant={composer.isReceiving ? 'danger' : 'primary'}
+              className={`composer-send-button ${composer.isReceiving ? 'is-abort' : isReady ? 'is-ready' : ''}`}
+              onClick={handlePrimaryAction}
+              disabled={!composer.isReceiving && !isReady}
+              aria-label={composer.isReceiving ? '停止响应' : '发送消息'}
+              leading={
+                composer.isReceiving ? (
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="2.5" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19V5m-7 7l7-7 7 7" />
+                  </svg>
+                )
+              }
+            />
+          }
+          footer={
+            <div className="composer-meta-row">
+              <div className="composer-meta-left">
+                <UiStatusPill className="composer-meta-chip" tone="neutral">{composer.workspaceName || '未选择工作区'}</UiStatusPill>
+                {composer.threadTitle ? <UiStatusPill className="composer-meta-chip" tone="neutral">{composer.threadTitle}</UiStatusPill> : null}
+              </div>
+              <div className="composer-meta-right">
+                <span className="composer-meta-text">回车发送</span>
+                <span className="composer-meta-text">Shift + 回车换行</span>
+                {composer.contextDisplay ? <span className="composer-meta-text">{composer.contextDisplay}</span> : null}
+              </div>
+            </div>
+          }
+        >
+          {composer.stagedFiles.length > 0 ? (
+            <div className="composer-staged-files">
+              {composer.stagedFiles.map((file, index) => (
+                <div className="staged-file-chip" key={`${file.name}-${index}`}>
+                  <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                    />
+                  </svg>
+                  <span className="staged-file-chip-name">{file.name}</span>
+                  <button type="button" className="staged-file-chip-remove" onClick={() => handleRemoveFile(index)}>
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <textarea
             ref={textareaRef}
@@ -293,41 +334,11 @@ export function ChatComposer() {
             className="composer-textarea"
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask openGuiclaw, or type / for commands"
+            placeholder="输入你的任务，或键入 / 打开命令"
             rows={1}
             disabled={composer.disableInput}
           />
-
-          <button
-            type="button"
-            onClick={handlePrimaryAction}
-            className={`composer-send-button ${composer.isReceiving ? 'is-abort' : isReady ? 'is-ready' : ''}`}
-            disabled={!composer.isReceiving && !isReady}
-            aria-label={composer.isReceiving ? '停止响应' : '发送消息'}
-          >
-            {composer.isReceiving ? (
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="2.5" />
-              </svg>
-            ) : (
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19V5m-7 7l7-7 7 7" />
-              </svg>
-            )}
-          </button>
-        </div>
-
-        <div className="composer-meta-row">
-          <div className="composer-meta-left">
-            <span className="composer-meta-chip">{composer.workspaceName || '未选择工作区'}</span>
-            {composer.threadTitle ? <span className="composer-meta-chip">{composer.threadTitle}</span> : null}
-          </div>
-          <div className="composer-meta-right">
-            <span className="composer-meta-text">Enter 发送</span>
-            <span className="composer-meta-text">Shift+Enter 换行</span>
-            {composer.contextDisplay ? <span className="composer-meta-text">{composer.contextDisplay}</span> : null}
-          </div>
-        </div>
+        </UiInputShell>
       </div>
     </>
   );

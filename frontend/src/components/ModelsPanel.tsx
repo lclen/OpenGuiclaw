@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { emitShellUpdate } from '../bridge/openGuiclaw';
+import { CaretDownIcon } from './icons/ShellIcons';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 type ProviderPreset = {
@@ -720,7 +721,7 @@ export function ModelsPanel() {
                             {switchingId === endpoint.id ? '切换中...' : '激活'}
                           </button>
                         ) : null}
-                        <span className={`models-panel__chevron ${expanded ? 'is-open' : ''}`}>⌄</span>
+                        <CaretDownIcon className={`models-panel__chevron ${expanded ? 'is-open' : ''}`} />
                       </div>
                     </div>
 
@@ -902,7 +903,7 @@ export function ModelsPanel() {
                                   <span>{endpoint.model || '未选择模型'}</span>
                                 </div>
                               </div>
-                              <span className={`models-panel__chevron ${expanded ? 'is-open' : ''}`}>⌄</span>
+                              <CaretDownIcon className={`models-panel__chevron ${expanded ? 'is-open' : ''}`} />
                             </div>
 
                             {expanded ? (

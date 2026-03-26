@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from 'react';
 import { type OpenGuiclawApp, type SkillRecord } from '../bridge/openGuiclaw';
+import { CaretDownIcon } from './icons/ShellIcons';
 import { useHostCollection } from '../hooks/useHostCollection';
 
 type StatusFilter = 'all' | 'enabled' | 'disabled';
@@ -51,6 +52,12 @@ export function SkillsQuickPanel() {
   ).sort((left, right) => left[0].localeCompare(right[0]));
 
   const enabledCount = skills.filter((skill) => skill.enabled).length;
+
+  function getTypeLabel(skill: SkillRecord): string {
+    if (skill.locked || skill.type === 'system_plugin') return '系统能力';
+    if (skill.type === 'builtin_skill') return '内置技能';
+    return '用户技能';
+  }
 
   async function handleReload() {
     if (!hostApp) return;
@@ -158,29 +165,44 @@ export function SkillsQuickPanel() {
                             <div className="react-skills-card__heading">
                               <span className="react-skills-card__name">{skill.name}</span>
                               <span className={`react-skills-card__status ${skill.enabled ? 'is-on' : 'is-off'}`}>
-                                {skill.enabled ? '开启' : '关闭'}
+                                {skill.locked ? '系统锁定' : skill.enabled ? '开启' : '关闭'}
                               </span>
                             </div>
                             <p className="react-skills-card__description">{skill.description}</p>
+                            <p className="react-skills-card__description">
+                              {getTypeLabel(skill)}
+                              {skill.locked ? ' / 不可关闭' : ''}
+                            </p>
                             {skill.tools && skill.tools.length > 0 ? (
                               <button
                                 type="button"
                                 className="react-skills-card__tools-toggle"
                                 onClick={() => toggleExpanded(skill.name)}
                               >
-                                {isExpanded ? '收起工具' : `展开工具 (${skill.tools.length})`}
+                                <span>{isExpanded ? '收起工具' : `展开工具 (${skill.tools.length})`}</span>
+                                <CaretDownIcon className={`react-skills-card__tools-chevron${isExpanded ? ' is-open' : ''}`} />
                               </button>
                             ) : null}
                           </div>
 
-                          <button
-                            type="button"
-                            className={`react-skills-card__switch ${skill.enabled ? 'is-on' : 'is-off'}`}
-                            onClick={() => handleToggle(skill)}
-                            disabled={isBusy || !hostApp}
-                          >
-                            {isBusy ? '...' : skill.enabled ? '禁用' : '启用'}
-                          </button>
+                          {skill.locked ? (
+                            <button
+                              type="button"
+                              className="react-skills-card__switch is-on"
+                              disabled
+                            >
+                              系统能力
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className={`react-skills-card__switch ${skill.enabled ? 'is-on' : 'is-off'}`}
+                              onClick={() => handleToggle(skill)}
+                              disabled={isBusy || !hostApp}
+                            >
+                              {isBusy ? '...' : skill.enabled ? '禁用' : '启用'}
+                            </button>
+                          )}
                         </div>
 
                         {isExpanded && skill.tools && skill.tools.length > 0 ? (

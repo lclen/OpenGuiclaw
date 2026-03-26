@@ -146,7 +146,9 @@ export function VrmDrawer({ mode = 'chat' }: { mode?: VrmDrawerMode }) {
   const shouldRender = mode === 'settings' ? inPersonaSettings : inChat && snapshot.vrmSystemEnabled;
   const isPinnedPreview = mode === 'settings' && inPersonaSettings;
   const isOpen = isPinnedPreview || (shouldRender && snapshot.showVrm);
-  const runtimeApp = window.appInstance as (typeof window.appInstance & { ensureVRMReady?: () => Promise<boolean> }) | undefined;
+  const runtimeApp = window.appInstance as (typeof window.appInstance & {
+    ensureVRMReady?: (forceReload?: boolean) => Promise<boolean>;
+  }) | undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -225,7 +227,7 @@ export function VrmDrawer({ mode = 'chat' }: { mode?: VrmDrawerMode }) {
               type="button"
               className="react-vrm-drawer__header-btn"
               style={headerButtonStyle}
-              onClick={() => void runtimeApp?.ensureVRMReady?.()}
+              onClick={() => void runtimeApp?.ensureVRMReady?.(true)}
               title="重新初始化 VRM"
             >
               刷新

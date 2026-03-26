@@ -13,7 +13,7 @@ All shared state lives in core/state.py.
 import asyncio
 import json
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
+from core.im_bots import load_im_bots_from_config, make_channel_name
 from core.state import (
     _APP_BASE,
     _ctx_event_queue,
@@ -36,6 +37,57 @@ from core.state import (
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
+
+def register_im_adapters(gateway, bots: list[dict]):
+    for bot in bots:
+        if not bot.get("enabled"):
+            continue
+        platform = bot["platform"]
+        credentials = bot.get("credentials") if isinstance(bot.get("credentials"), dict) else {}
+        channel_name = make_channel_name(platform, bot["id"])
+
+        if platform == "dingtalk" and credentials.get("client_id") and credentials.get("client_secret"):
+            from core.channels.adapters.dingtalk import DingTalkAdapter
+
+            gateway.register_adapter(
+                DingTalkAdapter(
+                    app_key=credentials["client_id"],
+                    app_secret=credentials["client_secret"],
+                    agent_id=credentials.get("agent_id"),
+                    channel_name=channel_name,
+                    bot_id=bot["id"],
+                    footer_elapsed=credentials.get("footer_elapsed"),
+                    footer_status=credentials.get("footer_status"),
+                )
+            )
+
+        if platform == "feishu" and credentials.get("app_id") and credentials.get("app_secret"):
+            from core.channels.adapters.feishu import FeishuAdapter
+
+            gateway.register_adapter(
+                FeishuAdapter(
+                    app_id=credentials["app_id"],
+                    app_secret=credentials["app_secret"],
+                    verification_token=credentials.get("verification_token"),
+                    encrypt_key=credentials.get("encrypt_key"),
+                    channel_name=channel_name,
+                    bot_id=bot["id"],
+                )
+            )
+
+        if platform == "telegram" and credentials.get("bot_token"):
+            from core.channels.adapters.telegram import TelegramAdapter
+
+            gateway.register_adapter(
+                TelegramAdapter(
+                    bot_token=credentials["bot_token"],
+                    webhook_url=credentials.get("webhook_url"),
+                    pairing_code=credentials.get("pairing_code"),
+                    proxy=credentials.get("proxy"),
+                    channel_name=channel_name,
+                    bot_id=bot["id"],
+                )
+            )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -69,40 +121,26 @@ async def lifespan(app: FastAPI):
         plugin_manager.start_watcher()
         agent.start_background_tasks()
 
+        async def _auto_connect_mcp_servers():
+            try:
+                from plugins.mcp_gateway import connect_all_enabled_mcp_servers
+                result = await asyncio.to_thread(connect_all_enabled_mcp_servers)
+                logger.info(
+                    "MCP auto-connect completed: attempted=%s connected=%s failed=%s",
+                    result.get("attempted", 0),
+                    result.get("connected", 0),
+                    result.get("failed", 0),
+                )
+            except Exception as exc:
+                logger.warning("MCP auto-connect failed during startup: %s", exc, exc_info=True)
+
+        startup_mcp_task = asyncio.create_task(_auto_connect_mcp_servers())
+        app_state["startup_mcp_task"] = startup_mcp_task
+
         # ── Channel Gateway ────────────────────────────────────────────────
         from core.channels.gateway import ChannelGateway
         gateway = ChannelGateway(agent=agent)
-        
-        channels_cfg = agent.config.get("channels", {})
-        
-        # DingTalk
-        dt_cfg = channels_cfg.get("dingtalk", {})
-        if dt_cfg.get("client_id") and dt_cfg.get("client_secret"):
-            from core.channels.adapters.dingtalk import DingTalkAdapter
-            gateway.register_adapter(DingTalkAdapter(
-                app_key=dt_cfg["client_id"],
-                app_secret=dt_cfg["client_secret"]
-            ))
-            
-        # Feishu
-        fs_cfg = channels_cfg.get("feishu", {})
-        if fs_cfg.get("app_id") and fs_cfg.get("app_secret"):
-            from core.channels.adapters.feishu import FeishuAdapter
-            gateway.register_adapter(FeishuAdapter(
-                app_id=fs_cfg["app_id"],
-                app_secret=fs_cfg["app_secret"],
-                verification_token=fs_cfg.get("verification_token"),
-                encrypt_key=fs_cfg.get("encrypt_key")
-            ))
-            
-        # Telegram
-        tg_cfg = channels_cfg.get("telegram", {})
-        if tg_cfg.get("bot_token"):
-            from core.channels.adapters.telegram import TelegramAdapter
-            gateway.register_adapter(TelegramAdapter(
-                bot_token=tg_cfg["bot_token"],
-                proxy=tg_cfg.get("proxy")
-            ))
+        register_im_adapters(gateway, load_im_bots_from_config(agent.config))
             
         await gateway.start()
         app_state["gateway"] = gateway
@@ -153,6 +191,13 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         logger.info("Shutting down OpenGuiclaw Server...")
+        startup_mcp_task = app_state.pop("startup_mcp_task", None)
+        if startup_mcp_task and not startup_mcp_task.done():
+            startup_mcp_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_mcp_task
+        if "plugin_manager" in app_state:
+            app_state["plugin_manager"].stop_watcher()
         if "gateway" in app_state:
             await app_state["gateway"].stop()
         if "context_manager" in app_state:

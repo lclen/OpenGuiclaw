@@ -9,6 +9,7 @@
         // Agent status
         agentOnline: false,
         statusText: '连接中...',
+        eventSource: null,
 
         // Chat
         messages: [{ id: 'sys-0', role: 'assistant', content: '主人，我回来啦~！' }],
@@ -942,8 +943,14 @@
             this.pushLog('system', "正在重启后端服务...");
             const modal = document.getElementById('restart-modal');
             if (modal) modal.style.display = 'flex';
+            this.closeEventStream();
+            const controller = new AbortController();
+            const restartTimeout = setTimeout(() => controller.abort(), 2500);
             try {
-                const resp = await fetch('/api/system/restart', { method: 'POST' });
+                const resp = await fetch('/api/system/restart', {
+                    method: 'POST',
+                    signal: controller.signal,
+                });
                 if (!resp.ok) {
                     let detail = `HTTP ${resp.status}`;
                     try {
@@ -953,11 +960,20 @@
                     throw new Error(detail);
                 }
             } catch (e) {
-                console.warn("Restart request failed:", e);
-                this.pushLog('error', `❌ 无法自动重启: ${e.message}`);
-                alert(`无法自动重启: ${e.message}`);
-                if (modal) modal.style.display = 'none';
-                return;
+                const isTolerableDisconnect =
+                    e?.name === 'AbortError' ||
+                    e instanceof TypeError;
+                if (!isTolerableDisconnect) {
+                    console.warn("Restart request failed:", e);
+                    this.pushLog('error', `❌ 无法自动重启: ${e.message}`);
+                    alert(`无法自动重启: ${e.message}`);
+                    if (modal) modal.style.display = 'none';
+                    return;
+                }
+                console.warn("Restart request interrupted after trigger, continue polling:", e);
+                this.pushLog('system', '重启请求连接已中断，继续等待服务恢复...');
+            } finally {
+                clearTimeout(restartTimeout);
             }
 
             // 先短暂等待，确保旧进程已经退出，避免轮询到旧进程
@@ -973,6 +989,7 @@
                     if (r.ok) {
                         clearInterval(poll);
                         this.requiresRestart = false;
+                        this.subscribeEvents();
                         const statusDiv = modal?.querySelector?.('div[style*="font-size:11px"]');
                         if (statusDiv) statusDiv.textContent = '服务就绪，由于不需要刷新页面所以不需要跳转';
                         setTimeout(() => {
@@ -1111,8 +1128,17 @@
             } catch { /* silently ignore */ }
         },
 
+        closeEventStream() {
+            if (this.eventSource) {
+                this.eventSource.close();
+                this.eventSource = null;
+            }
+        },
+
         subscribeEvents() {
+            this.closeEventStream();
             const es = new EventSource('/api/events');
+            this.eventSource = es;
             es.onmessage = (e) => {
                 try {
                     const ev = JSON.parse(e.data);
@@ -1163,12 +1189,20 @@
                         // Do NOT force switch panel to 'chat' to avoid annoying UI jumps during automated tasks
                     } else if (ev.type === 'scheduler_updated') {
                         this.refreshSchedulerData();
+                    } else if (ev.type === 'skills_version') {
+                        this.loadSkills();
+                        if (ev.message) {
+                            this.pushLog('system', ev.message);
+                        }
                     }
                 } catch { }
             };
             es.onerror = () => {
                 this.agentOnline = false;
                 this.statusText = '连接中断，重连中...';
+                if (this.eventSource === es && es.readyState === EventSource.CLOSED) {
+                    this.eventSource = null;
+                }
             };
             es.onopen = () => {
                 this.checkStatus();
@@ -2926,6 +2960,10 @@
             try {
                 // find the skill to get its tools list and registry_category
                 const skill = this.skills.find(s => s.name === name);
+                if (skill?.locked) {
+                    this.pushLog('status', `系统能力 ${name} 不可关闭`);
+                    return;
+                }
                 const payload = {
                     name: skill?.registry_category || name,
                     enabled,
@@ -2945,7 +2983,8 @@
                     this.notifySkillsChanged();
                     this.pushLog('success', `技能 ${name} 已${enabled ? '启用' : '禁用'}`);
                 } else {
-                    this.pushLog('error', `切换技能状态失败`);
+                    const data = await response.json().catch(() => ({}));
+                    this.pushLog('error', data.detail || '切换技能状态失败');
                     await this.loadSkills();
                 }
             } catch (error) {
@@ -3046,8 +3085,8 @@
                 });
                 const data = await res.json();
                 if (!res.ok || data.error) throw new Error(data.error || data.detail || '安装失败');
-                this.skillInstallMsg = { type: 'success', text: '✓ 技能安装成功，已重新加载' };
-                await this.reloadSkills();
+                this.skillInstallMsg = { type: 'success', text: data.applied_immediately ? '✓ 技能安装成功，已立即生效' : '✓ 技能安装成功' };
+                await this.loadSkills();
             } catch (e) {
                 this.skillInstallMsg = { type: 'error', text: e.message };
             } finally {
@@ -3067,7 +3106,7 @@
                 const data = await res.json();
                 if (!res.ok || data.error) throw new Error(data.error || data.detail || '卸载失败');
                 this.skillInstallMsg = { type: 'success', text: '已卸载技能「' + name + '」' };
-                await this.reloadSkills();
+                await this.loadSkills();
             } catch (e) {
                 this.skillInstallMsg = { type: 'error', text: e.message };
             }

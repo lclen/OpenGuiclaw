@@ -117,9 +117,15 @@ class PluginManager:
         self._watcher_thread.start()
         print(f"[Plugin] 🔍 文件监视已启动（轮询间隔 {interval}s）")
 
-    def stop_watcher(self) -> None:
+    def stop_watcher(self, timeout: float = 2.0) -> None:
         """Stop the background watcher thread."""
         self._watcher_stop.set()
+        watcher_thread = self._watcher_thread
+        if watcher_thread and watcher_thread.is_alive() and watcher_thread is not threading.current_thread():
+            watcher_thread.join(timeout=timeout)
+            if watcher_thread.is_alive():
+                print(f"[Plugin] [WARN] 文件监视线程未在 {timeout}s 内退出。")
+        self._watcher_thread = None
 
     def _watch_loop(self, interval: float) -> None:
         """Poll plugins_dir for changes and hot-reload as needed."""
@@ -258,7 +264,16 @@ class PluginManager:
 
                 # Call register — diff registry to find which skills were added
                 before_skills = set(self.skill_manager._registry.keys())
-                module.register(self.skill_manager)
+                self.skill_manager.set_registration_context(
+                    source_type="system_plugin",
+                    source_path=str(path),
+                    system_locked=True,
+                    plugin_name=stem,
+                )
+                try:
+                    module.register(self.skill_manager)
+                finally:
+                    self.skill_manager.clear_registration_context()
                 after_skills = set(self.skill_manager._registry.keys())
                 registered = list(after_skills - before_skills)
 
@@ -278,7 +293,7 @@ class PluginManager:
             if info:
                 # Remove all skills registered by this plugin from SkillManager
                 for skill_name in info.skills:
-                    self.skill_manager._registry.pop(skill_name, None)
+                    self.skill_manager.unregister(skill_name)
                 if info.skills:
                     print(f"[Plugin] 🧹 已清除插件 '{name}' 注册的 {len(info.skills)} 个技能: {info.skills}")
             module_name = f"plugins.{name}"

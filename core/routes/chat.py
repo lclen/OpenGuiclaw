@@ -13,6 +13,7 @@ from core.automation_context import (
     reset_automation_source_context,
     set_automation_source_context,
 )
+from core.im_bots import is_im_session_id
 from core.state import app_state, _APP_BASE, logger, get_profile_store
 
 # ── Active stream registry ────────────────────────────────────────────────────
@@ -221,9 +222,8 @@ async def list_sessions():
     if not os.path.exists(sessions_dir):
         return []
     result = []
-    IM_PREFIXES = ("dingtalk_", "feishu_", "telegram_")
     for fname in sorted(os.listdir(sessions_dir), reverse=True):
-        if not fname.endswith(".json") or fname.startswith(IM_PREFIXES):
+        if not fname.endswith(".json") or is_im_session_id(fname[:-5]):
             continue
         fpath = os.path.join(sessions_dir, fname)
         try:
@@ -465,6 +465,7 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
     from core.session import Session
     # Each request gets its own Session copy — no shared mutable state
     session = Session.from_dict(session_data)
+    agent.ensure_session_skills_current(session)
 
     # Per-request model/agent overrides
     model = request.model or agent.model

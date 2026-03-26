@@ -12,7 +12,11 @@ export type SkillRecord = {
   name: string;
   description: string;
   category?: string;
+  registry_category?: string;
+  type?: 'system_plugin' | 'builtin_skill' | 'user_skill' | string;
   enabled: boolean;
+  locked?: boolean;
+  source?: string;
   tools?: string[];
   ui_config?: SkillConfigField[];
   config_values?: Record<string, unknown>;
@@ -245,6 +249,7 @@ export type OpenGuiclawApp = {
   loadThread?: (wsId: string, sessionId: string) => Promise<void>;
   archiveThread?: (wsId: string, sessionId: string) => Promise<void>;
   deleteThread?: (wsId: string, sessionId: string) => Promise<void>;
+  renameThread?: (wsId: string, sessionId: string, title: string) => Promise<void>;
   toggleThreadPin?: (wsId: string, sessionId: string, pinned: boolean) => Promise<void>;
   loadHome?: () => Promise<void>;
   loadWorkspaces?: () => Promise<void>;

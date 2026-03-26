@@ -11,12 +11,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from core.im_bots import is_im_session_id, make_im_session_id, parse_im_session_id
 from .triggers import TriggerType
 
 logger = logging.getLogger(__name__)
-
-_IM_SESSION_PREFIXES = ("dingtalk_", "feishu_", "telegram_")
-
 
 class TaskType(Enum):
     """任务类型"""
@@ -59,7 +57,7 @@ def _normalize_delivery_target(target: dict[str, Any]) -> dict[str, Any] | None:
 
     if not kind:
         if session_id:
-            if str(session_id).startswith(_IM_SESSION_PREFIXES):
+            if is_im_session_id(str(session_id)):
                 kind = TaskTargetKind.IM_SESSION.value
             else:
                 kind = TaskTargetKind.DESKTOP_SESSION.value
@@ -91,13 +89,12 @@ def _normalize_delivery_target(target: dict[str, Any]) -> dict[str, Any] | None:
         resolved_channel = channel
         resolved_chat_id = chat_id
         if (not resolved_channel or not resolved_chat_id) and resolved_session_id:
-            for prefix in _IM_SESSION_PREFIXES:
-                if str(resolved_session_id).startswith(prefix):
-                    resolved_channel = prefix[:-1]
-                    resolved_chat_id = str(resolved_session_id)[len(prefix):]
-                    break
+            parsed = parse_im_session_id(str(resolved_session_id))
+            if parsed:
+                resolved_channel = parsed["channel_name"]
+                resolved_chat_id = parsed["chat_id"]
         if not resolved_session_id and resolved_channel and resolved_chat_id:
-            resolved_session_id = f"{resolved_channel}_{resolved_chat_id}"
+            resolved_session_id = make_im_session_id(resolved_channel, resolved_chat_id)
         if not resolved_session_id:
             return None
         return {

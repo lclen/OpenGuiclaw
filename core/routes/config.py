@@ -2,17 +2,26 @@
 import json
 import os
 import sys
+import threading
 import time
 import uuid as _uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from core.im_bots import (
+    SUPPORTED_IM_PLATFORMS,
+    clone_config,
+    load_im_bots_from_config,
+    run_im_bot_healthcheck,
+    sync_im_bots_into_config,
+)
 from core.state import app_state, _APP_BASE, logger
 
 router = APIRouter(tags=["config"])
 _RELOAD_TRIGGER_PATH = _APP_BASE / "core" / "_reload_trigger.py"
+_RESTART_DELAY_SECONDS = 0.15
 
 
 def _detect_restart_mode() -> str:
@@ -21,6 +30,28 @@ def _detect_restart_mode() -> str:
     if "--reload" in sys.argv:
         return "reload"
     return "unsupported"
+
+
+def _schedule_detached_restart(callback) -> None:
+    """Run restart/reload trigger outside the current request lifecycle."""
+    timer = threading.Timer(_RESTART_DELAY_SECONDS, callback)
+    timer.daemon = True
+    timer.start()
+
+
+def _trigger_watchdog_restart() -> None:
+    logger.info("[System] Exiting backend process for watchdog restart...")
+    os._exit(0)
+
+
+def _trigger_uvicorn_reload() -> None:
+    stamp = int(time.time() * 1000)
+    _RELOAD_TRIGGER_PATH.write_text(
+        '"""Dedicated reload trigger file for uvicorn --reload development mode."""\n\n'
+        f"RELOAD_TRIGGER_VERSION = {stamp}\n",
+        encoding="utf-8",
+    )
+    logger.info("[System] Triggered uvicorn reload via %s", _RELOAD_TRIGGER_PATH)
 
 
 # ── Built-in provider presets ─────────────────────────────────────────────────
@@ -211,6 +242,7 @@ def _save_config_json(data: dict, cfg_path):
 @router.get("/api/config")
 async def get_config():
     full, _ = _load_config_json()
+    sync_im_bots_into_config(full, load_im_bots_from_config(full))
     return full
 
 
@@ -223,7 +255,7 @@ async def update_config(request: Request):
             "proactive", "browser_choice", "model", "api_key", "base_url",
             "persona", "memory", "skills", "plugins", "journal", "knowledge_graph",
             "api", "vision", "image_analyzer", "embedding", "autogui", "screen", "agent",
-            "channels", "chat_endpoints", "active_chat_endpoint_id", "vrm",
+            "channels", "chat_endpoints", "active_chat_endpoint_id", "vrm", "im_bots",
         }
         if not isinstance(new_config, dict):
             raise HTTPException(status_code=400, detail="Config must be a JSON object")
@@ -244,15 +276,29 @@ async def update_config(request: Request):
             if "enable_diary" in j and not isinstance(j["enable_diary"], bool):
                 raise HTTPException(status_code=400, detail="journal.enable_diary must be a boolean")
 
+        try:
+            current_config, _ = _load_config_json()
+        except HTTPException:
+            current_config = {}
+
+        effective_config = clone_config(current_config)
+        effective_config.update(new_config)
+        if "im_bots" in new_config:
+            sync_im_bots_into_config(effective_config, new_config.get("im_bots") or [])
+        elif "im_bots" in current_config:
+            sync_im_bots_into_config(effective_config, load_im_bots_from_config(current_config))
+        else:
+            sync_im_bots_into_config(effective_config, load_im_bots_from_config(effective_config))
+
         with open(_APP_BASE / "config.json", "w", encoding="utf-8") as f:
-            json.dump(new_config, f, indent=4, ensure_ascii=False)
+            json.dump(effective_config, f, indent=4, ensure_ascii=False)
 
         if "agent" in app_state:
-            app_state["agent"].config = new_config
+            app_state["agent"].config = effective_config
             if hasattr(app_state["agent"], "evolution") and app_state["agent"].evolution:
-                app_state["agent"].evolution._diary_enabled = new_config.get("journal", {}).get("enable_diary", True)
+                app_state["agent"].evolution._diary_enabled = effective_config.get("journal", {}).get("enable_diary", True)
         if "context_manager" in app_state:
-            app_state["context_manager"].reload_config(new_config.get("proactive", {}))
+            app_state["context_manager"].reload_config(effective_config.get("proactive", {}))
         return {"status": "success", "message": "Config updated"}
     except HTTPException:
         raise
@@ -572,103 +618,26 @@ class ChannelHealthCheckRequest(BaseModel):
 
 @router.post("/api/config/channels/health")
 async def health_check_channels(req: ChannelHealthCheckRequest):
-    import httpx
-    import time
-    
-    # Get effective config
     full, _ = _load_config_json()
-    channels_cfg = full.get("channels", {})
-    if req.config:
+    channels_cfg = clone_config(full.get("channels", {}))
+    if isinstance(req.config, dict):
         channels_cfg.update(req.config)
-        
-    targets = ["telegram", "feishu", "dingtalk"]
+
+    targets = list(SUPPORTED_IM_PLATFORMS)
     if req.channel:
         if req.channel not in targets:
             raise HTTPException(status_code=400, detail=f"Unknown channel: {req.channel}")
         targets = [req.channel]
 
     results = []
-    
     for ch in targets:
-        ch_cfg = channels_cfg.get(ch, {})
-        
-        # Check required keys based on openakita logic
-        if ch == "telegram":
-            required = ["bot_token"]
-        elif ch == "feishu":
-            required = ["app_id", "app_secret"]
-        elif ch == "dingtalk":
-            required = ["client_id", "client_secret"]
-        else:
-            required = []
-            
-        missing = [k for k in required if not ch_cfg.get(k, "").strip()]
-        if missing:
-            results.append({
-                "channel": ch,
-                "status": "unhealthy",
-                "error": f"缺少必填配置: {', '.join(missing)}",
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
-            })
-            continue
-            
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                if ch == "telegram":
-                    token = ch_cfg["bot_token"].strip()
-                    proxy = ch_cfg.get("proxy", "").strip()
-                    transport = None
-                    # Basic proxing handling if provided
-                    if proxy:
-                        proxies = {"http://": proxy, "https://": proxy}
-                        # httpx AsyncClient proxy configuration
-                        # This is a simplified proxy setup just for the healthcheck
-                        resp = await httpx.AsyncClient(proxies=proxies, timeout=15).get(f"https://api.telegram.org/bot{token}/getMe")
-                    else:
-                        resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
-                    
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if not data.get("ok"):
-                        raise Exception(data.get("description", "Telegram API 返回错误"))
-                        
-                elif ch == "feishu":
-                    app_id = ch_cfg["app_id"].strip()
-                    app_secret = ch_cfg["app_secret"].strip()
-                    resp = await client.post(
-                        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-                        json={"app_id": app_id, "app_secret": app_secret},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if data.get("code", -1) != 0:
-                        raise Exception(data.get("msg", "飞书验证失败"))
-                        
-                elif ch == "dingtalk":
-                    client_id = ch_cfg["client_id"].strip()
-                    client_secret = ch_cfg["client_secret"].strip()
-                    resp = await client.post(
-                        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
-                        json={"appKey": client_id, "appSecret": client_secret},
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if not data.get("accessToken"):
-                        raise Exception(data.get("message", "钉钉验证失败"))
-
-            results.append({
-                "channel": ch,
-                "status": "healthy",
-                "error": None,
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
-            })
-        except Exception as e:
-            results.append({
-                "channel": ch,
-                "status": "unhealthy",
-                "error": str(e)[:500],
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S")
-            })
+        health = await run_im_bot_healthcheck(ch, channels_cfg.get(ch, {}))
+        results.append({
+            "channel": ch,
+            "status": health["status"],
+            "error": health.get("error"),
+            "last_checked_at": health.get("checked_at"),
+        })
 
     return {"results": results}
 
@@ -691,9 +660,20 @@ def _save_mcp_config(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+class MCPServerActionRequest(BaseModel):
+    server_name: str
+
+
 @router.get("/api/mcp/servers")
 async def get_mcp_servers():
-    return _load_mcp_config()
+    from plugins.mcp_gateway import MCP_SDK_AVAILABLE, get_server_statuses
+
+    payload = _load_mcp_config()
+    return {
+        **payload,
+        "servers": get_server_statuses(_MCP_CONFIG_PATH),
+        "mcp_sdk_available": MCP_SDK_AVAILABLE,
+    }
 
 
 @router.post("/api/mcp/servers")
@@ -710,36 +690,36 @@ async def save_mcp_servers(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/mcp/connect")
+async def connect_mcp_server(payload: MCPServerActionRequest):
+    from plugins.mcp_gateway import connect_server_sync
+
+    result = connect_server_sync(payload.server_name)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error", "MCP 连接失败"))
+    return result
+
+
+@router.post("/api/mcp/disconnect")
+async def disconnect_mcp_server(payload: MCPServerActionRequest):
+    from plugins.mcp_gateway import disconnect_server_sync
+
+    return disconnect_server_sync(payload.server_name)
+
+
 # ── System control ────────────────────────────────────────────────────────────
 
 @router.post("/api/system/restart")
-async def restart_backend(background_tasks: BackgroundTasks):
+async def restart_backend():
     """Restart backend in watchdog mode or trigger uvicorn --reload in dev mode."""
     restart_mode = _detect_restart_mode()
 
     if restart_mode == "watchdog":
-        def _do_restart():
-            import time as _time
-            _time.sleep(0.15)
-            logger.info("[System] Exiting backend process for watchdog restart...")
-            os._exit(0)
-
-        background_tasks.add_task(_do_restart)
+        _schedule_detached_restart(_trigger_watchdog_restart)
         return {"status": "ok", "message": "Backend is restarting", "mode": "watchdog"}
 
     if restart_mode == "reload":
-        def _trigger_reload():
-            import time as _time
-            _time.sleep(0.15)
-            stamp = int(time.time() * 1000)
-            _RELOAD_TRIGGER_PATH.write_text(
-                '"""Dedicated reload trigger file for uvicorn --reload development mode."""\n\n'
-                f"RELOAD_TRIGGER_VERSION = {stamp}\n",
-                encoding="utf-8"
-            )
-            logger.info("[System] Triggered uvicorn reload via %s", _RELOAD_TRIGGER_PATH)
-
-        background_tasks.add_task(_trigger_reload)
+        _schedule_detached_restart(_trigger_uvicorn_reload)
         return {"status": "ok", "message": "Backend reload triggered", "mode": "reload"}
 
     raise HTTPException(

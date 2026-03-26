@@ -20,7 +20,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 # 官方 MCP SDK
 try:
@@ -38,6 +39,7 @@ logger = logging.getLogger("mcp_gateway")
 
 # Cache for active MCP clients
 _ACTIVE_CLIENTS: Dict[str, Any] = {}
+_SERVER_RUNTIME_STATUS: Dict[str, Dict[str, Any]] = {}
 
 import threading
 import asyncio
@@ -67,6 +69,44 @@ def _run_async(coro, timeout=None):
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
         return None
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_runtime_status(server_name: str) -> Dict[str, Any]:
+    return _SERVER_RUNTIME_STATUS.setdefault(
+        server_name,
+        {
+            "last_connect_attempt_at": None,
+            "last_connect_error": None,
+            "last_connect_result": "not_attempted",
+            "auto_connected": False,
+        },
+    )
+
+
+def _mark_connect_attempt(server_name: str, *, auto_connected: bool) -> None:
+    status = _ensure_runtime_status(server_name)
+    status["last_connect_attempt_at"] = _utc_now_iso()
+    status["auto_connected"] = auto_connected
+
+
+def _mark_connect_success(server_name: str, *, auto_connected: bool) -> None:
+    status = _ensure_runtime_status(server_name)
+    status["last_connect_attempt_at"] = _utc_now_iso()
+    status["last_connect_error"] = None
+    status["last_connect_result"] = "connected"
+    status["auto_connected"] = auto_connected
+
+
+def _mark_connect_failure(server_name: str, error: str, *, auto_connected: bool, result: str = "error") -> None:
+    status = _ensure_runtime_status(server_name)
+    status["last_connect_attempt_at"] = _utc_now_iso()
+    status["last_connect_error"] = error
+    status["last_connect_result"] = result
+    status["auto_connected"] = auto_connected
 
 
 def cleanup_all_clients():
@@ -123,6 +163,40 @@ def load_servers_from_config(config_path: Path = None) -> Dict[str, Dict[str, An
         return {}
 
 
+def get_server_statuses(config_path: Path = None) -> List[Dict[str, Any]]:
+    """返回所有 MCP 服务器的连接状态与可用工具概览。"""
+    servers = load_servers_from_config(config_path)
+    items: List[Dict[str, Any]] = []
+
+    for name, config in servers.items():
+        connection = _ACTIVE_CLIENTS.get(name)
+        runtime_status = _ensure_runtime_status(name)
+        tool_details = connection.get("tool_details", []) if connection else []
+        tool_names = connection.get("tools", []) if connection else []
+        items.append(
+            {
+                "name": name,
+                "description": config.get("description", ""),
+                "transport": config.get("transport", "stdio"),
+                "command": config.get("command", ""),
+                "args": config.get("args", []),
+                "url": config.get("url", ""),
+                "env": config.get("env", {}),
+                "disabled": bool(config.get("disabled")),
+                "connected": connection is not None,
+                "tool_count": len(tool_details) if tool_details else len(tool_names),
+                "catalog_tool_count": len(tool_names),
+                "tools": tool_details,
+                "last_connect_attempt_at": runtime_status.get("last_connect_attempt_at"),
+                "last_connect_error": runtime_status.get("last_connect_error"),
+                "last_connect_result": runtime_status.get("last_connect_result", "not_attempted"),
+                "auto_connected": bool(runtime_status.get("auto_connected")),
+            }
+        )
+
+    return items
+
+
 async def _connect_server(server_name: str, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """连接到 MCP 服务器"""
     if not MCP_SDK_AVAILABLE:
@@ -165,17 +239,112 @@ async def _connect_server(server_name: str, config: Dict[str, Any]) -> Optional[
         
         # 获取工具列表
         tools_result = await client.list_tools()
-        tool_names = [t.name for t in tools_result.tools]
+        tool_names = []
+        tool_details = []
+        for tool in tools_result.tools:
+            name = getattr(tool, "name", "")
+            if not name:
+                continue
+            tool_names.append(name)
+            tool_details.append(
+                {
+                    "name": name,
+                    "description": getattr(tool, "description", "") or "",
+                    "input_schema": getattr(tool, "inputSchema", None),
+                }
+            )
         
         return {
             "client": client,
             "stack": stack,
             "tools": tool_names,
+            "tool_details": tool_details,
         }
     except Exception as e:
         await stack.aclose()
         logger.error(f"MCP Connection failed: {e}")
         return None
+
+
+def connect_server_sync(server_name: str, *, auto_connected: bool = False) -> Dict[str, Any]:
+    """同步包装：连接指定 MCP 服务器并返回结果。"""
+    if not MCP_SDK_AVAILABLE:
+        error = "MCP SDK 未安装。请先执行: pip install mcp"
+        _mark_connect_failure(server_name, error, auto_connected=auto_connected)
+        return {"status": "error", "error": error}
+
+    servers = load_servers_from_config()
+    config = servers.get(server_name)
+    if not config:
+        error = f"未找到 MCP 服务器配置: {server_name}"
+        _mark_connect_failure(server_name, error, auto_connected=auto_connected)
+        return {"status": "error", "error": error}
+    if config.get("disabled"):
+        error = f"MCP 服务器已禁用: {server_name}"
+        _mark_connect_failure(server_name, error, auto_connected=auto_connected)
+        return {"status": "error", "error": error}
+    if server_name in _ACTIVE_CLIENTS:
+        conn = _ACTIVE_CLIENTS[server_name]
+        tool_count = len(conn.get("tool_details", []) or conn.get("tools", []))
+        _mark_connect_success(server_name, auto_connected=auto_connected)
+        return {"status": "already_connected", "server_name": server_name, "connected": True, "tool_count": tool_count}
+
+    _mark_connect_attempt(server_name, auto_connected=auto_connected)
+
+    async def _run():
+        conn = await _connect_server(server_name, config)
+        if not conn:
+            error = f"连接失败: {server_name}"
+            _mark_connect_failure(server_name, error, auto_connected=auto_connected)
+            return {"status": "error", "error": error}
+        _ACTIVE_CLIENTS[server_name] = conn
+        tool_count = len(conn.get("tool_details", []) or conn.get("tools", []))
+        _mark_connect_success(server_name, auto_connected=auto_connected)
+        return {"status": "connected", "server_name": server_name, "connected": True, "tool_count": tool_count}
+
+    result = _run_async(_run(), timeout=20)
+    if result:
+        return result
+    error = f"连接超时: {server_name}"
+    _mark_connect_failure(server_name, error, auto_connected=auto_connected, result="timeout")
+    return {"status": "error", "error": error}
+
+
+def disconnect_server_sync(server_name: str) -> Dict[str, Any]:
+    """同步包装：断开指定 MCP 服务器。"""
+    if server_name not in _ACTIVE_CLIENTS:
+        return {"status": "not_connected", "server_name": server_name, "connected": False}
+
+    _run_async(_disconnect_server(server_name), timeout=5)
+    return {"status": "disconnected", "server_name": server_name, "connected": False}
+
+
+def connect_all_enabled_mcp_servers(config_path: Path = None) -> Dict[str, Any]:
+    """连接所有未禁用的 MCP 服务器；失败不阻断后续连接。"""
+    servers = load_servers_from_config(config_path)
+    attempted = 0
+    connected = 0
+    failed = 0
+    results: List[Dict[str, Any]] = []
+
+    for server_name, config in servers.items():
+        if config.get("disabled"):
+            continue
+        attempted += 1
+        result = connect_server_sync(server_name, auto_connected=True)
+        results.append(result)
+        if result.get("status") in {"connected", "already_connected"}:
+            connected += 1
+        else:
+            failed += 1
+
+    return {
+        "status": "ok",
+        "attempted": attempted,
+        "connected": connected,
+        "failed": failed,
+        "results": results,
+    }
 
 
 async def _call_tool(server_name: str, tool_name: str, arguments: Dict[str, Any]) -> str:
@@ -323,18 +492,26 @@ def register(skills_manager):
             if server_name not in _ACTIVE_CLIENTS:
                 config = servers.get(server_name)
                 if not config:
+                    _mark_connect_failure(server_name, f"未找到服务器配置: {server_name}", auto_connected=False)
                     return f"❌ 未找到服务器配置: {server_name}"
+                if config.get("disabled"):
+                    _mark_connect_failure(server_name, f"MCP 服务器已禁用: {server_name}", auto_connected=False)
+                    return f"❌ MCP 服务器已禁用: {server_name}"
                 
                 try:
+                    _mark_connect_attempt(server_name, auto_connected=False)
                     logger.info(f"[MCP] Connecting to {server_name}...")
                     conn = await _connect_server(server_name, config)
                     if conn:
                         _ACTIVE_CLIENTS[server_name] = conn
+                        _mark_connect_success(server_name, auto_connected=False)
                         logger.info(f"[MCP] Connected to {server_name}, tools: {conn.get('tools')}")
                     else:
+                        _mark_connect_failure(server_name, f"连接失败: {server_name}", auto_connected=False)
                         return "❌ MCP SDK 不可用"
                 except Exception as e:
                     import traceback
+                    _mark_connect_failure(server_name, str(e), auto_connected=False)
                     logger.error(f"[MCP] Connection failed: {e}\n{traceback.format_exc()}")
                     return f"❌ 连接失败: {e}"
             

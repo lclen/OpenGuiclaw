@@ -44,5 +44,21 @@
   },
   "journal": {
     "enable_diary": false
-  }
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "",
+      "proxy": ""
+    },
+    "feishu": {
+      "app_id": "",
+      "app_secret": ""
+    },
+    "dingtalk": {
+      "client_id": "",
+      "client_secret": "",
+      "agent_id": ""
+    }
+  },
+  "im_bots": []
 }

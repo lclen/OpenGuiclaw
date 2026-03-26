@@ -7,6 +7,7 @@ Skills return (str) results that are fed back to the LLM.
 
 from typing import Callable, Dict, Any, List, Optional
 from dataclasses import dataclass, field
+import threading
 
 
 @dataclass
@@ -20,6 +21,11 @@ class SkillDefinition:
     category: str = "general"
     ui_config: Optional[List[Dict[str, Any]]] = field(default_factory=list)
     config_values: Dict[str, Any] = field(default_factory=dict)
+    source_type: str = "builtin_skill"
+    source_path: str = ""
+    source_url: str = ""
+    system_locked: bool = False
+    plugin_name: str = ""
 
 
 
@@ -44,6 +50,9 @@ class SkillManager:
         self._registry: Dict[str, SkillDefinition] = {}
         self.config_path = config_path
         self._config_data: Dict[str, Any] = {}
+        self._version = 1
+        self._version_lock = threading.Lock()
+        self._registration_context: Dict[str, Any] = {}
         self._load_config()
 
     def _load_config(self) -> None:
@@ -75,10 +84,21 @@ class SkillManager:
 
     def register(self, skill: SkillDefinition) -> None:
         """Register a skill."""
+        context = self._registration_context or {}
+        skill.source_type = context.get("source_type", skill.source_type)
+        skill.source_path = context.get("source_path", skill.source_path)
+        skill.source_url = context.get("source_url", skill.source_url)
+        skill.system_locked = bool(context.get("system_locked", skill.system_locked))
+        skill.plugin_name = context.get("plugin_name", skill.plugin_name)
+
         if skill.name in self._config_data:
-            skill.enabled = self._config_data[skill.name].get("enabled", skill.enabled)
+            if not skill.system_locked:
+                skill.enabled = self._config_data[skill.name].get("enabled", skill.enabled)
             skill.config_values = self._config_data[skill.name].get("config_values", skill.config_values)
+        if skill.system_locked:
+            skill.enabled = True
         self._registry[skill.name] = skill
+        self.bump_version(f"register:{skill.name}")
 
     def skill(
         self,
@@ -105,24 +125,57 @@ class SkillManager:
 
     def enable(self, name: str) -> None:
         if name in self._registry:
+            if self._registry[name].system_locked:
+                raise ValueError(f"Skill '{name}' is system locked")
             self._registry[name].enabled = True
             self._save_config()
+            self.bump_version(f"enable:{name}")
 
     def disable(self, name: str) -> None:
         if name in self._registry:
+            if self._registry[name].system_locked:
+                raise ValueError(f"Skill '{name}' is system locked")
             self._registry[name].enabled = False
             self._save_config()
+            self.bump_version(f"disable:{name}")
 
     def update_config(self, name: str, config: Dict[str, Any]) -> None:
         if name in self._registry:
             self._registry[name].config_values.update(config)
             self._save_config()
+            self.bump_version(f"config:{name}")
+
+    def unregister(self, name: str) -> None:
+        if name in self._registry:
+            del self._registry[name]
+            self._save_config()
+            self.bump_version(f"unregister:{name}")
 
     def get(self, name: str) -> Optional[SkillDefinition]:
         return self._registry.get(name)
 
+    def list_all(self) -> List[SkillDefinition]:
+        return list(self._registry.values())
+
     def list_enabled(self) -> List[SkillDefinition]:
-        return [s for s in self._registry.values() if s.enabled]
+        return [s for s in self.list_all() if s.enabled]
+
+    def set_registration_context(self, **kwargs: Any) -> None:
+        self._registration_context = dict(kwargs)
+
+    def clear_registration_context(self) -> None:
+        self._registration_context = {}
+
+    def get_version(self) -> int:
+        return self._version
+
+    def bump_version(self, reason: str = "") -> int:
+        with self._version_lock:
+            self._version += 1
+            version = self._version
+        if reason:
+            print(f"[SkillManager] skills_version -> {version} ({reason})")
+        return version
 
     async def execute(self, name: str, params: Dict[str, Any]) -> str:
         """Execute a skill by name with given parameters. Supports both sync and async handlers."""

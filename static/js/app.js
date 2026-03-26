@@ -44,7 +44,7 @@ class App {
         }
     }
 
-    async ensureVRMReady() {
+    async ensureVRMReady(forceReload = false) {
         const currentCanvas = document.getElementById('vrm-canvas');
         const currentContainer = document.getElementById('canvas-container');
 
@@ -57,8 +57,12 @@ class App {
                 (managerCanvas && !managerCanvas.isConnected) ||
                 (managerContainer && !managerContainer.isConnected);
 
-            if (canvasChanged || containerChanged || managerDetached) {
-                console.log('[App] 检测到 VRM 容器发生切换，准备重新绑定渲染目标');
+            if (forceReload || canvasChanged || containerChanged || managerDetached) {
+                if (forceReload) {
+                    console.log('[App] 收到 VRM 强制刷新请求，准备重建渲染实例');
+                } else {
+                    console.log('[App] 检测到 VRM 容器发生切换，准备重新绑定渲染目标');
+                }
                 try {
                     if (typeof this.vrmManager.dispose === 'function') {
                         await this.vrmManager.dispose();

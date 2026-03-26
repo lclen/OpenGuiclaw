@@ -47,6 +47,10 @@ class UpdateWorkspaceRequest(BaseModel):
     model_overrides: Optional[Dict[str, Any]] = None  # renamed from model_config
 
 
+class UpdateSessionRequest(BaseModel):
+    title: Optional[str] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _wm():
@@ -261,6 +265,23 @@ async def unarchive_session(workspace_id: str, session_id: str):
         _not_found(workspace_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+
+@router.patch("/api/workspaces/{workspace_id}/sessions/{session_id}")
+async def update_session(workspace_id: str, session_id: str, body: UpdateSessionRequest):
+    """更新线程字段，目前支持 title。"""
+    wm = _wm()
+    if body.title is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    try:
+        wm.rename_session(workspace_id, session_id, body.title)
+        return {"status": "ok", "session_id": session_id, "title": body.title.strip()}
+    except WorkspaceNotFoundError:
+        _not_found(workspace_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.delete("/api/workspaces/{workspace_id}/sessions/{session_id}")

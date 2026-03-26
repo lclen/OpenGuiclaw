@@ -1,6 +1,9 @@
 import { useMemo } from 'react';
 import { useShellActions } from '../hooks/useShellActions';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { CaretDownIcon } from './icons/ShellIcons';
+import { UiButton } from './ui/UiButton';
+import { UiMenuDivider, UiMenuItem, UiMenuSurface } from './ui/UiMenu';
 
 /**
  * WorkspaceSwitcherButton
@@ -49,116 +52,111 @@ export function WorkspaceSwitcherButton() {
 
   return (
     <div className="react-ws-switcher-wrap">
-      <button
-        type="button"
+      <UiButton
         className={`react-ws-switcher-btn${isOpen ? ' is-open' : ''}`}
+        variant="secondary"
+        size="md"
+        active={isOpen}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label="切换工作区"
         onClick={handleToggle}
+        leading={
+          <svg
+            className="react-ws-switcher-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M3 7h18M3 12h18M3 17h18"
+            />
+          </svg>
+        }
+        trailing={<CaretDownIcon className={`react-ws-switcher-chevron${isOpen ? ' open' : ''}`} />}
       >
-        <svg
-          className="react-ws-switcher-icon"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          aria-hidden="true"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="2"
-            d="M3 7h18M3 12h18M3 17h18"
-          />
-        </svg>
         <span className="react-ws-switcher-label">
           {activeWsName ?? '选择工作区'}
         </span>
-        <svg
-          className={`react-ws-switcher-chevron${isOpen ? ' open' : ''}`}
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          aria-hidden="true"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
+      </UiButton>
 
       {isOpen && (
         <>
-          {/* 点击遮罩关闭 */}
-          <div
-            className="react-ws-switcher-backdrop"
-            aria-hidden="true"
-            onClick={closeWorkspaceSwitcher}
-          />
-          <ul
+          <UiMenuSurface
             className="react-ws-switcher-dropdown"
             role="listbox"
             aria-label="工作区列表"
+            backdrop
+            onBackdropClick={closeWorkspaceSwitcher}
           >
             {sortedWorkspaces.length === 0 && (
-              <li className="react-ws-switcher-empty">还没有工作区</li>
+              <div className="react-ws-switcher-empty">还没有工作区</div>
             )}
             {sortedWorkspaces.map((ws) => {
               const isActive = ws.id === snapshot.activeWorkspaceId;
               return (
-                <li key={ws.id} role="option" aria-selected={isActive}>
-                  <button
-                    type="button"
+                <div key={ws.id} role="option" aria-selected={isActive}>
+                  <UiMenuItem
                     className={`react-ws-switcher-item${isActive ? ' is-active' : ''}`}
+                    selected={isActive}
                     onClick={() => handleSelect(ws.id)}
+                    trailing={
+                      <>
+                        {ws.thread_count != null ? (
+                          <span className="react-ws-switcher-item-count">{ws.thread_count}</span>
+                        ) : null}
+                        {isActive ? (
+                          <svg
+                            className="react-ws-switcher-item-check"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            aria-hidden="true"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : null}
+                      </>
+                    }
                   >
                     <span className="react-ws-switcher-item-name">
                       {ws.name}
                       {ws.is_default ? ' · 默认' : ''}
                     </span>
-                    {ws.thread_count != null && (
-                      <span className="react-ws-switcher-item-count">{ws.thread_count}</span>
-                    )}
-                    {isActive && (
-                      <svg
-                        className="react-ws-switcher-item-check"
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        aria-hidden="true"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                </li>
+                  </UiMenuItem>
+                </div>
               );
             })}
-            <li className="react-ws-switcher-divider" role="separator" />
-            <li role="option" aria-selected={false}>
-              <button
-                type="button"
+            <UiMenuDivider />
+            <div role="option" aria-selected={false}>
+              <UiMenuItem
                 className="react-ws-switcher-item react-ws-switcher-add"
                 onClick={handleOpenNewModal}
+                leading={
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 5v14M5 12h14" />
+                  </svg>
+                }
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  aria-hidden="true"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 5v14M5 12h14" />
-                </svg>
                 <span>新建工作区</span>
-              </button>
-            </li>
-          </ul>
+              </UiMenuItem>
+            </div>
+          </UiMenuSurface>
         </>
       )}
     </div>

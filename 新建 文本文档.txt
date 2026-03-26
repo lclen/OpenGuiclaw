@@ -1,0 +1,285 @@
+# OpenGuiclaw 技能系统“无感安装 + 会话保活”重构方案
+
+## 摘要
+目标是把 `OpenGuiclaw` 的技能体系重构为接近 `OpenAkita` 的模型：**外部 skill 统一落到 `skills/` 体系、安装后当前聊天不中断、下一轮即可直接使用、旧的“技能型插件”一次性迁移、系统级插件保留且不可关闭**。  
+本次方案不依赖进程级热重启来让 skill 生效；重启只保留给 IM/MCP/模型端点这类进程外资源变更。
+
+## 关键实现变更
+- **统一技能架构**
+  - 新增统一的 Skill Source 分层：`system plugins`、`builtin skills`、`user installed skills`。
+  - 外部技能唯一安装目标改为统一 `skills/` 目录；废弃 `.agents/skills` 作为运行时来源。
+  - 保留系统级插件机制，但它们被标记为 `system_locked=true`，前端不可关闭、不可卸载。
+  - 一次性迁移现有 `plugins/` 中“技能型插件”：能表达为 skill 的迁入 `skills/`；真正的系统插件继续留在 `plugins/`。
+
+- **安装后无感生效**
+  - 重写 `/api/skills/install`：安装完成后不再只做 `reload_all()`，而是执行完整链路：
+    - 安装到统一技能目录
+    - 解析 `SKILL.md`
+    - 注册/刷新 skill registry
+    - 重建 tool definitions
+    - 刷新技能 catalog
+    - 广播 `skills_version` 变更事件
+  - 聊天线程、SSE、前端页面不断开；当前线程在**下一次模型调用前**自动拿到新 tools。
+  - 技能安装接口返回新增字段：
+    - `applied_immediately: true`
+    - `skills_version`
+    - `installed_skill_names`
+    - `requires_restart: false`
+
+- **会话保活与版本失效**
+  - 给 Agent / 会话上下文增加 `skills_version`。
+  - 每次聊天请求进入时，对比“线程绑定的版本”和“全局技能版本”；不一致时只刷新 prompt/tool catalog，不销毁线程、不清空上下文。
+  - 如果有 agent pool / 子 agent 缓存，也按版本号失效并懒重建，行为对齐 `OpenAkita`。
+  - 技能面板刷新、AI 自主安装、手工安装，全部走同一版本广播机制。
+
+- **前端与交互体验**
+  - 技能面板在安装成功后直接刷新列表并显示“已立即生效”，不出现“请重启”提示。
+  - 对系统级插件显示“系统能力 / 不可关闭”状态；对普通 skills 显示启用/禁用/卸载。
+  - 若 AI 在当前对话中安装了 skill，系统消息只提示一次：“新技能已加载，本线程后续消息可直接使用”。
+  - `/api/system/restart` 保留，但不再被 skill 安装、skill 切换、skill 刷新路径调用。
+
+- **迁移与兼容**
+  - 增加一次性迁移逻辑：
+    - 扫描 `plugins/`
+    - 识别技能型插件与系统型插件
+    - 可迁移项写入新 `skills/` 结构并生成迁移清单
+    - 原技能型插件从运行时加载列表移除
+  - 对旧配置做兼容映射，避免已有启用/禁用状态丢失。
+  - 内置插件默认全部启用且不可关闭；外部 skill 保留原有开关能力。
+
+## 接口与行为约束
+- `GET /api/skills/list`
+  - 返回统一视图：`type`（system_plugin / builtin_skill / user_skill）、`enabled`、`locked`、`source`、`tools`
+- `POST /api/skills/install`
+  - 成功即“已注册且可用”，不能再出现“已安装但需 reload/restart 才能用”的中间态
+- `POST /api/skills/reload`
+  - 语义改为“刷新统一技能注册表并提升 `skills_version`”
+- 聊天执行链
+  - 每轮调用前检查 `skills_version`
+  - 发现变化时局部刷新 tools/prompt，不重建线程 ID，不清空消息历史
+
+## 测试计划
+- **安装生效**
+  - 在活跃聊天线程中安装一个新 skill，当前线程不断开；下一条消息可直接调用该 skill
+  - AI 自主触发安装 skill 后，对话流不断裂、不报连接断开
+- **版本失效**
+  - 安装、卸载、启用、禁用 skill 后，下一轮请求使用新版本 tools
+  - 已缓存的子 agent / profile agent 在下一轮自动失效重建
+- **迁移**
+  - 旧 `plugins/` 中技能型插件迁移后仍可被列出、调用、开关
+  - 系统型插件迁移后仍常驻，且前端不可关闭
+- **回归**
+  - IM Bot / MCP / 模型端点修改仍维持原有“需重启”语义
+  - 技能面板刷新、聊天、SSE 推流、工作区切换不受影响
+
+## 假设与默认决策
+- 默认采用**一次性全面迁移**，不保留“双轨并存”运行时。
+- 默认把“不能安全迁移为 skill 的插件”定义为系统级插件，并继续留在 `plugins/`。
+- 默认不改用户可见的线程 ID / 会话 ID 语义，只在内部做 `skills_version` 失效。
+- 默认 skill 安装来源继续兼容当前 GitHub/URL 安装方式，但最终都收口到统一 `skills/` 目录。
+
+
+我先梳理相关代码入口并分阶段落地这个重构。
+
+先检查是否有更深层的 AGENTS.md，再看技能管理和聊天入口。
+
+我已经确认当前技能链路了；接着检查 Agent、会话和前端 bridge，准备切入改造。
+
+还差 host bridge 的实际实现位置，我把它找出来后就开始改接口和状态同步。
+
+我去定位 host app 里真正调用 /api/skills/* 的代码，顺手看看前端是否已有安装成功提示位。
+
+我找到未压缩的宿主逻辑了；现在看技能 API 和全局 app bridge 是怎么挂进去的。
+
+我需要看一下现有 plugins/ 都有哪些，判断迁移边界和系统插件保留名单。
+
+我再看一下 Session 结构，决定 skills_version 放在线程对象里还是只放在运行时状态。
+
+我需要补最后一块：Agent.chat/chat_stream 里何时构建 tools、何时保存会话，决定版本检查该塞哪一层。
+
+我已经找到改造点了；最后看一眼测试布局，尽量补针对性的后端测试。
+
+背景信息已自动压缩
+我先快速核对仓库约束和关键文件，然后直接开始落地重构。
+
+我已经拿到核心后端文件，继续补齐聊天链路和前端入口点。
+
+后端脉络已经完整，接下来补会话版本和接口返回结构。
+
+我已定位到会话与插件模型；现在开始集中打补丁。
+
+我准备同时改后端注册层、聊天入口和技能接口，尽量一次成型。
+
+我顺手也会把 GitHub tree/.../skills/... 这种 URL 安装兼容补上。
+
+我再看一下 FastAPI 启动入口，顺便给测试找最小挂载点。
+
+我会把 skills_version 事件也接到现有 SSE 里，这样面板和聊天能共用一条变更通道。
+
+我会把列表按“系统插件 / 内置技能 / 用户技能”三层统一出来，前端就能直接展示锁定态。
+
+我也会把旧 .agents/skills 的一次性迁移做掉，这样运行时来源就彻底统一。
+
+我顺手把内置 install_skill 工具也对齐到统一 skills/ 目录，避免 AI 自装和手工安装两条链不一致。
+
+我要抽一个小的 skill_runtime 公共层，后端两条安装链就能统一。
+
+公共安装层已落下，下一步把注册表做成带版本和来源元数据的统一视图。
+
+注册层已支持版本和锁定态；现在把插件加载器接上来源上下文。
+
+我开始补 Agent：迁移旧目录、统一扫描、会话版本失效、内置安装链。
+
+我继续把会话 skills_version 同步和本地技能刷新助手补进去。
+
+我把内置技能商店三件套也统一到新运行时：列、看、装。
+
+我把 AI 自装技能这条链改成“装到 skills/ + 立刻升版本”，不再生成热重载插件。
+
+我把同步/流式聊天入口都接上版本失效检查，下一轮自动换新工具集。
+
+初始化那块我也收口成固定基路径，避免后面路径判断发散。
+
+后端核心快齐了；现在重写技能接口，把返回契约和“立即生效”真正统一。
+
+技能接口已经换新，最后把工作区线程也接入版本失效检查。
+
+我开始收尾前端交互：锁定态、立即生效文案、SSE 自动刷新。
+
+前端文件比较长，我先截一下精确片段再补丁，避免误伤。
+
+我把目标片段截到了，接下来精确打前端补丁。
+
+我顺手把 React bridge 类型补全，Quick Panel 才能拿到 locked/type/source。
+
+Quick Panel 也一起改成“系统能力不可关闭 / 用户技能可切换”的统一呈现。
+
+我再补一个小层：纯 SKILL.md 技能也能开关，不只是系统插件。
+
+我把本地技能目录的启用态也接入 prompt 构建，禁用后下一轮就不会再被模型看到。
+
+后端列表和开关我再补一刀，让纯文档技能也能正常启停。
+
+后端行为差不多齐了，我补几个针对性测试把接口契约钉住。
+
+实现差不多了，我先跑最相关的后端测试，抓一轮语法和契约问题。
+
+最终消息
+测试框架和当前 httpx 版本有点别扭，我改成 ASGITransport 直连。
+
+
+
+
+
+
+OpenGuiclaw 前端控件系统渐进统一方案（借鉴 OpenAkita）
+Summary
+基于当前仓库现状，建议采用渐进统一方案，而不是一次性重写 UI 层：
+
+保留现有 React 面板与全局 CSS 分层，不推翻 static/css/*.css 的页面级命名空间。
+新增一层共享设计令牌 + 通用控件 primitives，优先统一 button / dropdown / select / card / section / status-pill / input-shell。
+视觉方向采用偏 OpenAkita：更克制、层级更稳、展开/收起反馈更清晰，但不完全抹掉当前深色产品基底。
+第一阶段聚焦高频控件：MCP、工作区切换、设置入口、聊天输入区；其他面板后续按相同规范迁移。
+Key Changes
+1. 建立共享设计基础层
+在现有全局样式之上补一层共享 token，统一颜色、圆角、边框、阴影、悬浮、焦点态、状态色。
+令牌目标不是全站重绘，而是提供一致的控件基线：panel / panel-2 / line / text / muted / brand / success / warning / danger / radius / shadow / glow。
+
+
+将当前散落在 react-panels.css、settings-shell.css、workspace-shell-react.css、chat-codex.css 的重复按钮/卡片/输入视觉收束到同一套 token。
+2. 新增共享 primitives，但保持渐进兼容
+新增一组轻量 React primitives，供新旧面板逐步接入：
+UiButton：支持 primary / secondary / ghost / danger / icon。
+UiCard：支持 default / elevated / subtle / status。
+UiSection：统一折叠头、箭头旋转、展开区边界。
+UiStatusPill：统一在线/离线/禁用/Beta/数量标签。
+UiMenu / UiSelect：统一下拉内容、hover、选中态、分组标题、阴影与边框。
+UiInputShell：统一输入框、textarea、leading/trailing action、focus ring。
+这些 primitives 先服务 React 面板，不要求立即替换旧模板中的所有原生按钮。
+保持现有面板类名可继续工作；新 primitives 输出稳定 class 名，便于未来逐步替换现有 BEM 风格样式。
+3. 重点重构 4 个高价值入口
+MCP 面板
+保留现有 McpServersPanel 的“卡头 + 展开内容 + 配置区”结构，但改为统一控件语义：
+卡头只放：名称、transport、连接状态、工具数、主操作。
+“工具列表”作为标准折叠区，支持箭头反馈与 hover 高亮。
+“配置”进入独立的卡内配置区，不和工具列表混排。
+统一按钮等级：连接 为主按钮，配置/刷新 为次按钮，删除 为危险按钮。
+工具项改成共享的 tool-chip/tool-card 样式，不再由 MCP 面板独自定义一整套视觉。
+工作区切换器
+将 WorkspaceSwitcherButton 的按钮和 dropdown 迁移到统一 UiMenu 风格。
+保留现有行为：当前项置顶、active 勾选、外部遮罩关闭、新建工作区入口。
+重点提升：
+trigger 与 menu 的统一边框/阴影/圆角；
+item hover/active/selected 的一致反馈；
+chevron、计数、选中勾的视觉层级更清楚。
+设置入口与设置导航
+SettingsButton 与 topbar icon button 统一到同一按钮尺寸体系。
+SettingsNav 不重做信息结构，但统一：
+nav item 高度、圆角、active 背景、icon 容器；
+back button 与 nav item 共享交互语言；
+header 文案区与导航项之间的间距节奏。
+聊天输入区
+保留 ChatComposer 当前行为与桥接逻辑，不改消息发送机制。
+主要统一为 UiInputShell 风格：
+输入卡片、命令菜单、附件 chip、发送按钮共享统一边框与状态色；
+输入区的 hover/focus/drag-over 反馈更清晰；
+meta chip、快捷提示、命令菜单项与全局 pill/menu 系统一致。
+输入框高度策略保持现状：自动增长，上限保留；只提升视觉层次和控件协调性。
+4. 样式组织方式调整
+不建议继续让每个面板都复制一套 ghost-btn / accent-btn / danger-btn / empty / notice / pill。
+样式分三层：
+tokens 层：全局颜色、半径、阴影、状态色。
+primitives 层：按钮、卡片、菜单、输入、section、pill。
+panel 层：只保留页面布局、内容结构和少量局部差异。
+现有样式文件可暂不拆太细，但新增规则要避免继续堆到面板私有类里。
+Public APIs / Interfaces / Types
+不改现有后端接口、桥接协议和 shell action 结构。
+React 层新增共享组件接口：
+UiButtonProps
+UiCardProps
+UiSectionProps
+UiStatusPillProps
+UiMenuProps / UiSelectProps
+UiInputShellProps
+McpServersPanel、WorkspaceSwitcherButton、SettingsButton、SettingsNav、ChatComposer 的业务 props 和宿主桥接方式保持不变，仅替换内部渲染结构和样式依赖。
+如需引入 dropdown/select 的 open state 管理，优先在组件内部封装，不向业务面板暴露新的状态协议。
+Test Plan
+视觉一致性
+
+主/次/危险按钮在 MCP、设置页、聊天输入区表现一致。
+dropdown/select/menu 的 trigger、content、item、selected/hover 状态统一。
+card、pill、折叠 section 在不同面板中的圆角、边框、阴影、间距一致。
+MCP 场景
+
+展开工具列表、收起配置区、连接/断开/删除按钮层级正确。
+未连接、已连接、disabled、最近连接失败等状态展示清楚。
+工具数与工具列表的关系在连接前后都正确。
+工作区切换
+
+按钮展开/关闭正常。
+active workspace 高亮与勾选正常。
+外部点击关闭、新建工作区入口仍可用。
+聊天输入区
+
+文本输入、自动增高、回车发送、Shift+回车换行、命令菜单导航不回归。
+staged files、drag-over、停止响应按钮视觉与交互正常。
+小屏下输入区不挤压、不出现明显错位。
+设置导航
+
+当前 tab active 状态正确。
+back button、settings icon button、sidebar footer settings button 的激活态一致。
+响应式宽度下导航不溢出。
+Assumptions
+当前前端仍是混合架构：React 面板挂载到既有模板中，因此本次方案默认兼容现有模板与 bridge，不做页面级重构。
+本次改造默认不引入新的 UI 依赖库；优先用现有 React + CSS 体系完成。
+默认先统一深色主题，不额外规划 light theme。
+默认保留当前产品品牌底色，但整体收敛到更接近 OpenAkita 的稳态层级，弱化“每个面板各自发光”的感觉。
+默认优先实施顺序：
+tokens + primitives
+WorkspaceSwitcherButton / SettingsButton
+McpServersPanel
+ChatComposer
+SettingsNav 与其他面板跟进
+
+
+现在有问题，在输入框内打字现在只能显示在一小片区域内。

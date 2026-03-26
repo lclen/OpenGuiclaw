@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from core.automation_context import get_automation_source_context
+from core.im_bots import make_im_session_id, parse_im_session_id
 from core.session import Session
 from core.state import app_state, _APP_BASE, logger
 from core.workspace_manager import get_workspace_manager
@@ -156,11 +157,10 @@ def _append_named_session_message(session_id: str, role: str, content: str, **kw
 
 
 def _parse_im_target_session(session_id: str) -> tuple[str | None, str | None]:
-    prefixes = ("dingtalk_", "feishu_", "telegram_")
-    for prefix in prefixes:
-        if session_id.startswith(prefix):
-            return prefix[:-1], session_id[len(prefix):]
-    return None, None
+    parsed = parse_im_session_id(session_id)
+    if not parsed:
+        return None, None
+    return parsed["channel_name"], parsed["chat_id"]
 
 
 def _fanout_im_delivery(
@@ -254,7 +254,7 @@ def _deliver_event_to_im_session(
 ) -> tuple[list[str], str | None]:
     resolved_session_id = session_id
     if not resolved_session_id and channel and chat_id:
-        resolved_session_id = f"{channel}_{chat_id}"
+        resolved_session_id = make_im_session_id(channel, chat_id)
     if not resolved_session_id:
         return [], None
 
@@ -318,7 +318,7 @@ def _resolve_task_delivery_target(task) -> list[dict[str, str | None]]:
 
     if target_kind == "im_session":
         if not target_session_id and target_channel and target_chat_id:
-            target_session_id = f"{target_channel}_{target_chat_id}"
+            target_session_id = make_im_session_id(target_channel, target_chat_id)
         if (not target_channel or not target_chat_id) and target_session_id:
             target_channel, target_chat_id = _parse_im_target_session(target_session_id)
         if not target_session_id and not (target_channel and target_chat_id):

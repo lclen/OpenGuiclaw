@@ -259,6 +259,82 @@ class ChannelAdapter(ABC):
         # 可选能力：默认实现为 no-op（部分平台不支持 typing 或无需实现）
         logger.debug(f"{self.channel_name}: typing (noop) chat_id={chat_id}")
 
+    def supports_streaming(self) -> bool:
+        """是否支持渐进式输出。"""
+        return False
+
+    async def stream_token(
+        self,
+        chat_id: str,
+        token: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        """逐 token 输出。"""
+        logger.debug(
+            "%s: stream_token noop chat_id=%s thread_id=%s is_group=%s len=%s",
+            self.channel_name,
+            chat_id,
+            thread_id,
+            is_group,
+            len(token or ""),
+        )
+
+    async def stream_thinking(
+        self,
+        chat_id: str,
+        thinking_text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+        duration_ms: int = 0,
+    ) -> None:
+        """输出思考过程。"""
+        logger.debug(
+            "%s: stream_thinking noop chat_id=%s thread_id=%s is_group=%s duration_ms=%s",
+            self.channel_name,
+            chat_id,
+            thread_id,
+            is_group,
+            duration_ms,
+        )
+
+    async def stream_chain_text(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        """输出工具链过程。"""
+        logger.debug(
+            "%s: stream_chain_text noop chat_id=%s thread_id=%s is_group=%s len=%s",
+            self.channel_name,
+            chat_id,
+            thread_id,
+            is_group,
+            len(text or ""),
+        )
+
+    async def finalize_stream(
+        self,
+        chat_id: str,
+        final_text: str,
+        *,
+        thread_id: str | None = None,
+    ) -> bool:
+        """完成流式输出，返回是否已由适配器消费最终结果。"""
+        logger.debug(
+            "%s: finalize_stream noop chat_id=%s thread_id=%s len=%s",
+            self.channel_name,
+            chat_id,
+            thread_id,
+            len(final_text or ""),
+        )
+        return False
+
     # ==================== 辅助方法 ====================
 
     def _log_message(self, message: UnifiedMessage) -> None:

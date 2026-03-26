@@ -13,13 +13,17 @@
 """
 
 import asyncio
+import contextlib
 import importlib.metadata
 import json
 import logging
+import os
 import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +86,36 @@ class DingTalkConfig:
     app_secret: str
     agent_id: str | None = None
 
+    def __post_init__(self) -> None:
+        if not self.app_key or not self.app_key.strip():
+            raise ValueError("DingTalkConfig: app_key is required")
+        if not self.app_secret or not self.app_secret.strip():
+            raise ValueError("DingTalkConfig: app_secret is required")
+
+
+class DingTalkStreamState(Enum):
+    IDLE = "idle"
+    CONNECTING = "connecting"
+    RUNNING = "running"
+    RECONNECTING = "reconnecting"
+    STOPPED = "stopped"
+
+
+@dataclass
+class _StreamMetrics:
+    connected_since: float | None = None
+    last_message_at: float | None = None
+    last_reconnect_at: float | None = None
+    reconnect_count: int = 0
+    dedupe_hit_count: int = 0
+    messages_received: int = 0
+
+
+@dataclass
+class _CardState:
+    card_id: str
+    is_ai_card: bool = True
+
 
 class DingTalkAdapter(ChannelAdapter):
     """
@@ -98,9 +132,29 @@ class DingTalkAdapter(ChannelAdapter):
     """
 
     channel_name = "dingtalk"
+    capabilities = {
+        "streaming": True,
+        "markdown": True,
+        "send_image": True,
+        "send_file": True,
+        "send_voice": True,
+    }
 
     API_BASE = "https://oapi.dingtalk.com"
     API_NEW = "https://api.dingtalk.com/v1.0"
+    AI_CARD_TEMPLATE_ID = "382e4302-551d-4880-bf29-a30acfab2e71.schema"
+    AI_CARD_CREATE_URL = "https://api.dingtalk.com/v1.0/card/instances"
+    AI_CARD_DELIVER_URL = "https://api.dingtalk.com/v1.0/card/instances/deliver"
+    AI_CARD_STREAM_URL = "https://api.dingtalk.com/v1.0/card/streaming"
+    CARD_SEND_URL = "https://api.dingtalk.com/v1.0/im/v1.0/robot/interactiveCards/send"
+    CARD_UPDATE_URL = "https://api.dingtalk.com/v1.0/im/robots/interactiveCards"
+    _STREAM_WATCHDOG_INTERVAL = 15
+    _STREAM_WATCHDOG_INITIAL_DELAY = 30
+    _STREAM_RECONNECT_MIN_INTERVAL = 10
+    _STREAM_RECONNECT_MAX_DELAY = 120
+    _STREAM_STABLE_THRESHOLD = 300
+    STALE_MESSAGE_THRESHOLD_S = 300
+    _MARKDOWN_MAX_LENGTH = 3800
 
     def __init__(
         self,
@@ -112,6 +166,8 @@ class DingTalkAdapter(ChannelAdapter):
         channel_name: str | None = None,
         bot_id: str | None = None,
         agent_profile_id: str = "default",
+        footer_elapsed: bool | None = None,
+        footer_status: bool | None = None,
     ):
         """
         Args:
@@ -146,11 +202,37 @@ class DingTalkAdapter(ChannelAdapter):
         self._stream_thread: threading.Thread | None = None
         self._stream_loop: asyncio.AbstractEventLoop | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
+        self._stream_watchdog_task: asyncio.Task | None = None
+        self._stream_restart_count: int = 0
+        self._stream_state = DingTalkStreamState.IDLE
+        self._stream_metrics = _StreamMetrics()
+        self._last_error: str | None = None
 
         # 缓存每个会话的 session webhook、发送者 userId、会话类型
         self._session_webhooks: dict[str, str] = {}
         self._conversation_users: dict[str, str] = {}  # conversationId -> senderId
         self._conversation_types: dict[str, str] = {}  # conversationId -> "1"(单聊)/"2"(群聊)
+        self._seen_message_ids: dict[str, float] = {}
+        self._seen_message_ids_max = 5000
+        self._seen_message_ids_ttl = 60.0
+        self._thinking_cards: dict[str, _CardState] = {}
+        self._ai_card_available: bool = True
+        self._streaming_buffers: dict[str, str] = {}
+        self._streaming_last_patch: dict[str, float] = {}
+        self._streaming_finalized: set[str] = set()
+        self._streaming_throttle_ms: int = 800
+        self._streaming_enabled: bool = True
+        self._streaming_thinking: dict[str, str] = {}
+        self._streaming_thinking_ms: dict[str, int] = {}
+        self._streaming_chain: dict[str, list[str]] = {}
+        self._typing_status: dict[str, str] = {}
+        self._typing_start_time: dict[str, float] = {}
+        self._footer_elapsed = footer_elapsed if footer_elapsed is not None else (
+            os.environ.get("DINGTALK_FOOTER_ELAPSED", "true").lower() in ("true", "1", "yes")
+        )
+        self._footer_status = footer_status if footer_status is not None else (
+            os.environ.get("DINGTALK_FOOTER_STATUS", "true").lower() in ("true", "1", "yes")
+        )
 
     async def start(self) -> None:
         """启动钉钉适配器 (Stream 模式)"""
@@ -171,6 +253,7 @@ class DingTalkAdapter(ChannelAdapter):
         await self._refresh_token()
 
         self._running = True
+        self._last_error = None
 
         # 记录主事件循环，用于从 Stream 线程投递协程
         try:
@@ -180,6 +263,8 @@ class DingTalkAdapter(ChannelAdapter):
 
         # 启动 Stream 长连接 (后台线程)
         self._start_stream()
+        if self._main_loop and (self._stream_watchdog_task is None or self._stream_watchdog_task.done()):
+            self._stream_watchdog_task = asyncio.create_task(self._stream_watchdog_loop())
 
         logger.info("DingTalk adapter started (Stream mode)")
 
@@ -190,6 +275,14 @@ class DingTalkAdapter(ChannelAdapter):
         发到旧连接上的消息因 _main_loop 已失效而被静默丢弃（与飞书同源 Bug）。
         """
         self._running = False
+        self._main_loop = None
+        self._set_stream_state(DingTalkStreamState.STOPPED)
+
+        if self._stream_watchdog_task and not self._stream_watchdog_task.done():
+            self._stream_watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stream_watchdog_task
+            self._stream_watchdog_task = None
 
         # 1) 停止 Stream 线程的事件循环
         stream_loop = self._stream_loop
@@ -213,9 +306,25 @@ class DingTalkAdapter(ChannelAdapter):
         if self._http_client:
             await self._http_client.aclose()
 
-        logger.info("DingTalk adapter stopped")
+        logger.info(
+            "DingTalk adapter stopped (msgs=%s reconnects=%s dedup_hits=%s)",
+            self._stream_metrics.messages_received,
+            self._stream_metrics.reconnect_count,
+            self._stream_metrics.dedupe_hit_count,
+        )
 
     # ==================== Stream 模式 ====================
+
+    def supports_streaming(self) -> bool:
+        return True
+
+    def _set_stream_state(self, state: DingTalkStreamState) -> None:
+        if self._stream_state != state:
+            logger.info("DingTalk Stream state: %s -> %s", self._stream_state.value, state.value)
+            self._stream_state = state
+
+    def _make_session_key(self, chat_id: str, thread_id: str | None = None) -> str:
+        return f"{chat_id}:{thread_id or ''}"
 
     def _start_stream(self) -> None:
         """在后台线程中启动 Stream 长连接"""
@@ -230,18 +339,22 @@ class DingTalkAdapter(ChannelAdapter):
                 self.adapter = adapter
 
             async def process(self, callback: dingtalk_stream.CallbackMessage):
-                """处理收到的消息回调"""
+                """ACK 先返回，消息异步处理，避免钉钉重投。"""
+                asyncio.get_running_loop().create_task(self._safe_handle(callback))
+                return dingtalk_stream.AckMessage.STATUS_OK, "OK"
+
+            async def _safe_handle(self, callback: dingtalk_stream.CallbackMessage):
                 try:
                     await self.adapter._handle_stream_message(callback)
                 except Exception as e:
                     logger.error(f"Error handling DingTalk message: {e}", exc_info=True)
-                return dingtalk_stream.AckMessage.STATUS_OK, "OK"
 
         def _run_stream_in_thread() -> None:
             """在独立线程中运行 Stream 客户端"""
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
             self._stream_loop = new_loop
+            self._set_stream_state(DingTalkStreamState.CONNECTING)
 
             try:
                 # Monkey-patch dingtalk_stream 内部 logger，修复第三方库 bug：
@@ -292,10 +405,13 @@ class DingTalkAdapter(ChannelAdapter):
                 self._stream_client = client
                 logger.info("DingTalk Stream client starting...")
                 logger.info(f"DingTalk AppKey configured: {self.config.app_key[:6]}***")
+                self._stream_metrics.connected_since = time.time()
+                self._set_stream_state(DingTalkStreamState.RUNNING)
 
                 client.start_forever()
             except Exception as e:
                 if self._running:
+                    self._last_error = str(e)
                     logger.error(f"DingTalk Stream error: {e}", exc_info=True)
             finally:
                 self._stream_loop = None
@@ -308,6 +424,52 @@ class DingTalkAdapter(ChannelAdapter):
         )
         self._stream_thread.start()
         logger.info("DingTalk Stream client started in background thread")
+
+    async def _stream_watchdog_loop(self) -> None:
+        await asyncio.sleep(self._STREAM_WATCHDOG_INITIAL_DELAY)
+        last_restart_time = 0.0
+        stable_since = asyncio.get_running_loop().time()
+
+        while self._running:
+            await asyncio.sleep(self._STREAM_WATCHDOG_INTERVAL)
+            if not self._running:
+                break
+
+            stream_thread = self._stream_thread
+            if stream_thread is not None and stream_thread.is_alive():
+                now = asyncio.get_running_loop().time()
+                if self._stream_restart_count > 0 and (now - stable_since) >= self._STREAM_STABLE_THRESHOLD:
+                    self._stream_restart_count = 0
+                    self._set_stream_state(DingTalkStreamState.RUNNING)
+                continue
+
+            self._set_stream_state(DingTalkStreamState.RECONNECTING)
+            now = asyncio.get_running_loop().time()
+            if now - last_restart_time < self._STREAM_RECONNECT_MIN_INTERVAL:
+                continue
+
+            self._stream_restart_count += 1
+            self._stream_metrics.reconnect_count += 1
+            self._stream_metrics.last_reconnect_at = time.time()
+            backoff = min(
+                self._STREAM_RECONNECT_MIN_INTERVAL * (2 ** min(self._stream_restart_count - 1, 6)),
+                self._STREAM_RECONNECT_MAX_DELAY,
+            )
+            logger.warning(
+                "DingTalk Stream watchdog: thread exited (restart #%s), reconnect in %ss",
+                self._stream_restart_count,
+                int(backoff),
+            )
+            await asyncio.sleep(backoff)
+            if not self._running:
+                break
+            try:
+                self._start_stream()
+                last_restart_time = asyncio.get_running_loop().time()
+                stable_since = last_restart_time
+            except Exception as exc:
+                self._last_error = str(exc)
+                logger.error(f"DingTalk Stream watchdog reconnect failed: {exc}", exc_info=True)
 
     async def _handle_stream_message(
         self, callback: "dingtalk_stream.CallbackMessage"
@@ -330,6 +492,32 @@ class DingTalkAdapter(ChannelAdapter):
         conversation_type = raw_data.get("conversationType", "1")
         msg_id = raw_data.get("msgId", "")
 
+        create_at_ms = raw_data.get("createAt")
+        if create_at_ms and isinstance(create_at_ms, (int, float)):
+            age_s = time.time() - create_at_ms / 1000
+            if age_s > self.STALE_MESSAGE_THRESHOLD_S:
+                logger.info("DingTalk: stale message discarded age=%ss msg_id=%s", int(age_s), msg_id)
+                return
+
+        if msg_id:
+            dedup_key = f"{self.bot_id}:{msg_id}"
+            now = time.time()
+            if dedup_key in self._seen_message_ids:
+                self._stream_metrics.dedupe_hit_count += 1
+                logger.debug(f"DingTalk: duplicate message ignored: {msg_id}")
+                return
+            if len(self._seen_message_ids) > self._seen_message_ids_max // 2:
+                expired = [key for key, ts in self._seen_message_ids.items() if now - ts > self._seen_message_ids_ttl]
+                for key in expired:
+                    self._seen_message_ids.pop(key, None)
+            if len(self._seen_message_ids) >= self._seen_message_ids_max:
+                oldest = min(self._seen_message_ids, key=self._seen_message_ids.get)
+                self._seen_message_ids.pop(oldest, None)
+            self._seen_message_ids[dedup_key] = now
+
+        self._stream_metrics.messages_received += 1
+        self._stream_metrics.last_message_at = time.time()
+
         chat_type = "group" if conversation_type == "2" else "private"
 
         # 保存 session webhook 用于回复
@@ -344,6 +532,8 @@ class DingTalkAdapter(ChannelAdapter):
             "session_webhook": session_webhook,
             "conversation_type": conversation_type,
             "is_group": chat_type == "group",
+            "sender_name": raw_data.get("senderNick", ""),
+            "chat_name": raw_data.get("conversationTitle", ""),
         }
 
         # 根据消息类型构建 content
@@ -384,7 +574,7 @@ class DingTalkAdapter(ChannelAdapter):
         # 从 Stream 线程投递到主事件循环。
         # 必须使用 run_coroutine_threadsafe：当前线程已有运行中的事件循环（SDK 的 stream loop），
         # 不能使用 asyncio.run()，否则会触发 RuntimeError 导致消息丢失。
-        if self._main_loop is not None:
+        if self._main_loop is not None and self._running and not self._main_loop.is_closed():
             logger.info(f"[DingTalkAdapter] Dispatching message {msg_id} to main loop")
             future = asyncio.run_coroutine_threadsafe(
                 self._emit_message(unified), self._main_loop
@@ -399,13 +589,7 @@ class DingTalkAdapter(ChannelAdapter):
                     )
             future.add_done_callback(_on_emit_done)
         else:
-            logger.error(
-                f"[DingTalkAdapter] Main event loop is NONE. Cannot dispatch message {msg_id}."
-            )
-            logger.error(
-                "Main event loop not set (DingTalk adapter not started from async context?), "
-                "dropping message to avoid dispatch failure in Stream thread"
-            )
+            logger.warning("DingTalk: dropping message (adapter stopping or main loop unavailable)")
 
     async def _parse_message_content(
         self, msg_type: str, raw_data: dict
@@ -560,6 +744,331 @@ class DingTalkAdapter(ChannelAdapter):
         )
         return False
 
+    async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
+        sk = self._make_session_key(chat_id, thread_id)
+        if sk in self._thinking_cards:
+            return
+        try:
+            card_state = await self._create_card(chat_id)
+            self._thinking_cards[sk] = card_state
+            self._typing_start_time[sk] = time.time()
+            self._typing_status[sk] = "思考中"
+        except Exception as exc:
+            logger.debug(f"DingTalk: send_typing card failed: {exc}")
+
+    async def stream_token(
+        self,
+        chat_id: str,
+        token: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        sk = self._make_session_key(chat_id, thread_id)
+        card_state = self._thinking_cards.get(sk)
+        if not card_state:
+            return
+
+        self._streaming_buffers[sk] = self._streaming_buffers.get(sk, "") + token
+        self._typing_status[sk] = "生成回复"
+        now = time.time() * 1000
+        last = self._streaming_last_patch.get(sk, 0)
+        if now - last < self._streaming_throttle_ms:
+            return
+        self._streaming_last_patch[sk] = now
+        display = self._compose_thinking_display(sk)
+        footer = self._build_footer_note(sk)
+        await self._patch_card_content(card_state, display + footer)
+
+    async def stream_thinking(
+        self,
+        chat_id: str,
+        thinking_text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+        duration_ms: int = 0,
+    ) -> None:
+        sk = self._make_session_key(chat_id, thread_id)
+        card_state = self._thinking_cards.get(sk)
+        if not card_state:
+            return
+        self._streaming_thinking[sk] = thinking_text
+        if duration_ms:
+            self._streaming_thinking_ms[sk] = duration_ms
+        self._typing_status[sk] = "深度思考"
+        now = time.time() * 1000
+        last = self._streaming_last_patch.get(sk, 0)
+        if now - last < self._streaming_throttle_ms:
+            return
+        self._streaming_last_patch[sk] = now
+        display = self._compose_thinking_display(sk)
+        footer = self._build_footer_note(sk)
+        await self._patch_card_content(card_state, display + footer)
+
+    async def stream_chain_text(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        thread_id: str | None = None,
+        is_group: bool = False,
+    ) -> None:
+        sk = self._make_session_key(chat_id, thread_id)
+        card_state = self._thinking_cards.get(sk)
+        if not card_state:
+            return
+        chain = self._streaming_chain.setdefault(sk, [])
+        chain.append(text)
+        self._typing_status[sk] = "调用工具"
+        now = time.time() * 1000
+        last = self._streaming_last_patch.get(sk, 0)
+        if now - last < self._streaming_throttle_ms:
+            return
+        self._streaming_last_patch[sk] = now
+        display = self._compose_thinking_display(sk)
+        footer = self._build_footer_note(sk)
+        await self._patch_card_content(card_state, display + footer)
+
+    async def finalize_stream(
+        self,
+        chat_id: str,
+        final_text: str,
+        *,
+        thread_id: str | None = None,
+    ) -> bool:
+        sk = self._make_session_key(chat_id, thread_id)
+        card_state = self._thinking_cards.pop(sk, None)
+        footer = self._build_footer_note(sk, final=True)
+
+        self._streaming_buffers.pop(sk, None)
+        self._streaming_last_patch.pop(sk, None)
+        self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
+        self._streaming_chain.pop(sk, None)
+        self._typing_status.pop(sk, None)
+        self._typing_start_time.pop(sk, None)
+
+        if not card_state:
+            return False
+        try:
+            content = final_text + footer
+            if card_state.is_ai_card:
+                await self._stream_ai_card(card_state.card_id, content, finished=True)
+            else:
+                await self._update_interactive_card(card_state.card_id, content)
+            self._streaming_finalized.add(sk)
+            return True
+        except Exception as exc:
+            logger.warning(f"DingTalk: finalize_stream failed: {exc}")
+            return False
+
+    async def clear_typing(self, chat_id: str, thread_id: str | None = None) -> None:
+        sk = self._make_session_key(chat_id, thread_id)
+        card_state = self._thinking_cards.pop(sk, None)
+        self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
+        self._streaming_chain.pop(sk, None)
+        self._typing_status.pop(sk, None)
+        self._typing_start_time.pop(sk, None)
+        if not card_state:
+            return
+        with contextlib.suppress(Exception):
+            if card_state.is_ai_card:
+                await self._stream_ai_card(card_state.card_id, "✅ 处理完成", finished=True)
+            else:
+                await self._update_interactive_card(card_state.card_id, "✅ 处理完成")
+
+    async def _create_card(self, chat_id: str) -> _CardState:
+        if self._ai_card_available:
+            try:
+                card_id = await self._create_ai_card(chat_id)
+                if card_id:
+                    return _CardState(card_id=card_id, is_ai_card=True)
+            except Exception as exc:
+                logger.info(f"DingTalk: AI Card unavailable, fallback to StandardCard: {exc}")
+                self._ai_card_available = False
+        return await self._create_standard_card(chat_id)
+
+    async def _create_ai_card(self, chat_id: str) -> str | None:
+        await self._refresh_token()
+        out_track_id = f"ai_{uuid.uuid4().hex[:16]}"
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        create_body = {
+            "cardTemplateId": self.AI_CARD_TEMPLATE_ID,
+            "outTrackId": out_track_id,
+            "cardData": {
+                "cardParamMap": {
+                    "flowStatus": "PROCESSING",
+                    "msgContent": "💭 正在思考中...",
+                }
+            },
+        }
+        create_resp = await self._http_client.post(self.AI_CARD_CREATE_URL, headers=headers, json=create_body)
+        create_result = create_resp.json()
+        if not create_result.get("outTrackId") and not create_result.get("success", False):
+            raise RuntimeError(f"AI Card create failed: {create_result}")
+
+        conv_type = self._conversation_types.get(chat_id, "1")
+        if conv_type == "2":
+            open_space_id = f"dtv1.card//IM_GROUP.{chat_id}"
+        else:
+            staff_id = self._conversation_users.get(chat_id)
+            if not staff_id or staff_id.startswith("$:LWCP"):
+                raise ValueError("No valid staffId for AI Card delivery")
+            open_space_id = f"dtv1.card//IM_ROBOT.{staff_id}"
+
+        deliver_body = {
+            "outTrackId": out_track_id,
+            "openSpaceId": open_space_id,
+            "deliverType": "IM",
+        }
+        deliver_resp = await self._http_client.post(self.AI_CARD_DELIVER_URL, headers=headers, json=deliver_body)
+        deliver_result = deliver_resp.json()
+        if not deliver_result.get("spaceId") and not deliver_result.get("success", False):
+            raise RuntimeError(f"AI Card deliver failed: {deliver_result}")
+        return out_track_id
+
+    async def _stream_ai_card(self, out_track_id: str, content: str, *, finished: bool = False) -> None:
+        await self._refresh_token()
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        if finished:
+            body = {
+                "outTrackId": out_track_id,
+                "cardData": {
+                    "cardParamMap": {
+                        "flowStatus": "FINISHED",
+                        "msgContent": content,
+                    }
+                },
+            }
+            response = await self._http_client.put(self.AI_CARD_CREATE_URL, headers=headers, json=body)
+        else:
+            body = {
+                "outTrackId": out_track_id,
+                "guid": uuid.uuid4().hex,
+                "key": "msgContent",
+                "content": content,
+                "isFull": True,
+            }
+            response = await self._http_client.put(self.AI_CARD_STREAM_URL, headers=headers, json=body)
+        result = response.json()
+        if not result.get("success", True):
+            raise RuntimeError(str(result))
+
+    async def _create_standard_card(self, chat_id: str) -> _CardState:
+        card_biz_id = f"thinking_{uuid.uuid4().hex[:16]}"
+        await self._send_interactive_card(chat_id, card_biz_id, "💭 **正在思考中...**")
+        return _CardState(card_id=card_biz_id, is_ai_card=False)
+
+    async def _send_interactive_card(self, chat_id: str, card_biz_id: str, content: str) -> None:
+        await self._refresh_token()
+        card_data = json.dumps({
+            "config": {"autoLayout": True, "enableForward": False},
+            "header": {"title": {"type": "text", "text": ""}},
+            "contents": [{"type": "markdown", "text": content, "id": "content_main"}],
+        })
+        body: dict[str, Any] = {
+            "cardTemplateId": "StandardCard",
+            "cardBizId": card_biz_id,
+            "robotCode": self.config.app_key,
+            "cardData": card_data,
+            "pullStrategy": False,
+        }
+        conv_type = self._conversation_types.get(chat_id, "1")
+        if conv_type == "2":
+            body["openConversationId"] = chat_id
+        else:
+            staff_id = self._conversation_users.get(chat_id)
+            if not staff_id or staff_id.startswith("$:LWCP"):
+                raise ValueError("No valid staffId for single chat card")
+            body["singleChatReceiver"] = json.dumps({"userId": staff_id})
+
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        response = await self._http_client.post(self.CARD_SEND_URL, headers=headers, json=body)
+        result = response.json()
+        if "processQueryKey" not in result:
+            raise RuntimeError(f"Card send failed: {result}")
+
+    async def _update_interactive_card(self, card_biz_id: str, content: str) -> None:
+        await self._refresh_token()
+        card_data = json.dumps({
+            "config": {"autoLayout": True, "enableForward": True},
+            "header": {"title": {"type": "text", "text": ""}},
+            "contents": [{"type": "markdown", "text": content, "id": "content_main"}],
+        })
+        body = {"cardBizId": card_biz_id, "cardData": card_data}
+        headers = {"x-acs-dingtalk-access-token": self._access_token}
+        response = await self._http_client.put(self.CARD_UPDATE_URL, headers=headers, json=body)
+        result = response.json()
+        if "processQueryKey" not in result:
+            raise RuntimeError(f"Card update failed: {result}")
+
+    def _compose_thinking_display(self, sk: str) -> str:
+        thinking = self._streaming_thinking.get(sk, "")
+        reply = self._streaming_buffers.get(sk, "")
+        dur_ms = self._streaming_thinking_ms.get(sk, 0)
+        chain_lines = self._streaming_chain.get(sk, [])
+
+        parts: list[str] = []
+        if thinking:
+            dur_str = f" ({dur_ms / 1000:.1f}s)" if dur_ms else ""
+            preview = thinking.strip()
+            if len(preview) > 600:
+                preview = preview[:600] + "..."
+            parts.append(f"💭 **思考过程**{dur_str}\n> {preview.replace(chr(10), chr(10) + '> ')}")
+        if chain_lines:
+            parts.append("\n".join(chain_lines[-8:]))
+        if reply:
+            if parts:
+                parts.append("---")
+            parts.append(reply + " ▍")
+        elif not thinking and not chain_lines:
+            parts.append("💭 思考中...")
+        return "\n".join(parts)
+
+    def _build_footer_note(self, sk: str, *, final: bool = False) -> str:
+        if not self._footer_elapsed and not self._footer_status:
+            return ""
+
+        start = self._typing_start_time.get(sk)
+        elapsed_s = (time.time() - start) if start else 0.0
+        status = self._typing_status.get(sk, "")
+        parts: list[str] = []
+        if final:
+            if self._footer_elapsed:
+                parts.append(f"⏱ 完成 ({elapsed_s:.1f}s)")
+            elif self._footer_status:
+                parts.append("✅ 完成")
+        else:
+            if self._footer_elapsed and elapsed_s > 0:
+                parts.append(f"⏱ {elapsed_s:.1f}s")
+            if self._footer_status and status:
+                parts.append(status)
+        if not parts:
+            return ""
+        return "\n\n<font color=gray>" + " · ".join(parts) + "</font>"
+
+    async def _patch_card_content(
+        self,
+        card_state: _CardState,
+        text: str,
+        sk: str | None = None,
+        *,
+        final: bool = False,
+    ) -> bool:
+        if not card_state or not card_state.card_id:
+            return False
+        try:
+            if card_state.is_ai_card:
+                await self._stream_ai_card(card_state.card_id, text, finished=final)
+            else:
+                await self._update_interactive_card(card_state.card_id, text)
+            return True
+        except Exception as exc:
+            logger.debug(f"DingTalk: _patch_card_content failed: {exc}")
+            return False
+
     async def send_message(self, message: OutgoingMessage) -> str:
         """
         发送消息 - 智能路由
@@ -575,9 +1084,35 @@ class DingTalkAdapter(ChannelAdapter):
         核心约束: 钉钉 Webhook 只支持 text/markdown/actionCard/feedCard，
         不支持 image/file/voice 原生类型。所有图片必须通过 markdown 嵌入。
         """
+        sk = self._make_session_key(message.chat_id, message.thread_id)
+        if sk in self._streaming_finalized:
+            self._streaming_finalized.discard(sk)
+            logger.debug(f"DingTalk: send_message skipped after finalize_stream: {sk}")
+            return f"stream_finalized_{sk}"
+
+        self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
+        self._streaming_chain.pop(sk, None)
+        self._typing_status.pop(sk, None)
+
         # 解析文本中的本地路径图片并上传 (钉钉不支持直接发本地路径，且公网不可见)
         if message.content.text:
             message.content.text = await self._resolve_local_images(message.content.text)
+
+        card_state = None if sk in self._streaming_buffers else self._thinking_cards.pop(sk, None)
+        if card_state and message.content.text and not message.content.has_media:
+            try:
+                final_text = message.content.text + self._build_footer_note(sk, final=True)
+                if card_state.is_ai_card:
+                    await self._stream_ai_card(card_state.card_id, final_text, finished=True)
+                else:
+                    await self._update_interactive_card(card_state.card_id, final_text)
+                self._streaming_buffers.pop(sk, None)
+                self._streaming_last_patch.pop(sk, None)
+                self._typing_start_time.pop(sk, None)
+                return f"card_{card_state.card_id}"
+            except Exception as exc:
+                logger.warning(f"DingTalk: update thinking card failed, fallback to normal send: {exc}")
 
         # 获取 webhook
         session_webhook = message.metadata.get("session_webhook", "")
@@ -657,12 +1192,25 @@ class DingTalkAdapter(ChannelAdapter):
         )
         try:
             if is_group:
-                return await self._send_group_message(message)
+                result_id = await self._send_group_message(message)
             else:
-                return await self._send_via_api(message)
+                result_id = await self._send_via_api(message)
         except RuntimeError as e:
             logger.error(f"OpenAPI send failed: {e}")
             raise
+
+        for extra_img in (message.content.images or [])[1:]:
+            if extra_img.local_path:
+                with contextlib.suppress(Exception):
+                    await self.send_image(message.chat_id, extra_img.local_path)
+        for extra_file in (message.content.files or [])[1:]:
+            if extra_file.local_path:
+                with contextlib.suppress(Exception):
+                    await self.send_file(message.chat_id, extra_file.local_path)
+        self._streaming_buffers.pop(sk, None)
+        self._streaming_last_patch.pop(sk, None)
+        self._typing_start_time.pop(sk, None)
+        return result_id
 
     async def _build_msg_key_param(
         self, message: OutgoingMessage
@@ -767,32 +1315,54 @@ class DingTalkAdapter(ChannelAdapter):
         """
         text = message.content.text or ""
 
-        # 支持 Markdown 格式
-        if message.parse_mode == "markdown" or (
+        is_markdown = message.parse_mode == "markdown" or (
             text and any(c in text for c in ["**", "##", "- ", "```", "[", "]"])
-        ):
-            payload = {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": text[:20] if text else "消息",
-                    "text": text,
-                },
-            }
-        else:
-            payload = {
-                "msgtype": "text",
-                "text": {"content": text},
-            }
+        )
+        chunks = self._chunk_markdown_text(text, self._MARKDOWN_MAX_LENGTH) if text else [text]
+        result_id = ""
+        for chunk in chunks:
+            if is_markdown:
+                payload = {
+                    "msgtype": "markdown",
+                    "markdown": {
+                        "title": chunk[:20] if chunk else "消息",
+                        "text": chunk,
+                    },
+                }
+            else:
+                payload = {
+                    "msgtype": "text",
+                    "text": {"content": chunk},
+                }
 
-        response = await self._http_client.post(webhook_url, json=payload)
-        result = response.json()
+            response = await self._http_client.post(webhook_url, json=payload)
+            result = response.json()
 
-        if result.get("errcode", 0) != 0:
-            error_msg = result.get("errmsg", "Unknown error")
-            logger.error(f"DingTalk webhook send failed: {error_msg}")
-            raise RuntimeError(f"Failed to send via webhook: {error_msg}")
+            if result.get("errcode", 0) != 0:
+                error_msg = result.get("errmsg", "Unknown error")
+                logger.error(f"DingTalk webhook send failed: {error_msg}")
+                raise RuntimeError(f"Failed to send via webhook: {error_msg}")
+            result_id = f"webhook_{int(time.time())}"
 
-        return f"webhook_{int(time.time())}"
+        return result_id
+
+    def _chunk_markdown_text(self, text: str, max_length: int) -> list[str]:
+        if len(text) <= max_length:
+            return [text]
+        chunks: list[str] = []
+        remaining = text
+        while remaining:
+            if len(remaining) <= max_length:
+                chunks.append(remaining)
+                break
+            cut = remaining.rfind("\n\n", 0, max_length)
+            if cut <= 0:
+                cut = remaining.rfind("\n", 0, max_length)
+            if cut <= 0:
+                cut = max_length
+            chunks.append(remaining[:cut].rstrip())
+            remaining = remaining[cut:].lstrip()
+        return chunks
 
     async def _send_group_message(self, message: OutgoingMessage) -> str:
         """

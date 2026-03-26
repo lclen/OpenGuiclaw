@@ -1076,6 +1076,32 @@
                 await this.archiveThread(wsId, sessionId);
             };
 
+            obj.renameThread = async function (wsId, sessionId, title) {
+                if (!wsId || !sessionId) return;
+                var nextTitle = (title || '').trim();
+                if (!nextTitle) throw new Error('请输入新的线程名称');
+                try {
+                    var r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: nextTitle })
+                    });
+                    var data = {};
+                    try {
+                        data = await r.json();
+                    } catch (_) {}
+                    if (!r.ok) throw new Error(data.detail || '重命名线程失败');
+                    await this.loadWorkspaceThreads(wsId, true);
+                    await this.loadHome();
+                    this.pushLog('status', '已重命名对话');
+                    this.notifyShellStateChanged();
+                    this.notifyChatStateChanged();
+                } catch (e) {
+                    console.error('[Shell] renameThread:', e);
+                    throw e;
+                }
+            };
+
             obj.toggleThreadPin = async function (wsId, sessionId, pinned) {
                 if (!wsId || !sessionId) return;
                 var endpoint = pinned ? 'unpin' : 'pin';

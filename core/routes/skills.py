@@ -1,4 +1,8 @@
 """Skills management, marketplace, install/uninstall routes."""
+
+from __future__ import annotations
+
+import json
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -6,21 +10,19 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.state import app_state, _APP_BASE, logger
+from core.skill_runtime import install_skill_from_source
+from core.state import _APP_BASE, _ctx_event_queue, app_state, logger
 
 router = APIRouter(tags=["skills"])
 
-# Marketplace cache: query → (timestamp, data)
 _marketplace_cache: dict = {}
-_MARKETPLACE_CACHE_TTL = 60  # seconds
+_MARKETPLACE_CACHE_TTL = 60
 
-
-# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class SkillToggleRequest(BaseModel):
     name: str
     enabled: bool
-    tools: Optional[list[str]] = None  # None=not provided, []=catalog-only entry
+    tools: Optional[list[str]] = None
 
 
 class SkillConfigRequest(BaseModel):
@@ -37,8 +39,6 @@ class SkillUninstallRequest(BaseModel):
     name: str
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _require_agent():
     agent = app_state.get("agent")
     if not agent:
@@ -46,131 +46,176 @@ def _require_agent():
     return agent
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+def _broadcast_skills_version(agent, *, action: str, installed_skill_names: Optional[list[str]] = None) -> None:
+    event = {
+        "type": "skills_version",
+        "action": action,
+        "skills_version": agent.skills.get_version(),
+        "installed_skill_names": installed_skill_names or [],
+        "message": "新技能已加载，本线程后续消息可直接使用",
+    }
+    try:
+        _ctx_event_queue.put(event)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Skills] Failed to broadcast skills_version event: %s", exc)
+
+
+def _build_skill_records(agent) -> list[dict[str, Any]]:
+    plugin_manager = app_state.get("plugin_manager")
+    records: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    if plugin_manager:
+        for plugin in plugin_manager.list_plugins():
+            tools = [agent.skills.get(name) for name in plugin.skills]
+            tools = [tool for tool in tools if tool]
+            enabled = all(tool.enabled for tool in tools) if tools else True
+            records.append(
+                {
+                    "id": plugin.name,
+                    "name": plugin.display_name,
+                    "description": plugin.description,
+                    "category": plugin.name,
+                    "registry_category": plugin.name,
+                    "type": "system_plugin",
+                    "enabled": enabled,
+                    "locked": True,
+                    "source": str(plugin.path),
+                    "tools": [tool.name for tool in tools],
+                    "config_values": {},
+                }
+            )
+            seen_names.add(plugin.name)
+
+    catalog = getattr(agent, "_local_skills_catalog", {}) or {}
+    for name, info in sorted(catalog.items(), key=lambda item: item[0].lower()):
+        records.append(
+            {
+                "id": name,
+                "name": name,
+                "description": info.get("description", ""),
+                "category": "skills",
+                "registry_category": "skills",
+                "type": "user_skill",
+                "enabled": info.get("enabled", True),
+                "locked": False,
+                "source": info.get("path", ""),
+                "tools": info.get("tools", []) or [],
+                "config_values": {},
+            }
+        )
+        seen_names.add(name)
+
+    for skill in sorted(agent.skills.list_all(), key=lambda item: item.name.lower()):
+        if skill.plugin_name and skill.plugin_name in seen_names:
+            continue
+        if skill.name in seen_names:
+            continue
+        records.append(
+            {
+                "id": skill.name,
+                "name": skill.name,
+                "description": skill.description,
+                "category": skill.category or "general",
+                "registry_category": skill.category or "general",
+                "type": skill.source_type or "builtin_skill",
+                "enabled": skill.enabled,
+                "locked": bool(skill.system_locked),
+                "source": skill.source_path or skill.source_url or "runtime",
+                "tools": [skill.name],
+                "config_values": dict(skill.config_values or {}),
+            }
+        )
+
+    return records
+
 
 @router.get("/api/skills/list")
 async def list_skills():
-    """Return unified skill list merging registry categories and local catalog."""
     agent = _require_agent()
-
-    # category → [tools]
-    category_map: dict = {}
-    for skill in agent.skills._registry.values():
-        cat = skill.category or "general"
-        category_map.setdefault(cat, []).append(skill)
-
-    local_catalog = getattr(agent, "_local_skills_catalog", {})
-    final_skills = []
-    seen_categories: set = set()
-
-    catalog_alias_map = {"agent-browser": "browser", "file-manager": "filesystem"}
-
-    for name, info in local_catalog.items():
-        cat_key = catalog_alias_map.get(name, name)
-        if cat_key not in category_map:
-            cat_key = name
-        tools = category_map.get(cat_key, [])
-        description = info.get("description", "") or (tools[0].description if tools else "")
-        final_skills.append({
-            "id": name, "name": name, "description": description,
-            "category": "agent_skill", "registry_category": cat_key,
-            "tools": [t.name for t in tools],
-            "enabled": any(t.enabled for t in tools) if tools else True,
-        })
-        seen_categories.add(cat_key)
-        seen_categories.add(name)
-
-    for cat_name, tools in category_map.items():
-        if cat_name not in seen_categories:
-            final_skills.append({
-                "id": cat_name, "name": cat_name,
-                "description": tools[0].description if tools else "",
-                "category": "system_skill", "registry_category": cat_name,
-                "tools": [t.name for t in tools],
-                "enabled": all(t.enabled for t in tools),
-            })
-
-    return {"skills": final_skills}
+    agent.ensure_session_skills_current(agent.sessions.current)
+    return {"skills": _build_skill_records(agent), "skills_version": agent.skills.get_version()}
 
 
 @router.post("/api/skills/config")
 async def config_skill(request: SkillConfigRequest):
-    """Update a skill's configuration values."""
     agent = _require_agent()
     skill = agent.skills.get(request.name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill '{request.name}' not found")
     agent.skills.update_config(request.name, request.config)
+    _broadcast_skills_version(agent, action="config")
     return {"status": "success", "name": request.name, "config_values": skill.config_values}
 
 
 @router.post("/api/skills/toggle")
 async def toggle_skill(request: SkillToggleRequest):
-    """Enable or disable a skill by tool name, category, or tools list."""
     agent = _require_agent()
 
-    def _apply(names):
-        for n in names:
-            agent.skills.enable(n) if request.enabled else agent.skills.disable(n)
-
-    # 1. Explicit tools list
+    target_names: list[str] = []
     if request.tools is not None:
-        valid = [t for t in request.tools if agent.skills.get(t)]
-        if valid:
-            _apply(valid)
-        return {"status": "success", "name": request.name, "enabled": request.enabled, "affected": len(valid)}
+        target_names = [tool for tool in request.tools if agent.skills.get(tool)]
+    elif agent.skills.get(request.name):
+        target_names = [request.name]
+    else:
+        matched = [skill.name for skill in agent.skills.list_all() if (skill.category or "general") == request.name]
+        target_names = matched
 
-    # 2. Direct tool name
-    if agent.skills.get(request.name):
-        _apply([request.name])
-        return {"status": "success", "name": request.name, "enabled": request.enabled, "affected": 1}
+    if not target_names:
+        catalog = getattr(agent, "_local_skills_catalog", {}) or {}
+        if request.name in catalog:
+            version = agent.set_local_skill_enabled(request.name, request.enabled)
+            _broadcast_skills_version(agent, action="toggle")
+            return {
+                "status": "success",
+                "name": request.name,
+                "enabled": request.enabled,
+                "affected": 1,
+                "skills_version": version,
+            }
+        raise HTTPException(status_code=404, detail=f"Skill or category '{request.name}' not found")
 
-    # 3. Category match
-    matched = [s for s in agent.skills._registry.values() if (s.category or "general") == request.name]
-    if matched:
-        _apply([s.name for s in matched])
-        return {"status": "success", "name": request.name, "enabled": request.enabled, "affected": len(matched)}
+    locked = [name for name in target_names if getattr(agent.skills.get(name), "system_locked", False)]
+    if locked:
+        raise HTTPException(status_code=403, detail=f"系统能力不可关闭: {', '.join(locked)}")
 
-    # 4. Catalog alias → category
-    alias_map = {"agent-browser": "browser", "file-manager": "file_manager"}
-    cat_key = alias_map.get(request.name, request.name)
-    if cat_key != request.name:
-        matched = [s for s in agent.skills._registry.values() if (s.category or "general") == cat_key]
-        if matched:
-            _apply([s.name for s in matched])
-            return {"status": "success", "name": request.name, "enabled": request.enabled, "affected": len(matched)}
+    for name in target_names:
+        if request.enabled:
+            agent.skills.enable(name)
+        else:
+            agent.skills.disable(name)
 
-    all_categories = sorted(set(s.category or "general" for s in agent.skills._registry.values()))
-    raise HTTPException(
-        status_code=404,
-        detail=f"Skill or category '{request.name}' not found. Available: {all_categories}",
-    )
+    _broadcast_skills_version(agent, action="toggle")
+    return {
+        "status": "success",
+        "name": request.name,
+        "enabled": request.enabled,
+        "affected": len(target_names),
+        "skills_version": agent.skills.get_version(),
+    }
 
 
 @router.post("/api/skills/reload")
 async def reload_skills():
-    """Reload all skill modules (via PluginManager)."""
     agent = _require_agent()
-    try:
-        plugin_manager = app_state.get("plugin_manager")
-        if plugin_manager:
-            reloaded = plugin_manager.reload_all()
-            logger.info(f"[SkillReload] Reloaded {len(reloaded)} plugins: {reloaded}")
-        if hasattr(agent, "_scan_local_skills"):
-            agent._local_skills_catalog = agent._scan_local_skills()
-            agent._catalog_dirty = False
-        return {"status": "success", "message": f"已重载 {len(reloaded) if plugin_manager else 0} 个插件"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to reload skills: {str(e)}")
+    version = agent.refresh_skill_runtime(reason="api_reload")
+    _broadcast_skills_version(agent, action="reload")
+    return {
+        "status": "success",
+        "message": "技能注册表已刷新",
+        "skills_version": version,
+        "requires_restart": False,
+    }
 
 
 @router.get("/api/skills/marketplace")
 async def skills_marketplace(q: str = "agent"):
-    """Proxy requests to skills.sh with 60s cache per query."""
     try:
         import httpx
     except ImportError:
-        import subprocess, sys
+        import subprocess
+        import sys
+
         subprocess.run([sys.executable, "-m", "pip", "install", "httpx", "-q"], check=False)
         try:
             import httpx
@@ -199,6 +244,7 @@ async def skills_marketplace(q: str = "agent"):
     except (httpx.ConnectTimeout, httpx.ConnectError, httpx.HTTPStatusError) as e:
         try:
             from httpx import AsyncHTTPTransport
+
             transport = AsyncHTTPTransport(local_address="0.0.0.0")
             async with httpx.AsyncClient(timeout=timeout_val + 5, transport=transport, trust_env=True) as client:
                 resp = await client.get(url, headers=headers)
@@ -214,32 +260,38 @@ async def skills_marketplace(q: str = "agent"):
 
     installed_urls: set = set()
     if agent:
-        for skill in agent.skills._registry.values():
-            src = getattr(skill, "source_url", None) or getattr(skill, "sourceUrl", None)
-            if src:
-                installed_urls.add(src)
+        for skill in agent.skills.list_all():
+            if skill.source_url:
+                installed_urls.add(skill.source_url)
 
     enriched = []
-    for s in data.get("skills", []):
-        source = str(s.get("source", ""))
-        skill_id = str(s.get("skillId", s.get("name", "")))
+    for item in data.get("skills", []):
+        source = str(item.get("source", ""))
+        skill_id = str(item.get("skillId", item.get("name", "")))
         install_url = f"{source}@{skill_id}" if source else skill_id
-        description = s.get("description") or skill_id.replace("-", " ").replace("_", " ").title()
-        tags: list = list(s.get("tags", []) or [])
+        description = item.get("description") or skill_id.replace("-", " ").replace("_", " ").title()
+        tags: list = list(item.get("tags", []) or [])
         if not tags:
             if "/" in source:
                 author = source.split("/")[0]
                 if author not in tags:
                     tags.append(author)
-            cat = s.get("category")
-            if cat and cat not in tags:
-                tags.append(cat.lower())
-        enriched.append({
-            "id": str(s.get("id", "")), "name": skill_id, "description": str(description),
-            "author": source.split("/")[0] if source else "community",
-            "url": install_url, "installs": s.get("installs", 0), "stars": s.get("stars", 0),
-            "tags": tags, "installed": install_url in installed_urls,
-        })
+            category = item.get("category")
+            if category and category not in tags:
+                tags.append(category.lower())
+        enriched.append(
+            {
+                "id": str(item.get("id", "")),
+                "name": skill_id,
+                "description": str(description),
+                "author": source.split("/")[0] if source else "community",
+                "url": install_url,
+                "installs": item.get("installs", 0),
+                "stars": item.get("stars", 0),
+                "tags": tags,
+                "installed": install_url in installed_urls,
+            }
+        )
 
     result = {"skills": enriched}
     _marketplace_cache[cache_key] = (now, result)
@@ -248,150 +300,49 @@ async def skills_marketplace(q: str = "agent"):
 
 @router.post("/api/skills/install")
 async def install_skill(request: SkillInstallRequest):
-    """Install a skill from a URL via pip or mirror fallback."""
-    import io, os, shutil, subprocess, sys, tempfile, urllib.request, zipfile
     agent = _require_agent()
-    url = request.url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
-
-    install_ok = False
-    install_msg = ""
-    error_detail = ""
-
-    base_url = url
-    sub_target = ""
-    if "@" in url and "git+" not in url:
-        base_url, sub_target = url.split("@", 1)
-
-    # Strategy 1: direct pip
     try:
-        if base_url.startswith(("http://", "https://")):
-            pip_url = f"git+{base_url}"
-        elif "/" in base_url and not base_url.startswith("git+"):
-            pip_url = f"git+https://github.com/{base_url}"
-        else:
-            pip_url = base_url
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", pip_url, "--quiet"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode == 0:
-            install_ok = True
-            install_msg = f"Skill installed: {request.name or url}"
-        else:
-            error_detail = result.stderr or "pip install failed"
-    except Exception as e:
-        error_detail = str(e)
+        installed = install_skill_from_source(request.url, _APP_BASE, requested_name=request.name)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=504, detail=f"安装失败: {exc}") from exc
 
-    # Strategy 2: GitHub mirror fallback
-    if not install_ok and ("github.com" in base_url or "/" in base_url):
-        mirrors = [
-            "https://gh-proxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
-            "https://mirror.ghproxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
-            "https://ghproxy.net/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
-            "https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
-        ]
-        owner = repo = ""
-        if "github.com/" in base_url:
-            parts = base_url.split("github.com/")[1].split("/")
-            if len(parts) >= 2:
-                owner, repo = parts[0], parts[1].replace(".git", "")
-        elif "/" in base_url:
-            parts = base_url.split("/")
-            owner, repo = parts[0], parts[1]
+    version = agent.refresh_skill_runtime(reason=f"api_install:{installed.name}")
+    _broadcast_skills_version(agent, action="install", installed_skill_names=[installed.name])
 
-        if owner and repo:
-            for branch in ["main", "master"]:
-                if install_ok:
-                    break
-                for mirror_tpl in mirrors:
-                    download_url = mirror_tpl.format(owner=owner, repo=repo, branch=branch)
-                    try:
-                        req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=30) as response:
-                            zip_data = response.read()
-                        with tempfile.TemporaryDirectory() as tmpdir:
-                            with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
-                                zf.extractall(tmpdir)
-                            items = os.listdir(tmpdir)
-                            if not items:
-                                continue
-                            src_path = os.path.join(tmpdir, items[0])
-                            res = subprocess.run(
-                                [sys.executable, "-m", "pip", "install", src_path, "--quiet"],
-                                capture_output=True, text=True, timeout=60,
-                            )
-                            if res.returncode == 0:
-                                install_ok = True
-                                install_msg = f"Skill installed via mirror: {request.name or url}"
-                                break
-                            potential_dir = src_path
-                            if sub_target:
-                                candidate = os.path.join(src_path, sub_target)
-                                if os.path.isdir(candidate):
-                                    potential_dir = candidate
-                            if os.path.exists(os.path.join(potential_dir, "SKILL.md")):
-                                target_name = request.name or os.path.basename(potential_dir)
-                                if target_name in ["archive", "master", "main"]:
-                                    target_name = repo or os.path.basename(base_url.rstrip("/"))
-                                dest_dir = Path(".agents/skills") / target_name
-                                os.makedirs(dest_dir.parent, exist_ok=True)
-                                if os.path.exists(dest_dir):
-                                    shutil.rmtree(dest_dir)
-                                shutil.copytree(potential_dir, dest_dir)
-                                install_ok = True
-                                install_msg = f"Natively installed skill folder: {target_name}"
-                                break
-                            else:
-                                error_detail = res.stderr or "pip failed and no SKILL.md found"
-                    except Exception as e:
-                        error_detail = str(e)
-                        continue
-
-    if not install_ok:
-        raise HTTPException(status_code=504, detail=f"安装失败: {error_detail}")
-
-    # Hot-reload
-    try:
-        if hasattr(agent, "_catalog_dirty"):
-            agent._catalog_dirty = True
-            if hasattr(agent, "_scan_local_skills"):
-                agent._local_skills_catalog = agent._scan_local_skills()
-        if hasattr(agent, "_register_builtins"):
-            agent._register_builtins()
-        plugin_manager = app_state.get("plugin_manager")
-        if plugin_manager:
-            plugin_manager.reload_all()
-        if hasattr(agent, "skills") and hasattr(agent.skills, "_load_config"):
-            agent.skills._load_config()
-    except Exception as e:
-        logger.warning(f"[SkillInstall] Reload warning: {e}")
-
-    return {"status": "success", "message": install_msg, "source_url": url}
+    return {
+        "status": "success",
+        "message": f"技能 `{installed.name}` 已立即生效",
+        "source_url": request.url,
+        "applied_immediately": True,
+        "skills_version": version,
+        "installed_skill_names": [installed.name],
+        "requires_restart": False,
+    }
 
 
 @router.post("/api/skills/uninstall")
 async def uninstall_skill(request: SkillUninstallRequest):
-    """Uninstall an external skill by name."""
-    import subprocess, sys
     agent = _require_agent()
-    skill = agent.skills.get(request.name)
-    if not skill:
+    catalog = getattr(agent, "_local_skills_catalog", {}) or {}
+    entry = catalog.get(request.name)
+    if not entry:
         raise HTTPException(status_code=404, detail=f"Skill '{request.name}' not found")
-    if not getattr(skill, "source_url", None):
-        raise HTTPException(status_code=400, detail=f"'{request.name}' is a built-in skill and cannot be uninstalled")
-    pkg_name = request.name.replace("_", "-")
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "uninstall", pkg_name, "-y", "--quiet"],
-            capture_output=True, text=True, timeout=60,
-        )
-    except Exception as e:
-        logger.warning(f"pip uninstall warning for {pkg_name}: {e}")
-    try:
-        if request.name in agent.skills._registry:
-            del agent.skills._registry[request.name]
-    except Exception as e:
-        logger.warning(f"Failed to remove {request.name} from registry: {e}")
-    return {"status": "success", "message": f"Skill '{request.name}' uninstalled"}
+
+    skill_path = Path(entry.get("path", ""))
+    if not skill_path.exists():
+        raise HTTPException(status_code=404, detail=f"Skill '{request.name}' source path not found")
+    skill_dir = skill_path.parent
+    if not str(skill_dir.resolve()).startswith(str((_APP_BASE / "skills").resolve())):
+        raise HTTPException(status_code=403, detail=f"'{request.name}' is locked and cannot be uninstalled")
+
+    import shutil
+
+    shutil.rmtree(skill_dir, ignore_errors=True)
+    version = agent.refresh_skill_runtime(reason=f"uninstall:{request.name}")
+    _broadcast_skills_version(agent, action="uninstall")
+    return {
+        "status": "success",
+        "message": f"Skill '{request.name}' uninstalled",
+        "skills_version": version,
+        "requires_restart": False,
+    }

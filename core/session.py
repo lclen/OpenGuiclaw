@@ -24,6 +24,7 @@ class Session:
         self.updated_at = self.created_at
         # Rolling summary: injected as a context prefix when old messages are pruned
         self.summary: str = ""
+        self.metadata: Dict[str, Any] = {}
 
     def add_message(self, role: str, content: str, **kwargs) -> None:
         """Add a message to the session."""
@@ -174,6 +175,7 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "summary": self.summary,
+            "metadata": self.metadata,
             "messages": self.messages,
         }
 
@@ -183,6 +185,7 @@ class Session:
         s.created_at = data.get("created_at", s.created_at)
         s.updated_at = data.get("updated_at", s.updated_at)
         s.summary = data.get("summary", "")
+        s.metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
         s.messages = data.get("messages", [])
         return s
 

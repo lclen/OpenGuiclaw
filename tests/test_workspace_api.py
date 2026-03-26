@@ -297,6 +297,27 @@ class TestUnarchiveSession:
         assert s.archived is False
 
 
+class TestUpdateSession:
+
+    async def test_rename_session(self, client, wm, ws_path):
+        ws = await create_ws(client, ws_path)
+        make_session(wm, ws["id"], "sess_rename", archived=False)
+
+        r = await client.patch(f"/api/workspaces/{ws['id']}/sessions/sess_rename", json={"title": "重命名后的线程"})
+        assert r.status_code == 200
+
+        sessions = wm.list_sessions(ws["id"], include_archived=True)
+        renamed = next(x for x in sessions if x.session_id == "sess_rename")
+        assert renamed.title == "重命名后的线程"
+
+    async def test_rename_session_empty_title_rejected(self, client, wm, ws_path):
+        ws = await create_ws(client, ws_path)
+        make_session(wm, ws["id"], "sess_rename_empty", archived=False)
+
+        r = await client.patch(f"/api/workspaces/{ws['id']}/sessions/sess_rename_empty", json={"title": "   "})
+        assert r.status_code == 422
+
+
 # ── DELETE /api/workspaces/{id}/sessions/{sid} ───────────────────────────────
 
 class TestDeleteSession:

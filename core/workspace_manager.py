@@ -411,6 +411,17 @@ class WorkspaceManager:
             data["pinned"] = bool(pinned)
             self._write_session_json(workspace_id, data)
 
+    def rename_session(self, workspace_id: str, session_id: str, title: str) -> None:
+        """Update a session title."""
+        with self._lock:
+            self._read_workspace_json(workspace_id)
+            next_title = (title or "").strip()
+            if not next_title:
+                raise ValueError("Session title cannot be empty")
+            data = self._read_session_json(workspace_id, session_id)
+            data["title"] = next_title
+            self._write_session_json(workspace_id, data)
+
     def unarchive_session(self, workspace_id: str, session_id: str) -> None:
         """Restore an archived session."""
         with self._lock:

@@ -255,6 +255,20 @@ class TestSessionManagement:
         with pytest.raises(FileNotFoundError):
             wm.delete_session(ws.id, "sess_ghost")
 
+    def test_rename_session_updates_title(self, wm, ws_path):
+        ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
+        self._make_session(wm, ws.id, "sess_rename", archived=False)
+        wm.rename_session(ws.id, "sess_rename", "新的标题")
+        sessions = wm.list_sessions(ws.id, include_archived=True)
+        renamed = next(x for x in sessions if x.session_id == "sess_rename")
+        assert renamed.title == "新的标题"
+
+    def test_rename_session_empty_title_rejected(self, wm, ws_path):
+        ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
+        self._make_session(wm, ws.id, "sess_rename_empty", archived=False)
+        with pytest.raises(ValueError, match="cannot be empty"):
+            wm.rename_session(ws.id, "sess_rename_empty", "   ")
+
     def test_session_title_derived_from_first_user_message(self, wm, ws_path):
         ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
         self._make_session(wm, ws.id, "sess_title")

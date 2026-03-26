@@ -25,6 +25,13 @@ from core.knowledge_graph import KnowledgeGraph
 from core.user_profile import UserProfileManager
 from core.identity_manager import IdentityManager
 from core.daily_consolidator import DailyConsolidator
+from core.state import _APP_BASE
+from core.skill_runtime import (
+    ensure_skills_dir,
+    generate_plugin_migration_manifest,
+    install_skill_from_source,
+    migrate_legacy_skills,
+)
 import time
 import threading
 from datetime import datetime, timezone
@@ -97,6 +104,7 @@ class Agent:
         with open(config_path, "r", encoding="utf-8") as f:
             self.config = json.load(f)
         self.auto_evolve = auto_evolve
+        self._local_skill_state_path = Path(data_dir) / "local_skills_state.json"
 
         # Load main API config from active chat endpoint first
         api_cfg = None
@@ -302,13 +310,25 @@ class Agent:
         
         print(f"  [OK] Agent 已启动 (Memory: {len(self.memory.list_all())}, Session: {self.sessions.current.session_id})")
             
+        self.skills_root = ensure_skills_dir(_APP_BASE)
+        self._skill_migration_report = migrate_legacy_skills(_APP_BASE)
+        self._plugin_migration_report = generate_plugin_migration_manifest(_APP_BASE)
+
         # Scan local skills for Native Skill Cataloging
         self._local_skills_catalog = self._scan_local_skills()
         self._catalog_dirty = False  # ③ cache freshness flag
         
         # Register built-in skills
-        self._register_builtins()
-        self._build_builtin_skills()
+        self.skills.set_registration_context(
+            source_type="builtin_skill",
+            source_path=str(Path(__file__).resolve()),
+            system_locked=True,
+        )
+        try:
+            self._register_builtins()
+            self._build_builtin_skills()
+        finally:
+            self.skills.clear_registration_context()
 
         # Backfill vector embeddings for existing memories (background thread)
         if self._embedding_client and self._vector_store:
@@ -480,7 +500,8 @@ class Agent:
         import yaml
         import re
         catalog = {}
-        search_dirs = [Path("skills"), Path(".agents/skills")]
+        state_map = self._load_local_skill_state()
+        search_dirs = [ensure_skills_dir(_APP_BASE)]
         
         for base_dir in search_dirs:
             if not base_dir.exists():
@@ -511,11 +532,53 @@ class Agent:
                                     "description": desc,
                                     "path": str(skill_md_path),
                                     "scripts": scripts,
+                                    "enabled": state_map.get(name, True),
                                 }
                     except Exception as e:
                         print(f"  [WARN] Failed to parse {skill_md_path}: {e}")
         self._catalog_dirty = False  # ③ mark cache as fresh
         return catalog
+
+    def _load_local_skill_state(self) -> dict:
+        if not self._local_skill_state_path.exists():
+            return {}
+        try:
+            return json.loads(self._local_skill_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save_local_skill_state(self, state: dict) -> None:
+        self._local_skill_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._local_skill_state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def set_local_skill_enabled(self, name: str, enabled: bool) -> int:
+        state = self._load_local_skill_state()
+        state[name] = bool(enabled)
+        self._save_local_skill_state(state)
+        return self.refresh_skill_runtime(reason=f"catalog_toggle:{name}")
+
+    def refresh_skill_runtime(self, reason: str = "manual", *, bump_version: bool = True) -> int:
+        self._local_skills_catalog = self._scan_local_skills()
+        self._catalog_dirty = False
+        if bump_version:
+            return self.skills.bump_version(reason)
+        return self.skills.get_version()
+
+    def ensure_session_skills_current(self, session=None) -> int:
+        if session is None:
+            session = self.sessions.current
+        if self._catalog_dirty:
+            self._local_skills_catalog = self._scan_local_skills()
+        current_version = self.skills.get_version()
+        session_version = None
+        if session is not None and isinstance(getattr(session, "metadata", None), dict):
+            session_version = session.metadata.get("skills_version")
+            if session_version != current_version:
+                session.metadata["skills_version"] = current_version
+        return current_version
 
     def _find_relevant_skills(self, user_query: str) -> list:
         """① Return skill names whose description keywords match the user query."""
@@ -534,6 +597,8 @@ class Agent:
         words = set(w.lower() for w in re.split(r'[\s，。？！、（）]+', user_query) if len(w) > 3)
         hits = []
         for name, info in self._local_skills_catalog.items():
+            if not info.get("enabled", True):
+                continue
             desc_lower = info["description"].lower()
             if any(w in desc_lower for w in words):
                 hits.append(name)
@@ -823,14 +888,14 @@ class Agent:
             category="system"
         )
         def list_skills() -> str:
-            # 每次调用实时刷新以防中途安装了新技能
             self._local_skills_catalog = self._scan_local_skills()
             if not self._local_skills_catalog:
                 return "当前未安装任何本地外挂技能。您可以使用 `install_skill` 从外部拉取。"
             
             lines = ["✅ 当前已安装的本地外挂技能清单："]
             for name, info in self._local_skills_catalog.items():
-                lines.append(f"- **{name}**: {info['description']}")
+                status = "启用" if info.get("enabled", True) else "停用"
+                lines.append(f"- **{name}** [{status}]: {info['description']}")
             lines.append("\n💡 如需了解某个技能的具体用法（例如怎样通过 execute_command 调用它），请调用 `get_skill_info(skill_name=\"[技能名]\")` 获取完整的交互手册。")
             return "\n".join(lines)
             
@@ -849,12 +914,13 @@ class Agent:
             category="system"
         )
         def get_skill_info(skill_name: str) -> str:
-            # 确保最新
             self._local_skills_catalog = self._scan_local_skills()
             if skill_name not in self._local_skills_catalog:
                 return f"❌ 未找到名为 '{skill_name}' 的技能。请先调用 `list_skills` 确认名称。"
                 
             entry = self._local_skills_catalog[skill_name]
+            if not entry.get("enabled", True):
+                return f"⚠️ 技能 '{skill_name}' 当前已停用。请先在技能面板重新启用。"
             path = entry["path"]
             try:
                 content = Path(path).read_text(encoding="utf-8")
@@ -885,8 +951,6 @@ class Agent:
         )
         def install_skill(url: str) -> str:
             result = self._install_remote_skill(url)
-            # ③ Invalidate catalog cache so next prompt reflects the new skill
-            self._catalog_dirty = True
             return result
 
         @self.skills.skill(
@@ -914,137 +978,14 @@ class Agent:
             return "\n".join(lines)
 
     def _install_remote_skill(self, source_url: str) -> str:
-        """从 Git URL 或单独的 SKILL.md 文件中下载、解析并动态注册技能"""
-        import tempfile
-        import shutil
-        import subprocess
-        import re
-        import yaml
-        import requests
-
+        """从远程源安装 SKILL.md 技能到统一 skills/ 目录，并立即生效。"""
         try:
-            if not source_url.startswith("http"):
-                return "❌ 无效的 URL。目前只支持 http/https 链接。"
-                
-            skill_content = ""
-            skill_name = "custom_skill"
-            
-            # 简单启发式: 如果以 .md 结尾或直接给出 raw url，用 requests
-            if source_url.endswith(".md") or "raw.githubusercontent.com" in source_url:
-                resp = requests.get(source_url, timeout=30)
-                resp.raise_for_status()
-                skill_content = resp.text
-            else:
-                # 认为是 Git 仓库，拉取到临时目录
-                temp_dir = tempfile.mkdtemp(prefix="qwen_skill_")
-                try:
-                    res = subprocess.run(["git", "clone", "--depth", "1", source_url, temp_dir], capture_output=True, text=True, timeout=60)
-                    if res.returncode != 0:
-                        return f"❌ Git 克隆失败: {res.stderr}"
-                    
-                    # 查找 SKILL.md
-                    skill_md_path = None
-                    for path in Path(temp_dir).rglob("SKILL.md"):
-                        skill_md_path = path
-                        break
-                    
-                    if not skill_md_path:
-                        # 尝试大写或小写
-                        for path in Path(temp_dir).rglob("*.md"):
-                            if "skill" in path.name.lower():
-                                skill_md_path = path
-                                break
-                                
-                    if not skill_md_path:
-                        return "❌ 仓库中未找到 SKILL.md 文件。"
-                        
-                    skill_content = skill_md_path.read_text(encoding="utf-8")
-                finally:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-            
-            # 解析 SKILL.md 动态挂载 Bash 工具
-            metadata = {}
-            match = re.match(r"^---\s*\n(.*?)\n---", skill_content, re.DOTALL)
-            if match:
-                try:
-                    metadata = yaml.safe_load(match.group(1))
-                except Exception as e:
-                    return f"❌ YAML Metadata 解析失败: {e}"
-            else:
-                return "❌ SKILL.md 未包含有效的头信息 (需要以 --- 开头的 YAML metadata)。"
-                
-            skill_name = metadata.get("name", "remote_skill").replace("-", "_").replace(" ", "_").lower()
-            description = metadata.get("description", "A remote skill parsed from SKILL.md.")
-            allowed_tools = metadata.get("allowed-tools", "")
-            
-            bash_prefixes = []
-            if isinstance(allowed_tools, str) and "Bash" in allowed_tools:
-                for match_tool in re.finditer(r"Bash\(([^)]+)\)", allowed_tools):
-                    tool_pattern = match_tool.group(1)
-                    if tool_pattern.endswith(":*"):
-                        prefix = tool_pattern[:-2].strip()
-                        bash_prefixes.append(prefix)
-            
-            # 动态注册到 self.skills
-            @self.skills.skill(
-                name=f"remote_{skill_name}_cli",
-                description=f"【动态解析技能: {skill_name}】{description}\n这个远程技能映射了一组受限的命令行能力。\n只能执行这几个前缀的命令: {', '.join(bash_prefixes) if bash_prefixes else '未受限的Bash'}",
-                parameters={
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": f"完整命令行。必须以下列前缀之一开始: {', '.join(bash_prefixes)}"
-                        }
-                    },
-                    "required": ["command"]
-                },
-                category="remote_skill"
+            installed = install_skill_from_source(source_url, _APP_BASE)
+            version = self.refresh_skill_runtime(reason=f"install:{installed.name}")
+            return (
+                f"✅ 技能 `{installed.name}` 已安装到统一目录 `{installed.dest_dir}`，"
+                f"并已立即加载。当前 skills_version={version}，本线程后续消息可直接使用。"
             )
-            def remote_cli_runner(command: str) -> str:
-                if bash_prefixes:
-                    valid = False
-                    for prefix in bash_prefixes:
-                        if command.startswith(prefix) or command.startswith(f"npx {prefix}"):
-                            valid = True
-                            break
-                    if not valid:
-                        return f"❌ 拒绝执行: 此动态技能仅允许执行以 {bash_prefixes} 开头的命令。请重新检查。"
-                        
-                import subprocess
-                try:
-                    res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=120)
-                    if res.returncode != 0:
-                        return f"❌ 执行报错 (Code {res.returncode}):\n{res.stderr}\n{res.stdout}"
-                    return res.stdout or "✅ 执行成功 (无输出)"
-                except Exception as e:
-                    return f"❌ CLI 执行异常: {e}"
-            
-            target_plugin_file = Path("plugins") / f"remote_{skill_name}.py"
-            wrapper_code = f'\"\"\"\nAuto-generated skill wrapper from {source_url}\n\"\"\"\n\n'
-            wrapper_code += f'import subprocess\n\n'
-            wrapper_code += f'def register(skills_manager):\n'
-            wrapper_code += f'    @skills_manager.skill(\n'
-            wrapper_code += f'        name="remote_{skill_name}_cli",\n'
-            wrapper_code += f'        description="""【动态解析技能: {skill_name}】{description} 只能执行: {bash_prefixes}""",\n'
-            wrapper_code += f'        parameters={{\n'
-            wrapper_code += f'            "properties": {{"command": {{"type": "string"}}}},\n'
-            wrapper_code += f'            "required": ["command"]\n'
-            wrapper_code += f'        }}\n'
-            wrapper_code += f'    )\n'
-            wrapper_code += f'    def remote_cli_runner(command: str) -> str:\n'
-            wrapper_code += f'        try:\n'
-            wrapper_code += f'            import os\n'
-            wrapper_code += f'            kwargs = {{}}\n'
-            wrapper_code += f'            if os.name == "nt":\n'
-            wrapper_code += f'                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW\n'
-            wrapper_code += f'            res = subprocess.run(command, shell=True, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120, **kwargs)\n'
-            wrapper_code += f'            return res.stdout or f"报错: {{res.stderr}}"\n'
-            wrapper_code += f'        except Exception as e:\n'
-            wrapper_code += f'            return str(e)\n'
-            target_plugin_file.write_text(wrapper_code, encoding="utf-8")
-            
-            return f"✅ 技能热拉取解析成功！已为您挂载新 Tool: `remote_{skill_name}_cli`，并且自动生成了长期存在的本地插件文件 \"{target_plugin_file}\"。"
-            
         except Exception as e:
             import traceback
             return f"❌ SKILL 下载或注册过程中发生致命错误:\n{traceback.format_exc()}"
@@ -1150,6 +1091,8 @@ class Agent:
             catalog_lines = ["# 本地外挂技能目录 (Local Skill Catalog)",
                              "以下是已安装的外挂技能，当用户提到相关工具或任务时，请主动调用 `get_skill_info` 获取完整使用手册再操作："]
             for sname, sinfo in self._local_skills_catalog.items():
+                if not sinfo.get("enabled", True):
+                    continue
                 scripts_note = f" *(含脚本: {', '.join(sinfo.get('scripts', []))})*" if sinfo.get('scripts') else ""
                 catalog_lines.append(f"- **{sname}**: {sinfo['description'][:120]}{scripts_note}")
             parts.append("\n".join(catalog_lines))
@@ -1172,6 +1115,7 @@ class Agent:
         Supports multi-step tool calling.
         """
         session = self.sessions.current
+        self.ensure_session_skills_current(session)
         system_prompt = self._build_system_prompt(
             user_input, 
             system_prompt_override=system_prompt_override,
@@ -1546,6 +1490,7 @@ class Agent:
         import json
         
         session = self.sessions.current
+        self.ensure_session_skills_current(session)
         system_prompt = self._build_system_prompt(
             user_input, 
             system_prompt_override=system_prompt_override,
