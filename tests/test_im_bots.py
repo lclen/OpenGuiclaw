@@ -520,6 +520,19 @@ class _FakeAgent:
         yield json.dumps({"type": "message_chunk", "content": "南京今天晴朗"})
 
 
+class _FakeDeltaAgent:
+    def __init__(self):
+        self.sessions = _FakeSessions()
+
+    async def chat_stream(self, user_input):
+        yield json.dumps({"type": "thinking_start"})
+        yield json.dumps({"type": "thinking_delta", "content": "先分析天气接口"})
+        yield json.dumps({"type": "thinking_end", "duration_ms": 18, "has_thinking": True})
+        yield json.dumps({"type": "text_delta", "content": "南京今天"})
+        yield json.dumps({"type": "text_delta", "content": "晴朗"})
+        yield json.dumps({"type": "done"})
+
+
 @pytest.mark.asyncio
 async def test_gateway_streams_thinking_chain_and_final_text():
     adapter = _FakeAdapter()
@@ -543,4 +556,30 @@ async def test_gateway_streams_thinking_chain_and_final_text():
     assert ("typing", "chat-001") in adapter.events
     assert any(item[0] == "thinking" for item in adapter.events)
     assert any(item[0] == "chain" for item in adapter.events)
+    assert ("finalize", "南京今天晴朗") in adapter.events
+
+
+@pytest.mark.asyncio
+async def test_gateway_accepts_delta_protocol_and_finalizes_stream():
+    adapter = _FakeAdapter()
+    gateway = ChannelGateway(agent=_FakeDeltaAgent())
+    gateway.register_adapter(adapter)
+
+    message = UnifiedMessage.create(
+        channel="dingtalk@@ops-bot",
+        channel_message_id="msg-002",
+        user_id="dd_user_2",
+        channel_user_id="user_2",
+        chat_id="chat-002",
+        content=__import__("core.channels.types", fromlist=["MessageContent"]).MessageContent(text="南京天气怎么样"),
+        chat_type="group",
+        metadata={"chat_name": "研发群", "sender_name": "李四"},
+    )
+
+    await gateway._process_message_task(message)
+
+    assert ("typing", "chat-002") in adapter.events
+    assert any(item[0] == "thinking" for item in adapter.events)
+    assert ("token", "南京今天") in adapter.events
+    assert ("token", "晴朗") in adapter.events
     assert ("finalize", "南京今天晴朗") in adapter.events

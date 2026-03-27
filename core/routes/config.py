@@ -379,6 +379,7 @@ async def get_status():
         "vision_enabled": getattr(ctx, "_enabled", False) if ctx else False,
         "vision_mode": getattr(ctx, "mode", "unknown") if ctx else "unknown",
         "last_context_summary": getattr(ctx, "_last_summary", "") if ctx else "",
+        "last_stream_stats": getattr(agent, "_last_stream_stats", {}) or {},
     }
 
 

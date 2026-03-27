@@ -65,6 +65,28 @@ def _stream_key(workspace_id: str, session_id: str) -> str:
     return f"{workspace_id}:{session_id}"
 
 
+def _get_workspace_context(workspace_id: str) -> dict:
+    from core.workspace_manager import get_workspace_manager, WorkspaceNotFoundError
+
+    wm = get_workspace_manager()
+    try:
+        workspace = wm.get_workspace(workspace_id)
+    except WorkspaceNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Workspace not found: {workspace_id}")
+
+    return {
+        "workspace_id": workspace.id,
+        "workspace_name": workspace.name,
+        "workspace_path": workspace.workspace_path,
+    }
+
+
+def _apply_workspace_metadata(session, workspace_context: dict) -> None:
+    metadata = session.metadata if isinstance(getattr(session, "metadata", None), dict) else {}
+    metadata.update(workspace_context)
+    session.metadata = metadata
+
+
 # ── Chat endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/api/chat/sync")
@@ -414,6 +436,7 @@ async def new_workspace_session(workspace_id: str):
     from core.session import Session
     _ws_sessions_dir(workspace_id)  # validate workspace exists
     session = Session()
+    _apply_workspace_metadata(session, _get_workspace_context(workspace_id))
     _save_ws_session_data(workspace_id, session.to_dict())
     return {"status": "ok", "workspace_id": workspace_id, "session_id": session.session_id}
 
@@ -461,10 +484,12 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
 
     # Load session data from workspace directory (not global sessions)
     session_data = _load_ws_session_data(workspace_id, session_id)
+    workspace_context = _get_workspace_context(workspace_id)
 
     from core.session import Session
     # Each request gets its own Session copy — no shared mutable state
     session = Session.from_dict(session_data)
+    _apply_workspace_metadata(session, workspace_context)
     agent.ensure_session_skills_current(session)
 
     # Per-request model/agent overrides
@@ -500,14 +525,37 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
         source_token = set_automation_source_context(
             source_kind="desktop",
             source_session_id=session_id,
+            workspace_id=workspace_context.get("workspace_id"),
+            workspace_name=workspace_context.get("workspace_name"),
+            workspace_path=workspace_context.get("workspace_path"),
         )
         try:
+            chat_stream_fn = getattr(agent, "chat_stream", None)
+            if callable(chat_stream_fn):
+                try:
+                    async for chunk in chat_stream_fn(
+                        request.message,
+                        system_prompt_override=system_prompt_override,
+                        allowed_skills=allowed_skills,
+                        skills_mode=skills_mode,
+                        session_override=session,
+                        workspace_context=workspace_context,
+                    ):
+                        yield dict(data=chunk)
+                    yield dict(data="[DONE]")
+                    return
+                except TypeError:
+                    logger.debug(
+                        "Workspace stream fallback to legacy path because agent.chat_stream signature is incompatible"
+                    )
+
             # Build system prompt using agent's method (reads persona, memory, etc.)
             system_prompt = agent._build_system_prompt(
                 request.message,
                 system_prompt_override=system_prompt_override,
                 allowed_skills=allowed_skills,
                 skills_mode=skills_mode,
+                workspace_context=workspace_context,
             )
 
             # Persist user message to local session copy

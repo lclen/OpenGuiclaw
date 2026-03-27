@@ -44,7 +44,7 @@
 | scheduler | 定时任务调度器 | stable | 2026-03-13T15:00:52+08:00 | 持续维护 | core/scheduler/ | - |
 | knowledge-graph | 知识图谱 | stable | 2026-03-13T15:00:53+08:00 | 持续维护 | core/knowledge_graph.py | - |
 | bootstrap | 启动引导 | stable | 2026-03-13T15:00:55+08:00 | 持续维护 | core/bootstrap.py, launcher.py | - |
-| self-check | 自检系统 | stable | 2026-03-13T15:00:56+08:00 | 持续维护 | core/self_check.py | - |
+| self-check | 自检系统 | in_progress | 2026-03-27T22:05:00+08:00 | 继续补齐磁盘残留扫描与多级心跳状态机 | core/self_check.py, core/routes/agents.py, frontend/src/components/DiagnosticsPanel.tsx, core/process_runtime.py | docs/modules/self_check.md |
 | codex-style-workspace-ui | Codex 风格 Workspace UI 重构 | done | 2026-03-17T14:53:55+08:00 | 无（本次交付完毕） | tests/test_workspace_manager.py | - |
 | config-panel-display-bug | 设置面板模型端点显示 bug | done | 2026-03-17T19:03:37+08:00 | 持续维护 | templates/panels/panel_config.html | - |
 | react-frontend-migration | React 前端迁移（逐步替换 Alpine） | in_progress | 2026-03-18T08:13:01+08:00 | 阶段6：按evolution plan推进下一个组件 | frontend/src/components/SettingsOverlay.tsx | - |
@@ -77,7 +77,7 @@
 - scheduler: 持续维护
 - knowledge-graph: 持续维护
 - bootstrap: 持续维护
-- self-check: 持续维护
+- self-check: 继续补齐磁盘残留扫描与多级心跳状态机
 - codex-style-workspace-ui: 无（本次交付完毕）
 - config-panel-display-bug: 持续维护
 - react-frontend-migration: 阶段6：按evolution plan推进下一个组件

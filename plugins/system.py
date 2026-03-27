@@ -7,6 +7,7 @@
 
 import subprocess
 import os
+from core.automation_context import get_automation_source_context
 
 def register(skills_manager):
     @skills_manager.skill(
@@ -15,13 +16,14 @@ def register(skills_manager):
         parameters={
             "properties": {
                 "command": {"type": "string", "description": "要执行的完整的 Shell 命令内容，例如 'pip install requests'，'python --version'"},
-                "timeout": {"type": "integer", "description": "超时时间（秒）。默认30，最大不得超过60秒，防止死循环阻塞主线程。", "default": 30}
+                "timeout": {"type": "integer", "description": "超时时间（秒）。默认30，最大不得超过60秒，防止死循环阻塞主线程。", "default": 30},
+                "cwd": {"type": "string", "description": "工作目录；若未提供，则在工作区会话中默认使用当前工作区根目录。"}
             },
             "required": ["command"]
         },
         category="system"
     )
-    def execute_command(command: str, timeout: int = 30) -> str:
+    def execute_command(command: str, timeout: int = 30, cwd: str = ".") -> str:
         # 安全限制：防止过长超时导致整个 AI 休克
         if timeout > 60:
             timeout = 60
@@ -39,6 +41,11 @@ def register(skills_manager):
             kwargs = {}
             if os.name == 'nt':
                 kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
+            source_context = get_automation_source_context()
+            effective_cwd = cwd
+            if (not effective_cwd or effective_cwd == ".") and source_context and source_context.workspace_path:
+                effective_cwd = source_context.workspace_path
                 
             # shell=True 允许使用管道、重定向、内部命令等
             # capture_output 捕获原始字节流，以便我们手动处理乱码
@@ -49,6 +56,7 @@ def register(skills_manager):
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 timeout=timeout,
+                cwd=effective_cwd,
                 **kwargs
             )
             

@@ -6,6 +6,7 @@ Supports OpenAI function-calling (tool use) natively.
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -37,6 +38,9 @@ from core.skill_runtime import (
 import time
 import threading
 from datetime import datetime, timezone
+from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 BUILTIN_SYSTEM_SUFFIX_BASE = """
 ---
@@ -107,6 +111,7 @@ class Agent:
             self.config = json.load(f)
         self.auto_evolve = auto_evolve
         self._local_skill_state_path = Path(data_dir) / "local_skills_state.json"
+        self._last_stream_stats: dict[str, Any] = {}
 
         # Load main API config from active chat endpoint first
         api_cfg = None
@@ -996,7 +1001,14 @@ class Agent:
         """
         module.register(self.skills)
 
-    def _build_system_prompt(self, user_query: str = "", system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive") -> str:
+    def _build_system_prompt(
+        self,
+        user_query: str = "",
+        system_prompt_override: str = None,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        workspace_context: dict | None = None,
+    ) -> str:
         """Build the full system prompt: Persona + User Profile + Dynamic Memory + Skill Summary."""
         import time
         current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1004,6 +1016,33 @@ class Agent:
         time_awareness = f"# 当前系统时间\n现在是 {current_time_str}，星期{weekday_str}。请在理解用户的“今天”、“昨天”等相对时间概念时，以此时间为基准。"
 
         parts = [time_awareness]
+        resolved_workspace_context = workspace_context
+        if resolved_workspace_context is None:
+            current_session = getattr(getattr(self, "sessions", None), "current", None)
+            session_metadata = getattr(current_session, "metadata", None)
+            if isinstance(session_metadata, dict):
+                workspace_id = session_metadata.get("workspace_id")
+                workspace_name = session_metadata.get("workspace_name")
+                workspace_path = session_metadata.get("workspace_path")
+                if workspace_id or workspace_name or workspace_path:
+                    resolved_workspace_context = {
+                        "workspace_id": workspace_id,
+                        "workspace_name": workspace_name,
+                        "workspace_path": workspace_path,
+                    }
+
+        if resolved_workspace_context:
+            workspace_name = resolved_workspace_context.get("workspace_name") or "当前工作区"
+            workspace_path = resolved_workspace_context.get("workspace_path") or "（未知路径）"
+            workspace_id = resolved_workspace_context.get("workspace_id") or "（未知 ID）"
+            parts.append(
+                "# 当前工作区上下文\n"
+                f"- 工作区名称: {workspace_name}\n"
+                f"- 工作区 ID: {workspace_id}\n"
+                f"- 工作区根目录: {workspace_path}\n"
+                "- 当用户提到“当前工作区”、“这个项目”、“这里”、“该目录”时，默认都指向以上工作区根目录。\n"
+                "- 涉及文件浏览、搜索、读写、执行命令时，应优先围绕该工作区展开；若工具支持工作目录参数，优先使用该路径。"
+            )
 
         # Base identity / custom prompt override
         if system_prompt_override:
@@ -1484,7 +1523,235 @@ class Agent:
 
         return final_response
 
-    async def chat_stream(self, user_input: str, system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive"):
+    def _extract_stream_text(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    elif isinstance(item.get("content"), str):
+                        parts.append(str(item.get("content", "")))
+                else:
+                    text = getattr(item, "text", None)
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        text = getattr(content, "text", None)
+        if isinstance(text, str):
+            return text
+        return ""
+
+    def _extract_reasoning_text(self, delta: Any) -> str:
+        if delta is None:
+            return ""
+        for attr in ("reasoning_content", "reasoning", "thinking", "reasoning_text"):
+            value = getattr(delta, attr, None)
+            text = self._extract_stream_text(value)
+            if text:
+                return text
+        return ""
+
+    def _chunk_text_for_streaming(self, text: str, chunk_size: int = 48) -> list[str]:
+        if not text:
+            return []
+        chunks: list[str] = []
+        cursor = 0
+        while cursor < len(text):
+            end = min(len(text), cursor + chunk_size)
+            newline = text.rfind("\n", cursor, end)
+            if newline > cursor:
+                end = newline + 1
+            else:
+                space = text.rfind(" ", cursor, end)
+                if space > cursor + max(8, chunk_size // 3):
+                    end = space + 1
+            chunk = text[cursor:end]
+            if not chunk:
+                end = min(len(text), cursor + chunk_size)
+                chunk = text[cursor:end]
+            chunks.append(chunk)
+            cursor = end
+        return chunks
+
+    async def _iter_provider_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        temperature: float,
+        max_tokens: int,
+        stream_state: dict[str, Any],
+    ):
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        extra_kwargs = {"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}
+
+        def _push(kind: str, payload: Any) -> None:
+            asyncio.run_coroutine_threadsafe(queue.put((kind, payload)), loop)
+
+        def _worker() -> None:
+            stream = None
+            try:
+                stream = self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools if tools else None,
+                    tool_choice="auto" if tools else None,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True,
+                    **extra_kwargs,
+                )
+                for chunk in stream:
+                    _push("chunk", chunk)
+            except Exception as exc:
+                _push("error", exc)
+            finally:
+                with __import__("contextlib").suppress(Exception):
+                    if stream is not None and hasattr(stream, "close"):
+                        stream.close()
+                _push("done", None)
+
+        worker = threading.Thread(
+            target=_worker,
+            name="AgentLLMStream",
+            daemon=True,
+        )
+        worker.start()
+
+        partial_tool_calls: dict[int, dict[str, Any]] = {}
+        reasoning_started = False
+        reasoning_start_at = 0.0
+        last_delta_at = 0.0
+        delta_intervals: list[float] = []
+
+        while True:
+            kind, payload = await queue.get()
+            if kind == "error":
+                raise payload
+            if kind == "done":
+                break
+
+            chunk = payload
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                stream_state["usage"] = usage
+
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+
+            choice = choices[0]
+            delta = getattr(choice, "delta", None) or getattr(choice, "message", None)
+            if delta is None:
+                continue
+
+            now = time.time()
+            if stream_state["first_delta_at"] is None:
+                stream_state["first_delta_at"] = now
+            if last_delta_at:
+                delta_intervals.append(now - last_delta_at)
+            last_delta_at = now
+
+            reasoning_text = self._extract_reasoning_text(delta)
+            if reasoning_text:
+                if not reasoning_started:
+                    reasoning_started = True
+                    reasoning_start_at = now
+                    yield {"type": "thinking_start"}
+                stream_state["thinking"] += reasoning_text
+                stream_state["delta_count"] += 1
+                yield {"type": "thinking_delta", "content": reasoning_text}
+
+            text_delta = self._extract_stream_text(getattr(delta, "content", None))
+            if text_delta:
+                stream_state["content"] += text_delta
+                stream_state["delta_count"] += 1
+                yield {"type": "text_delta", "content": text_delta}
+
+            delta_tool_calls = getattr(delta, "tool_calls", None) or []
+            for tool_call in delta_tool_calls:
+                index = getattr(tool_call, "index", None)
+                if index is None:
+                    index = len(partial_tool_calls)
+                existing = partial_tool_calls.setdefault(
+                    int(index),
+                    {
+                        "id": "",
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    },
+                )
+                tool_id = getattr(tool_call, "id", None)
+                if tool_id:
+                    existing["id"] = tool_id
+                function = getattr(tool_call, "function", None)
+                if function is not None:
+                    fn_name = getattr(function, "name", None)
+                    fn_args = getattr(function, "arguments", None)
+                    if fn_name:
+                        if existing["function"]["name"] and not existing["function"]["name"].endswith(fn_name):
+                            existing["function"]["name"] += fn_name
+                        elif not existing["function"]["name"]:
+                            existing["function"]["name"] = fn_name
+                    if fn_args:
+                        existing["function"]["arguments"] += fn_args
+
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason:
+                stream_state["finish_reason"] = finish_reason
+
+        if reasoning_started:
+            yield {
+                "type": "thinking_end",
+                "duration_ms": int(max(0, (time.time() - reasoning_start_at) * 1000)),
+                "has_thinking": bool(stream_state["thinking"].strip()),
+            }
+
+        avg_delta_ms = int((sum(delta_intervals) / len(delta_intervals)) * 1000) if delta_intervals else 0
+        stream_state["avg_delta_ms"] = avg_delta_ms
+        stream_state["tool_calls"] = [
+            {
+                "id": item["id"] or f"call_stream_{idx}",
+                "type": item.get("type", "function"),
+                "function": {
+                    "name": item["function"]["name"] or "unknown",
+                    "arguments": item["function"]["arguments"] or "{}",
+                },
+            }
+            for idx, item in sorted(partial_tool_calls.items(), key=lambda pair: pair[0])
+        ]
+
+        if stream_state.get("usage") is not None:
+            usage = stream_state["usage"]
+            self._record_usage(usage, model)
+            yield {
+                "type": "usage",
+                "content": {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                    "completion_tokens": getattr(usage, "completion_tokens", 0),
+                    "total_tokens": getattr(usage, "total_tokens", 0),
+                    "max_tokens": self.context_window,
+                },
+            }
+
+    async def chat_stream(
+        self,
+        user_input: str,
+        system_prompt_override: str = None,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        session_override=None,
+        workspace_context: dict[str, Any] | None = None,
+    ):
         """
         Stream a single user turn using an async generator.
         Yields dictionaries suitable for SSE containing state updates and Markdown text.
@@ -1492,13 +1759,15 @@ class Agent:
         import asyncio
         import json
         
-        session = self.sessions.current
+        session = session_override or self.sessions.current
+        persist_session = self.sessions.save if session_override is None else (lambda: None)
         self.ensure_session_skills_current(session)
         system_prompt = self._build_system_prompt(
             user_input, 
             system_prompt_override=system_prompt_override,
             allowed_skills=allowed_skills, 
-            skills_mode=skills_mode
+            skills_mode=skills_mode,
+            workspace_context=workspace_context,
         )
 
         if self.context is not None:
@@ -1554,7 +1823,7 @@ class Agent:
                 }
                 messages.append(tool_msg)
                 session.add_message(**tool_msg)
-            self.sessions.save()
+            persist_session()
         else:
             messages.extend(history)
             messages.append({"role": "user", "content": user_input})
@@ -1586,7 +1855,7 @@ class Agent:
                 session.add_message("user", cleaned or user_input)
             else:
                 session.add_message("user", user_input)
-            self.sessions.save()
+            persist_session()
 
         tools = self.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
         
@@ -1607,9 +1876,18 @@ class Agent:
                 import time
                 event_dict["ts"] = time.strftime("%H:%M:%S")
             # 过滤掉内容很长且不需要长期记录在硬盘上的片段，减轻 session json 负担
-            if event_dict.get("type") not in ("thinking_chunk", "message_chunk", "message"):
+            if event_dict.get("type") not in (
+                "thinking_start",
+                "thinking_delta",
+                "thinking_end",
+                "text_delta",
+                "done",
+                "message",
+                "message_chunk",
+                "thinking_chunk",
+            ):
                 session.add_message("debug_log", json.dumps(event_dict, ensure_ascii=False))
-                self.sessions.save()
+                persist_session()
             return json.dumps(event_dict, ensure_ascii=False)
         
         # --- Isolated Vision Proxy Analysis ---
@@ -1728,86 +2006,158 @@ class Agent:
 
         for round_idx in range(max_tool_rounds):
             yield _yield_event({"type": "status", "content": "思考中..."})
-            
+            round_started_at = time.time()
+            stream_mode = "provider"
+            stream_state = {
+                "content": "",
+                "thinking": "",
+                "tool_calls": [],
+                "usage": None,
+                "finish_reason": None,
+                "first_delta_at": None,
+                "delta_count": 0,
+                "avg_delta_ms": 0,
+            }
+
             loop = asyncio.get_event_loop()
             try:
-                # We use streaming for standard text to provide real-time typing effect to frontend.
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: self.client.chat.completions.create(
-                        model=current_model,
-                        messages=messages,
-                        tools=tools if tools else None,
-                        tool_choice="auto" if tools else None,
-                        max_tokens=self.max_tokens,
-                        temperature=self.temperature,
-                        **({"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}),
-                        stream=False, # Disable streaming
-                    )
-                )
+                async for stream_event in self._iter_provider_stream(
+                    model=current_model,
+                    messages=messages,
+                    tools=tools,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    stream_state=stream_state,
+                ):
+                    yield _yield_event(stream_event)
             except Exception as e:
-                error_msg = f"⚠️ 模型请求异常，重试中... ({type(e).__name__}: {e})"
-                yield _yield_event({"type": "error", "content": error_msg})
-                if consecutive_errors >= 2:
-                    final_response = f"❌ 模型调用持续失败，已中止。错误: {e}"
-                    session.add_message("assistant", final_response)
-                    self.sessions.save()
-                    yield _yield_event({"type": "message", "content": ""})
-                    break
-                consecutive_errors += 1
-                # 附加错误提示到 messages，让模型感知并尝试恢复
-                messages.append({"role": "user", "content": f"[系统] 上次请求失败: {e}，请简化你的输出后重试。"})
-                continue
+                stream_mode = "fallback"
+                logger.warning(
+                    "[Agent.chat_stream] provider streaming unavailable, falling back to chunk replay: model=%s error=%s",
+                    current_model,
+                    e,
+                )
+                try:
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: self.client.chat.completions.create(
+                            model=current_model,
+                            messages=messages,
+                            tools=tools if tools else None,
+                            tool_choice="auto" if tools else None,
+                            max_tokens=self.max_tokens,
+                            temperature=self.temperature,
+                            **({"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}),
+                            stream=False,
+                        )
+                    )
+                except Exception as inner_error:
+                    error_msg = f"⚠️ 模型请求异常，重试中... ({type(inner_error).__name__}: {inner_error})"
+                    yield _yield_event({"type": "error", "content": error_msg})
+                    if consecutive_errors >= 2:
+                        final_response = f"❌ 模型调用持续失败，已中止。错误: {inner_error}"
+                        session.add_message("assistant", final_response)
+                        persist_session()
+                        yield _yield_event({"type": "done"})
+                        break
+                    consecutive_errors += 1
+                    messages.append({"role": "user", "content": f"[系统] 上次请求失败: {inner_error}，请简化你的输出后重试。"})
+                    continue
 
-            self._record_usage(getattr(response, "usage", None), current_model)
-            
-            # Accumulate token usage across all tool rounds for accurate context display.
-            # Each round's prompt_tokens already includes all previous context, so we take
-            # the LATEST prompt_tokens (largest, most accurate) but ADD incremental completion_tokens.
-            if hasattr(response, "usage") and response.usage:
-                _u = response.usage
+                self._record_usage(getattr(response, "usage", None), current_model)
+                stream_state["usage"] = getattr(response, "usage", None)
+
+                msg = response.choices[0].message
+                msg_content = msg.content or ""
+                thinking_content = getattr(msg, "reasoning_content", "") or ""
+                if not thinking_content and "<think>" in msg_content:
+                    import re
+                    think_match = re.search(r"<think>(.*?)</think>", msg_content, re.DOTALL)
+                    if think_match:
+                        thinking_content = think_match.group(1).strip()
+                        msg_content = re.sub(r"<think>.*?</think>", "", msg_content, flags=re.DOTALL).strip()
+
+                stream_state["content"] = msg_content
+                stream_state["thinking"] = thinking_content
+                if thinking_content:
+                    yield _yield_event({"type": "thinking_start"})
+                    for chunk in self._chunk_text_for_streaming(thinking_content, chunk_size=96):
+                        stream_state["delta_count"] += 1
+                        if stream_state["first_delta_at"] is None:
+                            stream_state["first_delta_at"] = time.time()
+                        yield _yield_event({"type": "thinking_delta", "content": chunk})
+                    yield _yield_event({"type": "thinking_end", "duration_ms": 0, "has_thinking": True})
+                if msg_content:
+                    for chunk in self._chunk_text_for_streaming(msg_content):
+                        stream_state["delta_count"] += 1
+                        if stream_state["first_delta_at"] is None:
+                            stream_state["first_delta_at"] = time.time()
+                        yield _yield_event({"type": "text_delta", "content": chunk})
+
+                if hasattr(response, "usage") and response.usage:
+                    _u = response.usage
+                    _cur_prompt = getattr(_u, "prompt_tokens", 0)
+                    _cur_comp = getattr(_u, "completion_tokens", 0)
+                    if _cur_prompt > _accum_prompt_tokens:
+                        _accum_prompt_tokens = _cur_prompt
+                    _accum_completion_tokens += _cur_comp
+                    yield _yield_event({
+                        "type": "usage",
+                        "content": {
+                            "prompt_tokens": _accum_prompt_tokens,
+                            "completion_tokens": _accum_completion_tokens,
+                            "total_tokens": _accum_prompt_tokens + _accum_completion_tokens,
+                            "max_tokens": self.context_window
+                        }
+                    })
+
+                stream_state["tool_calls"] = []
+                if msg.tool_calls:
+                    assistant_dict = msg.model_dump(exclude_unset=True)
+                    stream_state["tool_calls"] = assistant_dict.get("tool_calls") or []
+                else:
+                    assistant_dict = None
+
+            if stream_state.get("usage") is not None and stream_mode == "provider":
+                _u = stream_state["usage"]
                 _cur_prompt = getattr(_u, "prompt_tokens", 0)
-                _cur_comp   = getattr(_u, "completion_tokens", 0)
-                # Always use the largest prompt_tokens (latest round has fullest context)
+                _cur_comp = getattr(_u, "completion_tokens", 0)
                 if _cur_prompt > _accum_prompt_tokens:
                     _accum_prompt_tokens = _cur_prompt
-                # Accumulate completion tokens across all rounds
                 _accum_completion_tokens += _cur_comp
-                # Emit cumulative usage so the frontend always shows the running total
-                yield _yield_event({
-                    "type": "usage",
-                    "content": {
-                        "prompt_tokens": _accum_prompt_tokens,
-                        "completion_tokens": _accum_completion_tokens,
-                        "total_tokens": _accum_prompt_tokens + _accum_completion_tokens,
-                        "max_tokens": self.context_window
-                    }
-                })
 
-            # Process Process Non-Streaming Response
-            msg = response.choices[0].message
-            msg_content = msg.content or ""
-            msg_id = getattr(response, "id", "")
-            
-            # Extract <think> from content if reasoning_content is empty
-            thinking_content = getattr(msg, "reasoning_content", "") or ""
-            if not thinking_content and "<think>" in msg_content:
-                import re
-                think_match = re.search(r"<think>(.*?)</think>", msg_content, re.DOTALL)
-                if think_match:
-                    thinking_content = think_match.group(1).strip()
-                    msg_content = re.sub(r"<think>.*?</think>", "", msg_content, flags=re.DOTALL).strip()
-            
-            if thinking_content:
-                yield _yield_event({"type": "thinking_chunk", "content": thinking_content})
+            msg_content = stream_state["content"] or ""
+            thinking_content = stream_state["thinking"] or ""
 
-            # Text content
+            self._last_stream_stats = {
+                "model": current_model,
+                "stream_mode": stream_mode,
+                "first_token_ms": int(max(0, ((stream_state["first_delta_at"] or time.time()) - round_started_at) * 1000)),
+                "delta_count": int(stream_state.get("delta_count") or 0),
+                "avg_delta_ms": int(stream_state.get("avg_delta_ms") or 0),
+                "final_chars": len(msg_content),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            logger.info(
+                "[Agent.chat_stream] round=%s model=%s stream_mode=%s first_token_ms=%s delta_count=%s avg_delta_ms=%s final_chars=%s",
+                round_idx + 1,
+                current_model,
+                stream_mode,
+                self._last_stream_stats["first_token_ms"],
+                self._last_stream_stats["delta_count"],
+                self._last_stream_stats["avg_delta_ms"],
+                self._last_stream_stats["final_chars"],
+            )
+
             if msg_content:
                 full_assistant_content += msg_content + "\n"
-                yield _yield_event({"type": "message_chunk", "content": msg_content})
 
-            if msg.tool_calls:
-                assistant_dict = msg.model_dump(exclude_unset=True)
+            if stream_state["tool_calls"]:
+                assistant_dict = {
+                    "role": "assistant",
+                    "content": msg_content,
+                    "tool_calls": stream_state["tool_calls"],
+                }
                 for tc_dict in assistant_dict.get("tool_calls") or []:
                     raw_args = tc_dict.get("function", {}).get("arguments", "{}")
                     try:
@@ -1833,10 +2183,12 @@ class Agent:
 
                 round_had_error = False
                 _batch_results: list[bool] = []
-                for tc in msg.tool_calls:
-                    name = tc.function.name
+                for tc_dict in assistant_dict.get("tool_calls") or []:
+                    tc_id = str(tc_dict.get("id") or "")
+                    function_info = tc_dict.get("function") or {}
+                    name = str(function_info.get("name") or "unknown")
                     try:
-                        params = json.loads(tc.function.arguments)
+                        params = json.loads(function_info.get("arguments") or "{}")
                         if not isinstance(params, dict):
                             params = {}
                     except Exception:
@@ -1844,7 +2196,7 @@ class Agent:
 
                     yield _yield_event({
                         "type": "tool_call", 
-                        "id": tc.id,
+                        "id": tc_id,
                         "name": name, 
                         "params": params
                     })
@@ -1885,7 +2237,7 @@ class Agent:
 
                     yield _yield_event({
                         "type": "tool_result",
-                        "id": tc.id,
+                        "id": tc_id,
                         "name": name,
                         "result": result[:500] + "..." if len(result) > 500 else result
                     })
@@ -1902,7 +2254,7 @@ class Agent:
 
                     tool_msg = {
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc_id,
                         "name": name,
                         "content": result,
                     }
@@ -1912,7 +2264,7 @@ class Agent:
                     
                     # Exit stream AFTER appending the tool response
                     if is_ask_user_interrupt:
-                        self.sessions.save()
+                        persist_session()
                         # Update timestamp so idle extraction timer resets correctly
                         self._last_message_time = time.time()
                         return  # Exit stream immediately
@@ -1939,9 +2291,10 @@ class Agent:
                         # 回滚次数耗尽 — 输出错误消息给用户，并终止
                         final_response = f"⚠️ **执行中止**：{rollback_reason}，且已达到最大回滚次数。建议检查工具配置后重试。"
                         session.add_message("assistant", final_response)
-                        self.sessions.save()
-                        yield _yield_event({"type": "message_chunk", "content": final_response})
-                        yield _yield_event({"type": "message", "content": ""})
+                        persist_session()
+                        for chunk in self._chunk_text_for_streaming(final_response):
+                            yield _yield_event({"type": "text_delta", "content": chunk})
+                        yield _yield_event({"type": "done"})
                         return
 
                 if round_had_error:
@@ -1955,21 +2308,20 @@ class Agent:
                 continue
 
             final_response = msg_content.strip()
-            
-            if not msg.tool_calls:
+
+            if not stream_state["tool_calls"]:
                 # This was the final text-only round. Persist it.
                 session.add_message("assistant", msg_content, thinking=thinking_content)
-                
-            # Stop streaming. Text is already yielded via message_chunk.
-            yield _yield_event({"type": "message", "content": ""})
+
+            yield _yield_event({"type": "done"})
             break
 
         if final_response is None:
             final_response = "（已完成工具操作，无额外回复。）"
             # 如果循环结束后没有任何输出，确保前端能收到结束信号
-            yield _yield_event({"type": "message", "content": ""})
+            yield _yield_event({"type": "done"})
 
-        self.sessions.save()
+        persist_session()
 
         # Async memory extraction (non-blocking)
         _user_msg = user_input if isinstance(user_input, str) else str(user_input)

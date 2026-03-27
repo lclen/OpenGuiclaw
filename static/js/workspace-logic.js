@@ -96,13 +96,18 @@
                 }));
             };
             obj.notifyChatStateChanged = function () {
-                window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
-                    detail: {
-                        currentThreadId: this.currentThreadId,
-                        threadLoading: !!this.threadLoading,
-                        messages: this.messages
-                    }
-                }));
+                if (this._chatUpdateFrame) return;
+                var self = this;
+                this._chatUpdateFrame = window.requestAnimationFrame(function () {
+                    self._chatUpdateFrame = null;
+                    window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
+                        detail: {
+                            currentThreadId: self.currentThreadId,
+                            threadLoading: !!self.threadLoading,
+                            messages: self.messages
+                        }
+                    }));
+                });
             };
 
             obj.homeData = null;
@@ -593,6 +598,8 @@
 
             obj.loadThread = async function (wsId, sessionId) {
                 if (!wsId || !sessionId) return;
+                var expectedWorkspaceId = wsId;
+                var expectedSessionId = sessionId;
                 this.threadLoading = true;
                 this.currentThreadId = sessionId;
                 this.currentView = 'chat';
@@ -603,11 +610,17 @@
                     var r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId + '/messages');
                     if (r.ok) {
                         var data = await r.json();
+                        if (this.activeWorkspaceId !== expectedWorkspaceId || this.currentThreadId !== expectedSessionId) {
+                            return;
+                        }
                         this._parseWorkspaceMessages(data);
                     } else {
                         throw new Error('加载线程失败');
                     }
                 } catch (e) {
+                    if (this.activeWorkspaceId !== expectedWorkspaceId || this.currentThreadId !== expectedSessionId) {
+                        return;
+                    }
                     console.warn('[Shell] loadThread:', e);
                     this.messages = [{
                         id: 'ws-load-error-' + Date.now(),
@@ -616,6 +629,9 @@
                     }];
                     this.pushLog('error', '加载工作区对话失败');
                 } finally {
+                    if (this.activeWorkspaceId !== expectedWorkspaceId || this.currentThreadId !== expectedSessionId) {
+                        return;
+                    }
                     this.threadLoading = false;
                     this.notifyChatStateChanged();
                     this.$nextTick(function () { this.scrollToBottom(); }.bind(this));
@@ -838,7 +854,17 @@
                         });
                         this.scrollToBottom();
                     }
-                } else if (ev.type === 'thinking_chunk') {
+                } else if (ev.type === 'thinking_start') {
+                    if (idx !== -1) {
+                        var thinkingStartMessage = this.messages[idx];
+                        this.messages[idx] = Object.assign({}, thinkingStartMessage, {
+                            _streaming: true,
+                            _isThinking: true,
+                            content: '',
+                            _rawContent: thinkingStartMessage._rawContent || ''
+                        });
+                    }
+                } else if (ev.type === 'thinking_delta' || ev.type === 'thinking_chunk') {
                     if (idx !== -1) {
                         var thinkingMessage = this.messages[idx];
                         var newThinkRaw = (thinkingMessage._thinkingRaw || '') + (ev.content || '');
@@ -852,7 +878,16 @@
                         });
                         this.scrollToBottom();
                     }
-                } else if (ev.type === 'message_chunk') {
+                } else if (ev.type === 'thinking_end') {
+                    if (idx !== -1) {
+                        var thinkingDoneMessage = this.messages[idx];
+                        this.messages[idx] = Object.assign({}, thinkingDoneMessage, {
+                            _isThinking: (thinkingDoneMessage.blocks || []).some(function (b) {
+                                return b.type === 'tool' && b.status === 'running';
+                            })
+                        });
+                    }
+                } else if (ev.type === 'text_delta' || ev.type === 'message_chunk') {
                     if (idx !== -1) {
                         var chunkMessage = this.messages[idx];
                         var chunkBlocks = (chunkMessage.blocks || []).slice();
@@ -876,7 +911,10 @@
                         var chunkUpdated = Object.assign({}, chunkMessage, {
                             _streaming: true,
                             _rawContent: chunkMessage._rawContent || '',
-                            content: chunkMessage._streaming ? chunkMessage.content : '',
+                            content: '',
+                            _isThinking: (chunkMessage.blocks || []).some(function (b) {
+                                return b.type === 'tool' && b.status === 'running';
+                            }),
                             blocks: chunkBlocks
                         });
                         if (needCollapseThink) {
@@ -896,7 +934,7 @@
                         this.messages[idx] = chunkUpdated;
                         this.scrollToBottom();
                     }
-                } else if (ev.type === 'message') {
+                } else if (ev.type === 'done' || ev.type === 'message') {
                     var logContent = (ev.content || '').trim();
                     if (!logContent && idx !== -1) {
                         var finalMessage = this.messages[idx];
@@ -930,6 +968,18 @@
                             blocks: doneBlocks
                         });
                         this.scrollToBottom();
+                    }
+                    if (idx !== -1) {
+                        var finalBlocks = this.messages[idx].blocks || [];
+                        var finalText = finalBlocks
+                            .filter(function (block) { return block.type === 'text'; })
+                            .map(function (block) { return block.content || ''; })
+                            .join('');
+                        console.debug('[workspace-stream]', {
+                            thread: this.currentThreadId,
+                            finalChars: finalText.length,
+                            messageId: aiId
+                        });
                     }
                 } else if (ev.type === 'usage') {
                     if (ev.content && typeof ev.content === 'object') {
@@ -978,6 +1028,8 @@
                     this.pushLog('error', '无法创建新对话');
                     return;
                 }
+                var requestWorkspaceId = this.activeWorkspaceId;
+                var requestSessionId = this.currentThreadId;
 
                 if (!isProactive) {
                     this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: text });
@@ -995,20 +1047,21 @@
                 this.isReceiving = true;
 
                 try {
-                    this.currentController = new AbortController();
+                    var streamController = new AbortController();
+                    this.currentController = streamController;
                     var response = await fetch(
-                        '/api/workspaces/' + this.activeWorkspaceId + '/sessions/' + this.currentThreadId + '/stream',
+                        '/api/workspaces/' + requestWorkspaceId + '/sessions/' + requestSessionId + '/stream',
                         {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                workspace_id: this.activeWorkspaceId,
-                                session_id: this.currentThreadId,
+                                workspace_id: requestWorkspaceId,
+                                session_id: requestSessionId,
                                 message: text,
                                 ...(this.chatModel ? { model: this.chatModel } : {}),
                                 ...(this.chatAgent ? { agent_id: this.chatAgent.id } : {})
                             }),
-                            signal: this.currentController.signal
+                            signal: streamController.signal
                         }
                     );
                     if (!response.ok || !response.body) {
@@ -1019,6 +1072,11 @@
                     var decoder = new TextDecoder('utf-8');
                     var buffer = '';
                     var self = this;
+                    var streamDebug = {
+                        startedAt: performance.now(),
+                        firstTextAt: null,
+                        deltaCount: 0
+                    };
                     while (true) {
                         var readResult = await reader.read();
                         if (readResult.done) break;
@@ -1031,12 +1089,23 @@
                             var dataStr = line.slice(6).trim();
                             if (dataStr === '[DONE]') continue;
                             try {
-                                self._handleWorkspaceStreamEvent(aiId, JSON.parse(dataStr));
+                                var ev = JSON.parse(dataStr);
+                                if ((ev.type === 'text_delta' || ev.type === 'message_chunk') && ev.content) {
+                                    streamDebug.deltaCount += 1;
+                                    if (streamDebug.firstTextAt === null) {
+                                        streamDebug.firstTextAt = performance.now();
+                                    }
+                                }
+                                self._handleWorkspaceStreamEvent(aiId, ev);
                             } catch (_) {}
                         }
-                        // 每个网络 chunk 处理完后让出控制权，让 Alpine 刷新 DOM
-                        await new Promise(function (resolve) { setTimeout(resolve, 0); });
+                        await new Promise(function (resolve) { window.requestAnimationFrame(resolve); });
                     }
+                    console.debug('[workspace-stream-summary]', {
+                        thread: requestSessionId,
+                        deltaCount: streamDebug.deltaCount,
+                        firstTextMs: streamDebug.firstTextAt === null ? null : Math.round(streamDebug.firstTextAt - streamDebug.startedAt)
+                    });
                 } catch (err) {
                     if (err.name !== 'AbortError') {
                         var idx = this.messages.findIndex(function (m) { return m.id === aiId; });
@@ -1046,11 +1115,13 @@
                     }
                 } finally {
                     this.isReceiving = false;
-                    this.currentController = null;
+                    if (this.currentController === streamController) {
+                        this.currentController = null;
+                    }
                     this.notifyChatStateChanged();
                     this.scrollToBottom();
                     this.loadTokenStats(this.tokenPeriod);
-                    await this.loadWorkspaceThreads(this.activeWorkspaceId, true);
+                    await this.loadWorkspaceThreads(requestWorkspaceId, true);
                     await this.loadHome();
                 }
             };

@@ -1,17 +1,21 @@
 import json
 import pytest
 import httpx
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI
 
+from core.automation_context import reset_automation_source_context, set_automation_source_context
 from core.routes import skills as skills_router
 from core.routes import chat as chat_router
 from core.session import Session
 from core.skill_runtime import InstalledSkill
 from core.skills import SkillManager
 from core.state import _ctx_event_queue, app_state
+from plugins import file_manager, filesystem
+from plugins import system_tools
 
 
 class DummyAgent:
@@ -312,6 +316,15 @@ async def test_workspace_stream_persists_session_skills_version(monkeypatch, tmp
 
     monkeypatch.setattr(chat_router, "_load_ws_session_data", lambda workspace_id, session_id: dict(session_data))
     monkeypatch.setattr(chat_router, "_save_ws_session_data", lambda workspace_id, data: saved.update(data))
+    monkeypatch.setattr(
+        chat_router,
+        "_get_workspace_context",
+        lambda workspace_id: {
+            "workspace_id": workspace_id,
+            "workspace_name": "Test Workspace",
+            "workspace_path": str(tmp_path.resolve()),
+        },
+    )
     monkeypatch.setattr(chat_router, "get_profile_store", lambda: SimpleNamespace(get=lambda _: None))
 
     transport = httpx.ASGITransport(app=app)
@@ -329,3 +342,108 @@ async def test_workspace_stream_persists_session_skills_version(monkeypatch, tmp
 
     assert response.status_code == 200
     assert saved["metadata"]["skills_version"] == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_command_uses_workspace_request_scope_cwd(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    system_tools.register(manager)
+
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    command = f'"{sys.executable}" -c "import os; print(os.getcwd())"'
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="Test Workspace",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        result = await manager.execute("execute_command", {"command": command})
+    finally:
+        reset_automation_source_context(token)
+
+    assert str(workspace_dir.resolve()) in result
+
+
+@pytest.mark.asyncio
+async def test_execute_command_explicit_cwd_overrides_workspace_scope(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    system_tools.register(manager)
+
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    override_dir = tmp_path / "override"
+    override_dir.mkdir()
+    command = f'"{sys.executable}" -c "import os; print(os.getcwd())"'
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="Test Workspace",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        result = await manager.execute(
+            "execute_command",
+            {"command": command, "cwd": str(override_dir.resolve())},
+        )
+    finally:
+        reset_automation_source_context(token)
+
+    assert str(override_dir.resolve()) in result
+
+
+@pytest.mark.asyncio
+async def test_filesystem_plugin_uses_workspace_default_path(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    filesystem.register(manager)
+
+    workspace_dir = tmp_path / "workspace_async"
+    workspace_dir.mkdir()
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="Test Workspace",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        write_result = await manager.execute("write_file", {"path": "notes.txt", "content": "hello workspace"})
+        read_result = await manager.execute("read_file", {"path": "notes.txt"})
+        list_result = await manager.execute("list_directory", {})
+    finally:
+        reset_automation_source_context(token)
+
+    assert "成功写入文件" in write_result
+    assert (workspace_dir / "notes.txt").read_text(encoding="utf-8") == "hello workspace"
+    assert "hello workspace" in read_result
+    assert "notes.txt" in list_result
+
+
+@pytest.mark.asyncio
+async def test_file_manager_plugin_uses_workspace_default_path(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    file_manager.register(manager)
+
+    workspace_dir = tmp_path / "workspace_sync"
+    workspace_dir.mkdir()
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="Test Workspace",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        write_result = await manager.execute("write_file", {"path": "summary.txt", "content": "workspace scoped"})
+        read_result = await manager.execute("read_file", {"path": "summary.txt"})
+        list_result = await manager.execute("list_dir", {})
+    finally:
+        reset_automation_source_context(token)
+
+    assert "成功写入" in write_result
+    assert (workspace_dir / "summary.txt").read_text(encoding="utf-8") == "workspace scoped"
+    assert "workspace scoped" in read_result
+    assert "summary.txt" in list_result

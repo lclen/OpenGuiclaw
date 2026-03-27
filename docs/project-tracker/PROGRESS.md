@@ -198,3 +198,21 @@
 - next_step: 阶段7：settings主体分块React化（models/integrations/diagnostics优先）或shell.css settings样式拆分
 - blockers: 无
 - confidence: high
+
+## 2026-03-27T21:42:00+08:00
+- change_type: feature
+- feature_id: self-check
+- summary: 参考 OpenAkita 补强运行时自检：`/api/health/check` 增加结构化状态、错误类别与修复提示，`/api/health` 返回 PID/版本/运行时长/重启模式；DiagnosticsPanel 展示端点与 IM 摘要统计、可操作 hint，并新增后端 pytest 与前端 vitest 覆盖
+- files: core/routes/agents.py, core/server.py, frontend/src/components/DiagnosticsPanel.tsx, frontend/src/components/DiagnosticsPanel.test.tsx, tests/test_diagnostics_api.py, tests/test_health_api.py, docs/openakita_runtime_self_check_followup_20260327.md
+- next_step: 对齐更深层的 OpenAkita 差距，例如 PID 冲突检查、自动化自检与报告链路
+- blockers: 无
+- confidence: high
+
+## 2026-03-27T22:05:00+08:00
+- change_type: feature
+- feature_id: self-check
+- summary: 补齐 OpenAkita 风格进程残留自检：新增 `core/process_runtime.py` 维护 `data/run/` 运行记录，`/api/diagnostics` 暴露 `process_runtime`，新增 `/api/diagnostics/process/cleanup` 安全清理接口；DiagnosticsPanel 增加进程残留/冲突区块与 Cleanup 操作，并补齐 pytest/vitest 回归
+- files: core/process_runtime.py, core/routes/agents.py, core/server.py, frontend/src/components/DiagnosticsPanel.tsx, frontend/src/components/DiagnosticsPanel.test.tsx, tests/test_process_runtime.py, tests/test_diagnostics_api.py, docs/openakita_runtime_self_check_followup_20260327.md
+- next_step: 继续对齐磁盘残留扫描与前端多级心跳状态机
+- blockers: 无
+- confidence: high

@@ -2021,6 +2021,147 @@
             this.handleFileSelect(e);
         },
 
+        _handleDesktopStreamEvent(aiId, ev) {
+            const idx = this.messages.findIndex(m => m.id === aiId);
+            if (ev.type === 'status') {
+                this.pushLog('status', ev.content || '');
+                if (idx !== -1) {
+                    const cur = this.messages[idx].content || '';
+                    if (cur.includes('animate-pulse') || cur.includes('thinking')) {
+                        this.messages[idx].content = `<span class="text-gray-500 text-xs italic">${ev.content || ''}</span>`;
+                    }
+                }
+            } else if (ev.type === 'tool_call') {
+                const paramStr = ev.params ? JSON.stringify(ev.params, null, 2) : '';
+                this.pushLog('tool_call', `${ev.name}(${paramStr})`);
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
+                    if (!m.blocks) m.blocks = [];
+                    m._isThinking = true;
+                    m.blocks.push({ type: 'tool', id: ev.id, name: ev.name, paramsStr, status: 'running', _collapsed: false });
+                    this.scrollToBottom();
+                }
+            } else if (ev.type === 'ask_user_interrupt') {
+                this.pushLog('tool_call', `ask_user: ${ev.question}`);
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
+                    if (!m.blocks) m.blocks = [];
+                    m._isThinking = false;
+                    const options = (ev.options || []).map((opt, i) => ({
+                        id: typeof opt === 'object' ? (opt.id || String(i)) : String(i),
+                        label: typeof opt === 'object' ? (opt.label || opt.text || String(opt)) : String(opt)
+                    }));
+                    m.blocks.push({ type: 'ask_user', question: ev.question || '请选择：', options, answered: false });
+                    this.scrollToBottom();
+                }
+            } else if (ev.type === 'tool_result') {
+                this.pushLog('tool_result', `${ev.name} → ${ev.result || ''}`);
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (m.blocks) {
+                        const tc = m.blocks.find(t => t.type === 'tool' && t.id === ev.id);
+                        if (tc) { tc.status = 'done'; tc.resultStr = ev.result || ''; tc._collapsed = true; }
+                        m._isThinking = m.blocks.some(b => b.type === 'tool' && b.status === 'running');
+                    }
+                    this.scrollToBottom();
+                }
+            } else if (ev.type === 'thinking_start') {
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; }
+                    m._isThinking = true;
+                    m.content = '';
+                }
+            } else if (ev.type === 'thinking_delta' || ev.type === 'thinking_chunk') {
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
+                    m._thinkingRaw = (m._thinkingRaw || '') + (ev.content || '');
+                    m.thinkingHtml = this.mdRender(m._thinkingRaw);
+                    m._thinkCollapsed = false;
+                    this.scrollToBottom();
+                }
+            } else if (ev.type === 'thinking_end') {
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    m._isThinking = (m.blocks || []).some(b => b.type === 'tool' && b.status === 'running');
+                }
+            } else if (ev.type === 'text_delta' || ev.type === 'message_chunk') {
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
+                    if (m._thinkCollapsed === false && !m._thinkCollapseScheduled) {
+                        m._thinkCollapseScheduled = true;
+                        setTimeout(() => {
+                            m._thinkCollapsed = true;
+                            m._thinkCollapseScheduled = false;
+                            this.emitChatStateChanged();
+                        }, 1200);
+                    }
+                    if (ev.content) {
+                        if (!m.blocks) m.blocks = [];
+                        const lastBlock = m.blocks[m.blocks.length - 1];
+                        if (lastBlock && lastBlock.type === 'text') {
+                            lastBlock.content += ev.content;
+                            lastBlock.html = this.mdRender(lastBlock.content);
+                        } else {
+                            m.blocks.push({ type: 'text', content: ev.content, html: this.mdRender(ev.content) });
+                        }
+                    }
+                    m._isThinking = (m.blocks || []).some(b => b.type === 'tool' && b.status === 'running');
+                    this.scrollToBottom();
+                }
+            } else if (ev.type === 'done' || ev.type === 'message') {
+                let logContent = (ev.content || '').trim();
+                if (!logContent && idx !== -1) {
+                    const m = this.messages[idx];
+                    if (m.blocks) {
+                        logContent = m.blocks.filter(b => b.type === 'text').map(b => b.content).join('').trim();
+                    }
+                }
+                if (!logContent) logContent = '响应已完成';
+                this.pushLog('message', logContent.replace(/\s+/g, ' ').slice(0, 80) + (logContent.length > 80 ? '...' : ''));
+
+                if (idx !== -1) {
+                    const m = this.messages[idx];
+                    m._isThinking = false;
+                    delete m._streaming;
+                    delete m._rawContent;
+                    if (!m.blocks) m.blocks = [];
+                    const hasText = m.blocks.some(b => b.type === 'text' && b.content?.trim());
+                    const hasTool = m.blocks.some(b => b.type === 'tool');
+                    if (!hasText && (hasTool || !hasTool)) m.blocks.push({ type: 'status_done' });
+                    this.scrollToBottom();
+                    const finalText = (m.blocks || [])
+                        .filter(b => b.type === 'text')
+                        .map(b => b.content || '')
+                        .join('');
+                    console.debug('[desktop-stream]', {
+                        thread: this.currentThreadId || null,
+                        messageId: aiId,
+                        finalChars: finalText.length
+                    });
+                }
+            } else if (ev.type === 'system') {
+                this.pushLog('system', ev.text || '');
+            } else if (ev.type === 'usage') {
+                if (ev.content && typeof ev.content === 'object') {
+                    this.lastBackendTokens = ev.content.total_tokens || this.lastBackendTokens;
+                    this.lastMaxTokens = ev.content.max_tokens || this.lastMaxTokens;
+                }
+            } else if (ev.type === 'aborted') {
+                this.pushLog('status', '已请求停止当前对话');
+            } else if (ev.type === 'error') {
+                this.pushLog('error', ev.content || '');
+                if (idx !== -1) {
+                    this.messages[idx].content = `<span class="text-red-400 text-xs">❌ ${ev.content}</span>`;
+                }
+            }
+            this.emitChatStateChanged();
+        },
+
         async sendFiles(files, prompt = '') {
             if (this.isReceiving) return;
             if (!files || files.length === 0) return;
@@ -2056,6 +2197,11 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
                 let buffer = '';
+                const streamDebug = {
+                    startedAt: performance.now(),
+                    deltaCount: 0,
+                    firstTextAt: null,
+                };
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
@@ -2068,83 +2214,21 @@
                         if (dataStr === '[DONE]') continue;
                         try {
                             const ev = JSON.parse(dataStr);
-                            const idx = this.messages.findIndex(m => m.id === aiId);
-                            if (ev.type === 'status') {
-                                this.pushLog('status', ev.content || '');
-                            } else if (ev.type === 'tool_call') {
-                                const paramStr = ev.params ? JSON.stringify(ev.params, null, 2) : '';
-                                this.pushLog('tool_call', `${ev.name}(${paramStr})`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m.content = ''; m.blocks = []; }
-                                    if (!m.blocks) m.blocks = [];
-                                    m._isThinking = true;
-                                    m.blocks.push({ type: 'tool', id: ev.id, name: ev.name, paramsStr: paramStr, status: 'running', _collapsed: false });
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'ask_user_interrupt') {
-                                this.pushLog('tool_call', `ask_user: ${ev.question}`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m.content = ''; m.blocks = []; }
-                                    if (!m.blocks) m.blocks = [];
-                                    m._isThinking = false;
-                                    const options = (ev.options || []).map((opt, i) => ({
-                                        id: typeof opt === 'object' ? (opt.id || String(i)) : String(i),
-                                        label: typeof opt === 'object' ? (opt.label || opt.text || String(opt)) : String(opt)
-                                    }));
-                                    m.blocks.push({ type: 'ask_user', question: ev.question || '请选择：', options, answered: false });
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'tool_result') {
-                                this.pushLog('tool_result', `${ev.name} → ${ev.result || ''}`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (m.blocks) {
-                                        const tc = m.blocks.find(t => t.type === 'tool' && t.id === ev.id);
-                                        if (tc) { tc.status = 'done'; tc.resultStr = ev.result || ''; tc._collapsed = true; }
-                                        m._isThinking = m.blocks.some(b => b.type === 'tool' && b.status === 'running');
-                                    }
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'message_chunk') {
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m.content = ''; m.blocks = []; }
-                                    const lastBlock = m.blocks && m.blocks[m.blocks.length - 1];
-                                    if (lastBlock && lastBlock.type === 'text') {
-                                        lastBlock.content += ev.content;
-                                        lastBlock.html = this.mdRender(lastBlock.content);
-                                    } else {
-                                        if (!m.blocks) m.blocks = [];
-                                        m.blocks.push({ type: 'text', content: ev.content, html: this.mdRender(ev.content) });
-                                    }
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'message') {
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    m._isThinking = false;
-                                    delete m._streaming;
-                                    if (!m.blocks) m.blocks = [];
-                                    const hasText = m.blocks.some(b => b.type === 'text' && b.content?.trim());
-                                    const hasTool = m.blocks.some(b => b.type === 'tool');
-                                    if (!hasText && hasTool) m.blocks.push({ type: 'status_done' });
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'usage') {
-                                if (ev.content && typeof ev.content === 'object') {
-                                    this.lastBackendTokens = ev.content.total_tokens || this.lastBackendTokens;
-                                    this.lastMaxTokens = ev.content.max_tokens || this.lastMaxTokens;
-                                }
-                            } else if (ev.type === 'error') {
-                                this.pushLog('error', ev.content || '');
-                                if (idx !== -1) this.messages[idx].content = `<span class="text-red-400 text-xs">⚠ ${ev.content}</span>`;
+                            console.debug('[desktop-stream-event]', ev.type);
+                            if ((ev.type === 'text_delta' || ev.type === 'message_chunk') && ev.content) {
+                                streamDebug.deltaCount += 1;
+                                if (streamDebug.firstTextAt === null) streamDebug.firstTextAt = performance.now();
                             }
-                            this.emitChatStateChanged();
+                            this._handleDesktopStreamEvent(aiId, ev);
                         } catch { /* ignore parse errors */ }
                     }
+                    await new Promise(resolve => window.requestAnimationFrame(resolve));
                 }
+                console.debug('[desktop-stream-summary]', {
+                    mode: 'upload',
+                    deltaCount: streamDebug.deltaCount,
+                    firstTextMs: streamDebug.firstTextAt === null ? null : Math.round(streamDebug.firstTextAt - streamDebug.startedAt)
+                });
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     const idx = this.messages.findIndex(m => m.id === aiId);
@@ -2204,6 +2288,11 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
                 let buffer = '';
+                const streamDebug = {
+                    startedAt: performance.now(),
+                    deltaCount: 0,
+                    firstTextAt: null,
+                };
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
@@ -2216,132 +2305,21 @@
                         if (dataStr === '[DONE]') continue;
                         try {
                             const ev = JSON.parse(dataStr);
-                            const idx = this.messages.findIndex(m => m.id === aiId);
-                            if (ev.type === 'status') {
-                                this.pushLog('status', ev.content || '');
-                                if (idx !== -1) {
-                                    const cur = this.messages[idx].content;
-                                    if (cur.includes('animate-pulse') || cur.includes('thinking')) {
-                                        this.messages[idx].content = `<span class="text-gray-500 text-xs italic">${ev.content}</span>`;
-                                    }
-                                }
-                            } else if (ev.type === 'tool_call') {
-                                const paramStr = ev.params ? JSON.stringify(ev.params, null, 2) : '';
-                                this.pushLog('tool_call', `${ev.name}(${paramStr})`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
-                                    if (!m.blocks) m.blocks = [];
-                                    m._isThinking = true;
-                                    m.blocks.push({ type: 'tool', id: ev.id, name: ev.name, paramsStr: paramStr, status: 'running', _collapsed: false });
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'ask_user_interrupt') {
-                                // 后端专用事件：ask_user 工具触发，渲染交互式选项块
-                                this.pushLog('tool_call', `ask_user: ${ev.question}`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
-                                    if (!m.blocks) m.blocks = [];
-                                    m._isThinking = false;
-                                    const options = (ev.options || []).map((opt, i) => ({
-                                        id: typeof opt === 'object' ? (opt.id || String(i)) : String(i),
-                                        label: typeof opt === 'object' ? (opt.label || opt.text || String(opt)) : String(opt)
-                                    }));
-                                    m.blocks.push({ type: 'ask_user', question: ev.question || '请选择：', options, answered: false });
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'tool_result') {
-                                this.pushLog('tool_result', `${ev.name} → ${ev.result || ''}`);
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (m.blocks) {
-                                        const tc = m.blocks.find(t => t.type === 'tool' && t.id === ev.id);
-                                        if (tc) { tc.status = 'done'; tc.resultStr = ev.result || ''; tc._collapsed = true; }
-                                        // Still thinking if any tool is still running
-                                        m._isThinking = m.blocks.some(b => b.type === 'tool' && b.status === 'running');
-                                    }
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'thinking_chunk') {
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
-                                    m._thinkingRaw = (m._thinkingRaw || '') + (ev.content || '');
-                                    m.thinkingHtml = this.mdRender(m._thinkingRaw);
-                                    m._thinkCollapsed = false;
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'message_chunk') {
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (!m._streaming) { m._streaming = true; m._rawContent = ''; m.content = ''; }
-                                    // Collapse thinking block only after a short delay so users can see it
-                                    if (m._thinkCollapsed === false && !m._thinkCollapseScheduled) {
-                                        m._thinkCollapseScheduled = true;
-                                        setTimeout(() => {
-                                            m._thinkCollapsed = true;
-                                            m._thinkCollapseScheduled = false;
-                                            this.emitChatStateChanged();
-                                        }, 1200);
-                                    }
-                                    if (ev.content) {
-                                        if (!m.blocks) m.blocks = [];
-                                        const lastBlock = m.blocks[m.blocks.length - 1];
-                                        if (lastBlock && lastBlock.type === 'text') {
-                                            lastBlock.content += ev.content;
-                                            lastBlock.html = this.mdRender(lastBlock.content);
-                                        } else {
-                                            m.blocks.push({ type: 'text', content: ev.content, html: this.mdRender(ev.content) });
-                                        }
-                                    }
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'message') {
-                                let logContent = (ev.content || '').trim();
-                                if (!logContent && idx !== -1) {
-                                    const m = this.messages[idx];
-                                    if (m.blocks) {
-                                        logContent = m.blocks.filter(b => b.type === 'text').map(b => b.content).join('').trim();
-                                    }
-                                }
-                                if (!logContent) logContent = '响应已完成';
-                                this.pushLog('message', logContent.replace(/\s+/g, ' ').slice(0, 80) + (logContent.length > 80 ? '...' : ''));
-
-                                if (idx !== -1) {
-                                    const m = this.messages[idx];
-                                    m._isThinking = false;
-                                    delete m._streaming;
-                                    delete m._rawContent;
-                                    // If agent only called tools without any text output, show a done status block
-                                    if (!m.blocks) m.blocks = [];
-                                    const hasText = m.blocks.some(b => b.type === 'text' && b.content && b.content.trim());
-                                    const hasTool = m.blocks.some(b => b.type === 'tool');
-                                    if (!hasText && hasTool) {
-                                        m.blocks.push({ type: 'status_done' });
-                                    } else if (!hasText && !hasTool) {
-                                        // pure empty response fallback
-                                        m.blocks.push({ type: 'status_done' });
-                                    }
-                                    this.scrollToBottom();
-                                }
-                            } else if (ev.type === 'system') {
-                                this.pushLog('system', ev.text || '');
-                            } else if (ev.type === 'usage') {
-                                if (ev.content && typeof ev.content === 'object') {
-                                    this.lastBackendTokens = ev.content.total_tokens || this.lastBackendTokens;
-                                    this.lastMaxTokens = ev.content.max_tokens || this.lastMaxTokens;
-                                }
-                            } else if (ev.type === 'error') {
-                                this.pushLog('error', ev.content || '');
-                                if (idx !== -1) {
-                                    this.messages[idx].content = `<span class="text-red-400 text-xs">❌ ${ev.content}</span>`;
-                                }
+                            console.debug('[desktop-stream-event]', ev.type);
+                            if ((ev.type === 'text_delta' || ev.type === 'message_chunk') && ev.content) {
+                                streamDebug.deltaCount += 1;
+                                if (streamDebug.firstTextAt === null) streamDebug.firstTextAt = performance.now();
                             }
-                            this.emitChatStateChanged();
+                            this._handleDesktopStreamEvent(aiId, ev);
                         } catch { /* ignore parse errors */ }
                     }
+                    await new Promise(resolve => window.requestAnimationFrame(resolve));
                 }
+                console.debug('[desktop-stream-summary]', {
+                    mode: 'chat',
+                    deltaCount: streamDebug.deltaCount,
+                    firstTextMs: streamDebug.firstTextAt === null ? null : Math.round(streamDebug.firstTextAt - streamDebug.startedAt)
+                });
             } catch (err) {
                 if (err.name !== 'AbortError') {
                     const idx = this.messages.findIndex(m => m.id === aiId);
@@ -2409,13 +2387,18 @@
                 this.notifyChatStateChanged();
                 return;
             }
-            window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
-                detail: {
-                    currentThreadId: this.currentThreadId ?? null,
-                    threadLoading: !!this.threadLoading,
-                    messages: this.messages
-                }
-            }));
+            if (this._chatUpdateFrame) return;
+            const self = this;
+            this._chatUpdateFrame = window.requestAnimationFrame(() => {
+                self._chatUpdateFrame = null;
+                window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
+                    detail: {
+                        currentThreadId: self.currentThreadId ?? null,
+                        threadLoading: !!self.threadLoading,
+                        messages: self.messages
+                    }
+                }));
+            });
         },
 
         // 处理 ask_user 选项点击：标记已回答，并将选择作为用户消息发送给 AI

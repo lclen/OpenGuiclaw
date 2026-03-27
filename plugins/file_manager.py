@@ -6,6 +6,16 @@ import os
 import shutil
 from pathlib import Path
 from core.skills import SkillManager
+from core.automation_context import get_request_workspace_path
+
+
+def _resolve_path(path: str) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    workspace_path = get_request_workspace_path()
+    base_path = Path(workspace_path) if workspace_path else Path.cwd()
+    return base_path / candidate
 
 
 def register(manager: SkillManager) -> None:
@@ -23,7 +33,7 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def read_file(path: str) -> str:
-        p = Path(path)
+        p = _resolve_path(path)
         if not p.exists(): return f"错误: 文件不存在 {path}"
         try:
             return p.read_text(encoding="utf-8")
@@ -43,7 +53,7 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def write_file(path: str, content: str) -> str:
-        p = Path(path)
+        p = _resolve_path(path)
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
@@ -63,7 +73,7 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def list_dir(path: str = ".") -> str:
-        p = Path(path)
+        p = _resolve_path(path)
         if not p.exists() or not p.is_dir(): return f"错误: 路径无效 {path}"
         try:
             items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
@@ -89,7 +99,7 @@ def register(manager: SkillManager) -> None:
     )
     def move_path(src: str, dst: str) -> str:
         try:
-            shutil.move(src, dst)
+            shutil.move(_resolve_path(src), _resolve_path(dst))
             return f"[OK] 已将 {src} 移动到 {dst}"
         except Exception as e:
             return f"移动失败: {e}"
@@ -106,11 +116,11 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def delete_path(path: str) -> str:
-        p = Path(path)
+        p = _resolve_path(path)
         if not p.exists(): return f"跳过: 路径不存在 {path}"
         try:
             if p.is_file(): p.unlink()
-            else: shutil.rmtree(path)
+            else: shutil.rmtree(p)
             return f"[OK] 已成功删除: {path}"
         except Exception as e:
             return f"删除失败: {e}"
@@ -129,7 +139,7 @@ def register(manager: SkillManager) -> None:
     )
     def search_files(pattern: str, root: str = ".") -> str:
         try:
-            results = list(Path(root).rglob(pattern))
+            results = list(_resolve_path(root).rglob(pattern))
             if not results: return "未找到匹配项。"
             return "\n".join([str(r) for r in results[:50]]) # Limit to 50
         except Exception as e:

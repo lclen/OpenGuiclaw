@@ -21,7 +21,6 @@ const TAB_ICONS: Record<SettingsTabId, string> = {
 export function SettingsNav() {
   const { snapshot } = useWorkspaceShellBridge();
   const currentViewIsSettings = snapshot.currentView === 'settings';
-  const activeTab = SETTINGS_TABS.find((tab) => tab.id === snapshot.settingsTab) ?? SETTINGS_TABS[0];
 
   function handleTabClick(tabId: SettingsTabId) {
     dispatchShellAction({ type: 'switchSettingsTab', tab: tabId });
@@ -36,10 +35,9 @@ export function SettingsNav() {
       <div className="settings-nav-header">
         <div className="settings-nav-kicker">OpenGuiclaw</div>
         <h2>设置中心</h2>
-        <p>把模型、身份和工具接入整理到同一处，减少层级和认知切换。</p>
+        <p>统一管理模型、身份与工具。</p>
         <div className="settings-nav-summary">
           <span className="settings-nav-summary-pill">{SETTINGS_TABS.length} 项配置</span>
-          <span className="settings-nav-summary-text">当前：{activeTab.title}</span>
         </div>
       </div>
       {currentViewIsSettings ? (
@@ -52,7 +50,6 @@ export function SettingsNav() {
         >
           <span className="settings-nav-back-copy">
             <strong>返回上一页</strong>
-            <span>回到工作区或聊天视图</span>
           </span>
         </UiButton>
       ) : null}
@@ -73,7 +70,6 @@ export function SettingsNav() {
           >
             <span className="settings-nav-copy">
               <span className="settings-nav-title">{tab.title}</span>
-              <span className="settings-nav-desc">{tab.description}</span>
             </span>
           </UiButton>
         ))}

@@ -178,7 +178,7 @@ export type WorkspaceShellSnapshot = {
   workspaces: Workspace[];
   homeData: HomeData | null;
   activeWorkspaceId: string | null;
-  activeWorkspace: { id?: string; name?: string } | null;
+  activeWorkspace: { id?: string; name?: string; workspace_path?: string | null } | null;
   sidebarCollapsed: boolean;
   workspaceThreads: WorkspaceThread[];
   workspaceThreadMap: WorkspaceThreadMap;
@@ -226,7 +226,7 @@ export type OpenGuiclawApp = {
   currentController?: unknown;
   isReceiving?: boolean;
   activeWorkspaceId?: string | null;
-  activeWorkspace?: { id?: string; name?: string } | null;
+  activeWorkspace?: { id?: string; name?: string; workspace_path?: string | null } | null;
   workspaceThreads?: WorkspaceThread[];
   workspaceThreadMap?: WorkspaceThreadMap;
   expandedWorkspaceIds?: ExpandedWorkspaceMap;

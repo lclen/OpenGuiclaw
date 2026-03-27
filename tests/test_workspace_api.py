@@ -9,6 +9,7 @@ Workspace REST API 集成测试（AsyncClient + ASGITransport，无需启动真�
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -376,3 +377,118 @@ class TestHomeEndpoint:
         assert ws1["id"] in ids
         assert ws2["id"] not in ids
         assert data["total_workspaces"] == 1
+
+
+class _FakeResponseMessage:
+    def __init__(self, content="工作区内容已准备好。", tool_calls=None):
+        self.content = content
+        self.tool_calls = tool_calls or []
+
+    def model_dump(self, exclude_unset=True):
+        return {"role": "assistant", "content": self.content, "tool_calls": self.tool_calls}
+
+
+class _FakeCompletions:
+    def create(self, **kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=_FakeResponseMessage())],
+            usage=None,
+        )
+
+
+class _FakeSkills:
+    def get_tool_definitions(self, allowed_skills=None, skills_mode="inclusive"):
+        return []
+
+    async def execute(self, name, params):
+        return "ok"
+
+
+class _FakeAgent:
+    def __init__(self):
+        self.model = "fake-model"
+        self.max_tokens = 256
+        self.temperature = 0.2
+        self._qwen_search_enabled = False
+        self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+        self.skills = _FakeSkills()
+        self.last_build_prompt = None
+
+    def ensure_session_skills_current(self, session):
+        return None
+
+    def _build_system_prompt(self, *args, **kwargs):
+        self.last_build_prompt = {"args": args, "kwargs": kwargs}
+        return "workspace-aware-system-prompt"
+
+    def _record_usage(self, usage, model):
+        return None
+
+
+@pytest_asyncio.fixture
+async def workspace_chat_client(wm):
+    from core.routes.chat import router as chat_router
+    from core.routes.workspace import router as workspace_router
+
+    app = FastAPI()
+    app.include_router(workspace_router)
+    app.include_router(chat_router)
+
+    fake_agent = _FakeAgent()
+
+    with (
+        patch("core.routes.workspace.get_workspace_manager", return_value=wm),
+        patch("core.workspace_manager.get_workspace_manager", return_value=wm),
+        patch.dict("core.routes.chat.app_state", {"agent": fake_agent}, clear=True),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as c:
+            yield c, fake_agent
+
+
+class TestWorkspaceChatContext:
+
+    async def test_new_workspace_session_persists_workspace_metadata(self, workspace_chat_client, ws_path, wm):
+        client, _ = workspace_chat_client
+        ws = await create_ws(client, ws_path, "Workspace Meta")
+
+        response = await client.post(f"/api/workspaces/{ws['id']}/sessions/new")
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
+
+        session_file = wm._sessions_dir(ws["id"]) / f"{session_id}.json"
+        session_data = json.loads(session_file.read_text(encoding="utf-8"))
+
+        assert session_data["metadata"]["workspace_id"] == ws["id"]
+        assert session_data["metadata"]["workspace_name"] == "Workspace Meta"
+        assert session_data["metadata"]["workspace_path"] == str(ws_path.resolve())
+
+    async def test_stream_workspace_chat_injects_workspace_context(self, workspace_chat_client, ws_path, wm):
+        client, fake_agent = workspace_chat_client
+        ws = await create_ws(client, ws_path, "Workspace Prompt")
+        session = make_session(wm, ws["id"], "sess_prompt", archived=False)
+
+        async with client.stream(
+            "POST",
+            f"/api/workspaces/{ws['id']}/sessions/{session['session_id']}/stream",
+            json={
+                "workspace_id": ws["id"],
+                "session_id": session["session_id"],
+                "message": "这个工作区里有什么内容？",
+            },
+        ) as response:
+            assert response.status_code == 200
+            body = await response.aread()
+            assert b"[DONE]" in body
+
+        assert fake_agent.last_build_prompt is not None
+        workspace_context = fake_agent.last_build_prompt["kwargs"]["workspace_context"]
+        assert workspace_context["workspace_id"] == ws["id"]
+        assert workspace_context["workspace_name"] == "Workspace Prompt"
+        assert workspace_context["workspace_path"] == str(ws_path.resolve())
+
+        session_file = wm._sessions_dir(ws["id"]) / f"{session['session_id']}.json"
+        session_data = json.loads(session_file.read_text(encoding="utf-8"))
+        assert session_data["metadata"]["workspace_path"] == str(ws_path.resolve())

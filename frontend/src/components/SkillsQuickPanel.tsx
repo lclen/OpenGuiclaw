@@ -217,6 +217,15 @@ export function SkillsQuickPanel() {
     }
   }
 
+  async function handleManualUrlInstall() {
+    if (!hostApp?.installSkillFromUrl) return;
+    setErrorText('');
+    const installed = await hostApp.installSkillFromUrl(urlInput, null);
+    syncFromHost(hostApp);
+    if (!installed) return;
+    setUrlInput('');
+  }
+
   return (
     <section className="react-skills-panel">
       <header className="react-skills-panel__header">
@@ -421,17 +430,7 @@ export function SkillsQuickPanel() {
               <button
                 type="button"
                 className="react-skills-panel__reload is-secondary"
-                onClick={async () => {
-                  if (!hostApp?.installSkillFromUrl) return;
-                  setErrorText('');
-                  const installed = await hostApp.installSkillFromUrl(urlInput, null);
-                  if (!installed) {
-                    syncFromHost(hostApp);
-                    return;
-                  }
-                  setUrlInput('');
-                  syncFromHost(hostApp);
-                }}
+                onClick={() => void handleManualUrlInstall()}
                 disabled={!hostApp?.installSkillFromUrl || !urlInput.trim()}
               >
                 立即安装

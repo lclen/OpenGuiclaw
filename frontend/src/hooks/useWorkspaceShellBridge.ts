@@ -77,7 +77,7 @@ function resolveActiveWorkspace(
   if (activeWorkspaceId) {
     const matched = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
     if (matched) {
-      return { id: matched.id, name: matched.name };
+      return { id: matched.id, name: matched.name, workspace_path: matched.workspace_path ?? null };
     }
   }
 

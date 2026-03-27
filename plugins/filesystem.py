@@ -5,6 +5,7 @@ import logging
 import aiofiles
 import aiofiles.os
 import re
+from core.automation_context import get_request_workspace_path
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,9 @@ class FileTool:
         p = Path(path)
         if p.is_absolute():
             return p
-        return self.base_path / p
+        workspace_path = get_request_workspace_path()
+        effective_base = Path(workspace_path) if workspace_path else self.base_path
+        return effective_base / p
 
     # 二进制文件扩展名判断防呆
     BINARY_EXTENSIONS = {

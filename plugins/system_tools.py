@@ -5,6 +5,7 @@ System Tools: Shell command execution and process info.
 import subprocess
 import os
 from core.skills import SkillManager
+from core.automation_context import get_automation_source_context
 
 
 def register(manager: SkillManager) -> None:
@@ -28,13 +29,18 @@ def register(manager: SkillManager) -> None:
             blacklist = ["rm -rf /", "format ", "mkfs", "dd if="]
             if any(b in command for b in blacklist):
                 return "错误: 该命令包含高风险操作，已拦截。"
+
+            source_context = get_automation_source_context()
+            effective_cwd = cwd
+            if (not effective_cwd or effective_cwd == ".") and source_context and source_context.workspace_path:
+                effective_cwd = source_context.workspace_path
                 
             res = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                cwd=cwd,
+                cwd=effective_cwd,
                 timeout=30
             )
             

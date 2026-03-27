@@ -13,7 +13,10 @@ All shared state lives in core/state.py.
 import asyncio
 import json
 import os
+import sys
+import time
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +29,11 @@ from starlette.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from core.im_bots import load_im_bots_from_config, make_channel_name
+from core.process_runtime import (
+    detect_runtime_mode,
+    register_current_run_record,
+    remove_run_record,
+)
 from core.state import (
     _APP_BASE,
     _ctx_event_queue,
@@ -34,6 +42,8 @@ from core.state import (
     app_state,
     logger,
 )
+
+_SERVER_STARTED_AT = time.time()
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -171,6 +181,8 @@ async def lifespan(app: FastAPI):
         app_state["context_manager"] = context_manager
         app_state["plugin_manager"] = plugin_manager
         app_state["event_loop"] = asyncio.get_event_loop()
+        app_state["server_version"] = app.version
+        app_state["server_started_at"] = _SERVER_STARTED_AT
 
         # ── Task scheduler ─────────────────────────────────────────────────
         task_scheduler = TaskScheduler(
@@ -183,6 +195,16 @@ async def lifespan(app: FastAPI):
         # Register built-in system tasks (idempotent)
         await _register_builtin_tasks(task_scheduler, ScheduledTask, TriggerType, TaskType)
 
+        run_record_path = register_current_run_record(
+            _APP_BASE,
+            pid=os.getpid(),
+            version=app.version,
+            started_at=_SERVER_STARTED_AT,
+            mode=detect_runtime_mode(),
+            is_frozen=getattr(sys, "frozen", False),
+        )
+        app_state["run_record_path"] = str(run_record_path)
+
         logger.info("OpenGuiclaw Server initialized successfully.")
         yield
 
@@ -191,6 +213,7 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         logger.info("Shutting down OpenGuiclaw Server...")
+        remove_run_record(app_state.pop("run_record_path", None))
         startup_mcp_task = app_state.pop("startup_mcp_task", None)
         if startup_mcp_task and not startup_mcp_task.done():
             startup_mcp_task.cancel()
@@ -351,7 +374,14 @@ async def serve_index(request: Request):
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "pid": os.getpid(),
+        "version": app.version,
+        "started_at": datetime.fromtimestamp(_SERVER_STARTED_AT).isoformat(timespec="seconds"),
+        "uptime_seconds": max(0, int(time.time() - _SERVER_STARTED_AT)),
+        "restart_mode": detect_runtime_mode(),
+    }
 
 
 @app.get("/api/events")

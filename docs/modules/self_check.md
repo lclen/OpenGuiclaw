@@ -4,6 +4,10 @@
 
 系统自检模块负责定期扫描日志错误、分析问题根因、自动修复能力层错误，并生成健康报告。
 
+补充说明：从 2026-03-27 开始，项目同时提供一套**运行时自检 UI**，用于在设置页中手动执行只读测活。这部分能力主要位于 `core/routes/agents.py::/api/diagnostics`、`core/routes/agents.py::/api/health/check`、`core/server.py::/api/health` 与 `frontend/src/components/DiagnosticsPanel.tsx`，与每日定时自检互补，不替代原有自动任务。
+
+随后又补入一层 OpenAkita 风格的**进程残留诊断与人工清理**：后端会维护 `data/run/` 下的运行记录，并在 diagnostics 页展示旧实例冲突、孤儿进程和 stale record，允许用户显式触发安全清理。
+
 **文件位置**: `core/self_check.py`, `core/tasks.py::_system_daily_selfcheck`
 
 **调度方式**: 每日凌晨 04:00 自动执行（通过 TaskScheduler）
@@ -247,3 +251,4 @@ await scheduler.add_task(ScheduledTask(
 2. **修复成功率统计**：按组件类型统计修复成功率
 3. **自动学习修复策略**：从成功的修复中学习，优化 LLM prompt
 4. **多模型支持**：支持切换不同的 LLM 模型进行分析
+5. **运行时自检深化**：参考 `docs/openakita_runtime_self_check_followup_20260327.md`，继续补齐更深层环境探测与自动化闭环

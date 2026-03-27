@@ -203,6 +203,7 @@ class ChannelGateway:
                 used_streaming = False
                 thinking_text = ""
                 thinking_duration_ms = 0
+                delta_count = 0
                 # 调用 agent 的流式输出（兼容工具调用等复杂行为）
                 async for chunk_str in self.agent.chat_stream(user_input):
                     try:
@@ -213,17 +214,22 @@ class ChannelGateway:
                         continue
 
                     chunk_type = chunk.get("type")
-                    if chunk_type == "thinking_chunk":
+                    if chunk_type == "thinking_start":
+                        logger.debug(
+                            "[Gateway] thinking_start channel=%s chat=%s",
+                            message.channel,
+                            message.chat_id,
+                        )
+                    elif chunk_type in ("thinking_delta", "thinking_chunk"):
                         content = str(chunk.get("content") or "")
                         if content:
                             logger.debug(
-                                "[Gateway] thinking_chunk channel=%s chat=%s len=%s",
+                                "[Gateway] thinking_delta channel=%s chat=%s len=%s",
                                 message.channel,
                                 message.chat_id,
                                 len(content),
                             )
-                            thinking_text = content
-                            thinking_duration_ms = int(chunk.get("duration_ms") or 0)
+                            thinking_text += content
                             if adapter.supports_streaming():
                                 used_streaming = True
                                 await adapter.stream_thinking(
@@ -233,6 +239,15 @@ class ChannelGateway:
                                     is_group=message.is_group,
                                     duration_ms=thinking_duration_ms,
                                 )
+                    elif chunk_type == "thinking_end":
+                        thinking_duration_ms = int(chunk.get("duration_ms") or thinking_duration_ms or 0)
+                        logger.debug(
+                            "[Gateway] thinking_end channel=%s chat=%s duration_ms=%s has_thinking=%s",
+                            message.channel,
+                            message.chat_id,
+                            thinking_duration_ms,
+                            bool(chunk.get("has_thinking")),
+                        )
                     elif chunk_type == "tool_call":
                         logger.debug(
                             "[Gateway] tool_call channel=%s chat=%s tool=%s",
@@ -267,14 +282,16 @@ class ChannelGateway:
                                 thread_id=message.thread_id,
                                 is_group=message.is_group,
                             )
-                    elif chunk_type == "message_chunk":
+                    elif chunk_type in ("text_delta", "message_chunk"):
                         text = str(chunk.get("content") or "")
                         if text:
+                            delta_count += 1
                             logger.debug(
-                                "[Gateway] message_chunk channel=%s chat=%s len=%s",
+                                "[Gateway] text_delta channel=%s chat=%s len=%s count=%s",
                                 message.channel,
                                 message.chat_id,
                                 len(text),
+                                delta_count,
                             )
                         full_response += text
                         if text and adapter.supports_streaming():
@@ -285,6 +302,16 @@ class ChannelGateway:
                                 thread_id=message.thread_id,
                                 is_group=message.is_group,
                             )
+                    elif chunk_type == "done":
+                        logger.info(
+                            "[Gateway] stream_done channel=%s bot=%s chat=%s chars=%s deltas=%s streaming=%s",
+                            message.channel,
+                            getattr(adapter, "bot_id", None),
+                            message.chat_id,
+                            len(full_response),
+                            delta_count,
+                            used_streaming,
+                        )
 
                 # ==========================================
                 # 3. 发送回复
