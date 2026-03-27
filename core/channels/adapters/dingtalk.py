@@ -19,6 +19,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -35,12 +37,15 @@ from ..types import (
     OutgoingMessage,
     UnifiedMessage,
 )
+from core.runtime_deps import DependencySpec, ensure_runtime_dependencies, installed_version
 
 logger = logging.getLogger(__name__)
 
 # 延迟导入
 httpx = None
 dingtalk_stream = None
+_dingtalk_runtime_checked = False
+_dingtalk_runtime_ok = False
 
 
 def _import_httpx():
@@ -62,6 +67,52 @@ def _import_dingtalk_stream():
             raise ImportError(
                 "钉钉 Stream SDK 未找到，请执行:\n  pip install dingtalk-stream"
             ) from exc
+
+def _ensure_dingtalk_runtime() -> bool:
+    global _dingtalk_runtime_checked, _dingtalk_runtime_ok, dingtalk_stream
+    if _dingtalk_runtime_checked:
+        return _dingtalk_runtime_ok
+
+    _dingtalk_runtime_checked = True
+    specs = (
+        DependencySpec(
+            module="dingtalk_stream",
+            package="dingtalk-stream>=0.1.0",
+            reason="钉钉 Stream SDK 缺失",
+        ),
+        DependencySpec(
+            module="websockets",
+            package="websockets>=11.0.2,<12",
+            version_check=lambda: (_get_websockets_major_version() or 0) < 12,
+            reason="钉钉 Stream 依赖 websockets < 12",
+        ),
+    )
+    if not ensure_runtime_dependencies(*specs, context="dingtalk"):
+        _dingtalk_runtime_ok = False
+        return False
+    dingtalk_stream = None
+
+    try:
+        _import_dingtalk_stream()
+        websockets_major = _get_websockets_major_version()
+        _dingtalk_runtime_ok = bool(websockets_major is not None and websockets_major < 12)
+        if not _dingtalk_runtime_ok:
+            logger.error(
+                "[DingTalkAdapter] Runtime dependency check still failed after auto-fix. websockets_major=%s",
+                websockets_major,
+            )
+        else:
+            logger.info(
+                "[DingTalkAdapter] Runtime dependency check passed. dingtalk-stream=%s websockets=%s python=%s",
+                installed_version("dingtalk-stream"),
+                installed_version("websockets"),
+                sys.executable,
+            )
+        return _dingtalk_runtime_ok
+    except Exception as exc:
+        logger.error("[DingTalkAdapter] Runtime dependency import failed: %s", exc, exc_info=True)
+        _dingtalk_runtime_ok = False
+        return False
 
 
 def _get_websockets_major_version() -> int | None:
@@ -196,6 +247,8 @@ class DingTalkAdapter(ChannelAdapter):
         self._access_token: str | None = None
         self._token_expires_at: float = 0
         self._http_client: Any | None = None
+        self._token_lock = asyncio.Lock()
+        self._old_token_lock = asyncio.Lock()
 
         # Stream 模式
         self._stream_client: Any | None = None
@@ -237,6 +290,12 @@ class DingTalkAdapter(ChannelAdapter):
     async def start(self) -> None:
         """启动钉钉适配器 (Stream 模式)"""
         _import_httpx()
+        if not _ensure_dingtalk_runtime():
+            logger.error(
+                "[DingTalkAdapter] DingTalk runtime dependencies are unavailable after auto-fix; stream receiver will not start."
+            )
+            self._last_error = "DingTalk runtime dependencies unavailable"
+            return
         _import_dingtalk_stream()
 
         websockets_major = _get_websockets_major_version()
@@ -277,6 +336,13 @@ class DingTalkAdapter(ChannelAdapter):
         self._running = False
         self._main_loop = None
         self._set_stream_state(DingTalkStreamState.STOPPED)
+        logger.info(
+            "DingTalk adapter stopping: channel=%s bot_id=%s state=%s thread_alive=%s",
+            self.channel_name,
+            self.bot_id,
+            self._stream_state.value,
+            bool(self._stream_thread and self._stream_thread.is_alive()),
+        )
 
         if self._stream_watchdog_task and not self._stream_watchdog_task.done():
             self._stream_watchdog_task.cancel()
@@ -286,6 +352,34 @@ class DingTalkAdapter(ChannelAdapter):
 
         # 1) 停止 Stream 线程的事件循环
         stream_loop = self._stream_loop
+        stream_client = self._stream_client
+        if stream_client is not None:
+            try:
+                stream_client.open_connection = lambda: None
+                logger.info("DingTalk Stream stop guard installed: open_connection disabled")
+            except Exception as exc:
+                logger.warning("Failed to disable DingTalk Stream reconnect entry: %s", exc)
+
+            websocket = getattr(stream_client, "websocket", None)
+            if websocket is not None:
+                try:
+                    close_result = websocket.close()
+                    if asyncio.iscoroutine(close_result):
+                        current_loop = None
+                        with contextlib.suppress(RuntimeError):
+                            current_loop = asyncio.get_running_loop()
+                        if stream_loop is not None and stream_loop.is_running():
+                            if current_loop is stream_loop:
+                                await close_result
+                            else:
+                                future = asyncio.run_coroutine_threadsafe(close_result, stream_loop)
+                                future.result(timeout=5)
+                        else:
+                            await close_result
+                    logger.info("DingTalk Stream websocket close requested")
+                except Exception as exc:
+                    logger.warning("Failed to close DingTalk Stream websocket cleanly: %s", exc)
+
         if stream_loop is not None:
             try:
                 stream_loop.call_soon_threadsafe(stream_loop.stop)
@@ -407,13 +501,23 @@ class DingTalkAdapter(ChannelAdapter):
                 logger.info(f"DingTalk AppKey configured: {self.config.app_key[:6]}***")
                 self._stream_metrics.connected_since = time.time()
                 self._set_stream_state(DingTalkStreamState.RUNNING)
-
-                client.start_forever()
+                logger.info(
+                    "DingTalk Stream event loop ready: thread=%s loop_id=%s",
+                    threading.current_thread().name,
+                    id(new_loop),
+                )
+                new_loop.run_until_complete(client.start())
             except Exception as e:
                 if self._running:
                     self._last_error = str(e)
                     logger.error(f"DingTalk Stream error: {e}", exc_info=True)
             finally:
+                logger.info(
+                    "DingTalk Stream thread exiting: channel=%s state=%s last_error=%s",
+                    self.channel_name,
+                    self._stream_state.value,
+                    self._last_error,
+                )
                 self._stream_loop = None
                 new_loop.close()
 
@@ -467,6 +571,11 @@ class DingTalkAdapter(ChannelAdapter):
                 self._start_stream()
                 last_restart_time = asyncio.get_running_loop().time()
                 stable_since = last_restart_time
+                logger.info(
+                    "DingTalk Stream watchdog restarted connection: restart_count=%s reconnect_total=%s",
+                    self._stream_restart_count,
+                    self._stream_metrics.reconnect_count,
+                )
             except Exception as exc:
                 self._last_error = str(exc)
                 logger.error(f"DingTalk Stream watchdog reconnect failed: {exc}", exc_info=True)
@@ -1817,6 +1926,7 @@ class DingTalkAdapter(ChannelAdapter):
         body = {"downloadCode": media.file_id, "robotCode": self.config.app_key}
 
         response = await self._http_client.post(url, headers=headers, json=body)
+        response.raise_for_status()
         result = response.json()
 
         download_url = result.get("downloadUrl")
@@ -1830,7 +1940,8 @@ class DingTalkAdapter(ChannelAdapter):
             )
 
         # 下载文件
-        response = await self._http_client.get(download_url)
+        response = await self._http_client.get(download_url, timeout=60.0)
+        response.raise_for_status()
 
         local_path = self.media_dir / media.filename
         with open(local_path, "wb") as f:
@@ -1919,26 +2030,32 @@ class DingTalkAdapter(ChannelAdapter):
             return self._access_token
 
         _import_httpx()
+        async with self._token_lock:
+            if self._access_token and time.time() < self._token_expires_at:
+                logger.debug("Reuse cached new-style access token")
+                return self._access_token
 
-        url = f"{self.API_NEW}/oauth2/accessToken"
-        body = {
-            "appKey": self.config.app_key,
-            "appSecret": self.config.app_secret,
-        }
+            url = f"{self.API_NEW}/oauth2/accessToken"
+            body = {
+                "appKey": self.config.app_key,
+                "appSecret": self.config.app_secret,
+            }
 
-        response = await self._http_client.post(url, json=body)
-        data = response.json()
+            logger.info("Refreshing new-style access token (OAuth2)")
+            response = await self._http_client.post(url, json=body)
+            response.raise_for_status()
+            data = response.json()
 
-        if "accessToken" not in data:
-            raise RuntimeError(
-                f"Failed to get new access token: {data.get('message', data)}"
-            )
+            if "accessToken" not in data:
+                raise RuntimeError(
+                    f"Failed to get new access token: {data.get('message', data)}"
+                )
 
-        self._access_token = data["accessToken"]
-        self._token_expires_at = time.time() + data.get("expireIn", 7200) - 60
-        logger.info("Refreshed new-style access token (OAuth2)")
+            self._access_token = data["accessToken"]
+            self._token_expires_at = time.time() + data.get("expireIn", 7200) - 60
+            logger.info("Refreshed new-style access token (OAuth2)")
 
-        return self._access_token
+            return self._access_token
 
     async def _refresh_old_token(self) -> str:
         """
@@ -1950,21 +2067,27 @@ class DingTalkAdapter(ChannelAdapter):
             return self._old_access_token
 
         _import_httpx()
+        async with self._old_token_lock:
+            if self._old_access_token and time.time() < self._old_token_expires_at:
+                logger.debug("Reuse cached old-style access token")
+                return self._old_access_token
 
-        url = f"{self.API_BASE}/gettoken"
-        params = {
-            "appkey": self.config.app_key,
-            "appsecret": self.config.app_secret,
-        }
+            url = f"{self.API_BASE}/gettoken"
+            params = {
+                "appkey": self.config.app_key,
+                "appsecret": self.config.app_secret,
+            }
 
-        response = await self._http_client.get(url, params=params)
-        data = response.json()
+            logger.info("Refreshing old-style access token (gettoken)")
+            response = await self._http_client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
 
-        if data.get("errcode", 0) != 0:
-            raise RuntimeError(f"Failed to get old access token: {data.get('errmsg')}")
+            if data.get("errcode", 0) != 0:
+                raise RuntimeError(f"Failed to get old access token: {data.get('errmsg')}")
 
-        self._old_access_token = data["access_token"]
-        self._old_token_expires_at = time.time() + data["expires_in"] - 60
-        logger.info("Refreshed old-style access token (gettoken)")
+            self._old_access_token = data["access_token"]
+            self._old_token_expires_at = time.time() + data["expires_in"] - 60
+            logger.info("Refreshed old-style access token (gettoken)")
 
-        return self._old_access_token
+            return self._old_access_token

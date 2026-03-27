@@ -31,6 +31,8 @@ from core.skill_runtime import (
     generate_plugin_migration_manifest,
     install_skill_from_source,
     migrate_legacy_skills,
+    parse_skill_metadata_text,
+    read_install_metadata,
 )
 import time
 import threading
@@ -497,8 +499,6 @@ class Agent:
 
     def _scan_local_skills(self) -> dict:
         """Scan local directories for SKILL.md and build a catalog."""
-        import yaml
-        import re
         catalog = {}
         state_map = self._load_local_skill_state()
         search_dirs = [ensure_skills_dir(_APP_BASE)]
@@ -513,27 +513,26 @@ class Agent:
                 if skill_md_path.exists():
                     try:
                         content = skill_md_path.read_text(encoding="utf-8")
-                        match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-                        if match:
-                            metadata = yaml.safe_load(match.group(1))
-                            name = metadata.get("name", skill_dir.name)
-                            desc = metadata.get("description", "No description provided.")
-                            # ② scripts/ subdir support
-                            scripts = []
-                            scripts_dir = skill_dir / "scripts"
-                            if scripts_dir.exists():
-                                scripts = [p.name for p in scripts_dir.iterdir() if p.is_file()]
-                            if name in catalog:
-                                existing_path = catalog[name]["path"]
-                                print(f"  [WARN] 技能名称冲突: '{name}' 已在 '{existing_path}' 注册，"
-                                      f"跳过 '{skill_md_path}'。请确保 SKILL.md 中 name 字段唯一。")
-                            else:
-                                catalog[name] = {
-                                    "description": desc,
-                                    "path": str(skill_md_path),
-                                    "scripts": scripts,
-                                    "enabled": state_map.get(name, True),
-                                }
+                        parsed = parse_skill_metadata_text(content, default_name=skill_dir.name)
+                        name = parsed["name"]
+                        desc = parsed["description"]
+                        scripts = []
+                        scripts_dir = skill_dir / "scripts"
+                        if scripts_dir.exists():
+                            scripts = [p.name for p in scripts_dir.iterdir() if p.is_file()]
+                        if name in catalog:
+                            existing_path = catalog[name]["path"]
+                            print(f"  [WARN] 技能名称冲突: '{name}' 已在 '{existing_path}' 注册，"
+                                  f"跳过 '{skill_md_path}'。请确保 SKILL.md 中 name 字段唯一。")
+                        else:
+                            install_metadata = read_install_metadata(skill_dir)
+                            catalog[name] = {
+                                "description": desc,
+                                "path": str(skill_md_path),
+                                "scripts": scripts,
+                                "enabled": state_map.get(name, True),
+                                "source_url": install_metadata.get("source_url", ""),
+                            }
                     except Exception as e:
                         print(f"  [WARN] Failed to parse {skill_md_path}: {e}")
         self._catalog_dirty = False  # ③ mark cache as fresh
@@ -1088,14 +1087,18 @@ class Agent:
             # ③ Re-scan only if dirty (e.g. after install_skill)
             if self._catalog_dirty:
                 self._local_skills_catalog = self._scan_local_skills()
+            enabled_catalog = {
+                sname: sinfo
+                for sname, sinfo in self._local_skills_catalog.items()
+                if sinfo.get("enabled", True)
+            }
             catalog_lines = ["# 本地外挂技能目录 (Local Skill Catalog)",
                              "以下是已安装的外挂技能，当用户提到相关工具或任务时，请主动调用 `get_skill_info` 获取完整使用手册再操作："]
-            for sname, sinfo in self._local_skills_catalog.items():
-                if not sinfo.get("enabled", True):
-                    continue
+            for sname, sinfo in enabled_catalog.items():
                 scripts_note = f" *(含脚本: {', '.join(sinfo.get('scripts', []))})*" if sinfo.get('scripts') else ""
                 catalog_lines.append(f"- **{sname}**: {sinfo['description'][:120]}{scripts_note}")
-            parts.append("\n".join(catalog_lines))
+            if enabled_catalog:
+                parts.append("\n".join(catalog_lines))
 
             # ① Intent matching: highlight relevant skills for current query
             relevant = self._find_relevant_skills(user_query)

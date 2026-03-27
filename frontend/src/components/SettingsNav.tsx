@@ -21,6 +21,7 @@ const TAB_ICONS: Record<SettingsTabId, string> = {
 export function SettingsNav() {
   const { snapshot } = useWorkspaceShellBridge();
   const currentViewIsSettings = snapshot.currentView === 'settings';
+  const activeTab = SETTINGS_TABS.find((tab) => tab.id === snapshot.settingsTab) ?? SETTINGS_TABS[0];
 
   function handleTabClick(tabId: SettingsTabId) {
     dispatchShellAction({ type: 'switchSettingsTab', tab: tabId });
@@ -36,14 +37,22 @@ export function SettingsNav() {
         <div className="settings-nav-kicker">OpenGuiclaw</div>
         <h2>设置中心</h2>
         <p>把模型、身份和工具接入整理到同一处，减少层级和认知切换。</p>
+        <div className="settings-nav-summary">
+          <span className="settings-nav-summary-pill">{SETTINGS_TABS.length} 项配置</span>
+          <span className="settings-nav-summary-text">当前：{activeTab.title}</span>
+        </div>
       </div>
       {currentViewIsSettings ? (
-        <UiButton type="button" variant="ghost" className="settings-nav-back" onClick={handleBackClick}>
-          <span className="settings-nav-back-icon" aria-hidden="true">
-            ←
-          </span>
+        <UiButton
+          type="button"
+          variant="ghost"
+          className="settings-nav-back"
+          onClick={handleBackClick}
+          leading={<span className="settings-nav-back-icon" aria-hidden="true">←</span>}
+        >
           <span className="settings-nav-back-copy">
             <strong>返回上一页</strong>
+            <span>回到工作区或聊天视图</span>
           </span>
         </UiButton>
       ) : null}
@@ -55,12 +64,16 @@ export function SettingsNav() {
             variant="ghost"
             active={snapshot.settingsTab === tab.id}
             onClick={() => handleTabClick(tab.id)}
+            leading={
+              <span className="settings-nav-icon" aria-hidden="true">
+                {TAB_ICONS[tab.id]}
+              </span>
+            }
+            trailing={<span className="settings-nav-arrow" aria-hidden="true">›</span>}
           >
-            <span className="settings-nav-icon" aria-hidden="true">
-              {TAB_ICONS[tab.id]}
-            </span>
             <span className="settings-nav-copy">
               <span className="settings-nav-title">{tab.title}</span>
+              <span className="settings-nav-desc">{tab.description}</span>
             </span>
           </UiButton>
         ))}

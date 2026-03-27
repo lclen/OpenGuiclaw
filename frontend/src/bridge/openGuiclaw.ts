@@ -22,6 +22,27 @@ export type SkillRecord = {
   config_values?: Record<string, unknown>;
 };
 
+export type SkillMarketplaceRecord = {
+  id?: string;
+  name: string;
+  description: string;
+  author?: string;
+  url?: string;
+  git_url?: string;
+  version?: string;
+  category?: string;
+  installs?: number;
+  stars?: number;
+  tags?: string[];
+  tools?: string[];
+  installed?: boolean;
+};
+
+export type SkillInstallMessage = {
+  type: 'success' | 'error' | string;
+  text: string;
+};
+
 export type SchedulerTask = {
   id: string;
   name: string;
@@ -270,6 +291,14 @@ export type OpenGuiclawApp = {
   loadSkills: () => Promise<void>;
   reloadSkills: () => Promise<void>;
   toggleSkill: (name: string, enabled: boolean) => Promise<void>;
+  uninstallSkill?: (name: string) => Promise<void>;
+  searchSkillMarketplace?: (query: string) => Promise<void>;
+  installSkillFromUrl?: (url: string, skillId?: string | null) => Promise<boolean>;
+  skillMarketplace?: SkillMarketplaceRecord[];
+  skillMarketLoading?: boolean;
+  skillMarketSearch?: string;
+  skillInstallingId?: string | null;
+  skillInstallMsg?: SkillInstallMessage | null;
   loadSchedulerTasks: () => Promise<void>;
   loadSchedulerExecutions?: () => Promise<void>;
   refreshSchedulerData?: () => Promise<void>;

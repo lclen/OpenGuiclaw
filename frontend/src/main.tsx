@@ -26,7 +26,7 @@ import { WorkspaceCreateModal } from './components/WorkspaceCreateModal';
 import { WorkspaceSidebar } from './components/WorkspaceSidebar';
 
 const skillsRoot = document.querySelector<HTMLElement>('[data-react-skills-root]');
-const legacyInstalledRoot = document.querySelector<HTMLElement>('[data-legacy-skills-installed-root]');
+const legacySkillsRoot = document.querySelector<HTMLElement>('[data-legacy-skills-panel-root]');
 const schedulerRoot = document.querySelector<HTMLElement>('[data-react-scheduler-root]');
 const legacySchedulerRoot = document.querySelector<HTMLElement>('[data-legacy-scheduler-main-root]');
 const homeRoot = document.querySelector<HTMLElement>('[data-react-home-root]');
@@ -53,9 +53,9 @@ const legacySidebarToggle = document.querySelector<HTMLElement>('[data-legacy-si
 
 if (skillsRoot) {
   skillsRoot.hidden = false;
-  if (legacyInstalledRoot) {
-    legacyInstalledRoot.hidden = true;
-    legacyInstalledRoot.style.display = 'none';
+  if (legacySkillsRoot) {
+    legacySkillsRoot.hidden = true;
+    legacySkillsRoot.style.display = 'none';
   }
   ReactDOM.createRoot(skillsRoot).render(
     <React.StrictMode>

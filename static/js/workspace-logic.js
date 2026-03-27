@@ -889,6 +889,7 @@
                                         _thinkCollapsed: true,
                                         _thinkCollapseScheduled: false
                                     });
+                                    self.notifyChatStateChanged();
                                 }
                             }, 1200);
                         }
@@ -943,6 +944,7 @@
                         this.messages[idx].content = '<span class="text-red-400 text-xs">❌ ' + (ev.content || '未知错误') + '</span>';
                     }
                 }
+                this.notifyChatStateChanged();
             };
 
             obj.sendFiles = async function () {

@@ -168,6 +168,9 @@
         skillTab: 'installed',
         skillUrlInput: '',
         expandedSkills: [], // track expanded skill tool lists in marketplace
+        skillsVersion: 0,
+        lastSkillNoticeVersion: 0,
+        pendingSkillInstallNotice: false,
 
         // System state
         requiresRestart: false,
@@ -1191,8 +1194,20 @@
                         this.refreshSchedulerData();
                     } else if (ev.type === 'skills_version') {
                         this.loadSkills();
-                        if (ev.message) {
+                        const nextVersion = Number(ev.skills_version || 0);
+                        if (nextVersion > 0) this.skillsVersion = nextVersion;
+                        const shouldShowInstallNotice =
+                            ev.action === 'install' &&
+                            !!ev.message &&
+                            this.lastSkillNoticeVersion !== nextVersion &&
+                            !this.pendingSkillInstallNotice;
+                        if (shouldShowInstallNotice) {
                             this.pushLog('system', ev.message);
+                            this.lastSkillNoticeVersion = nextVersion;
+                        }
+                        if (ev.action === 'install' && this.pendingSkillInstallNotice) {
+                            this.pendingSkillInstallNotice = false;
+                            this.lastSkillNoticeVersion = nextVersion;
                         }
                     }
                 } catch { }
@@ -1415,6 +1430,7 @@
 
                 this.messages = validMessages;
                 this.currentSessionId = sessionId;
+                this.emitChatStateChanged();
                 if (!keepPanel) this.activePanel = 'chat';
 
                 // 使用后端精确估算的 token 数，避免刷新后 context bar 清零
@@ -2014,10 +2030,12 @@
             if (prompt) label += `\n\n${prompt}`;
 
             this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: label });
+            this.emitChatStateChanged();
             this.scrollToBottom();
 
             const aiId = 'a-' + Date.now();
             this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">分析中...</span>', thinkingHtml: '', _thinkingRaw: '', _thinkCollapsed: true, blocks: [] });
+            this.emitChatStateChanged();
             this.scrollToBottom();
             this.isReceiving = true;
 
@@ -2123,6 +2141,7 @@
                                 this.pushLog('error', ev.content || '');
                                 if (idx !== -1) this.messages[idx].content = `<span class="text-red-400 text-xs">⚠ ${ev.content}</span>`;
                             }
+                            this.emitChatStateChanged();
                         } catch { /* ignore parse errors */ }
                     }
                 }
@@ -2134,6 +2153,7 @@
             } finally {
                 this.isReceiving = false;
                 this.currentController = null;
+                this.emitChatStateChanged();
                 this.scrollToBottom();
             }
         },
@@ -2156,6 +2176,7 @@
             if (!text || this.isReceiving) return;
             if (!isProactive) {
                 this.messages.push({ id: 'u-' + Date.now(), role: 'user', content: text });
+                this.emitChatStateChanged();
             }
             this.inputText = '';
             this.$nextTick(() => {
@@ -2165,6 +2186,7 @@
             this.scrollToBottom();
             const aiId = 'a-' + Date.now();
             this.messages.push({ id: aiId, role: 'assistant', content: '<span class="text-gray-400 text-xs italic animate-pulse">思考中...</span>', thinkingHtml: '', _thinkingRaw: '', _thinkCollapsed: true, blocks: [] });
+            this.emitChatStateChanged();
             this.scrollToBottom();
             this.isReceiving = true;
             try {
@@ -2260,6 +2282,7 @@
                                         setTimeout(() => {
                                             m._thinkCollapsed = true;
                                             m._thinkCollapseScheduled = false;
+                                            this.emitChatStateChanged();
                                         }, 1200);
                                     }
                                     if (ev.content) {
@@ -2315,6 +2338,7 @@
                                     this.messages[idx].content = `<span class="text-red-400 text-xs">❌ ${ev.content}</span>`;
                                 }
                             }
+                            this.emitChatStateChanged();
                         } catch { /* ignore parse errors */ }
                     }
                 }
@@ -2326,6 +2350,7 @@
             } finally {
                 this.isReceiving = false;
                 this.currentController = null;
+                this.emitChatStateChanged();
                 this.scrollToBottom();
                 this.loadTokenStats(this.tokenPeriod);
             }
@@ -2379,6 +2404,20 @@
             });
         },
 
+        emitChatStateChanged() {
+            if (typeof this.notifyChatStateChanged === 'function') {
+                this.notifyChatStateChanged();
+                return;
+            }
+            window.dispatchEvent(new CustomEvent('openguiclaw:chat-updated', {
+                detail: {
+                    currentThreadId: this.currentThreadId ?? null,
+                    threadLoading: !!this.threadLoading,
+                    messages: this.messages
+                }
+            }));
+        },
+
         // 处理 ask_user 选项点击：标记已回答，并将选择作为用户消息发送给 AI
         async submitAskUserChoice(msg, block, opt) {
             const targetMsg = this.messages.find(m => m.id === msg.id) || msg;
@@ -2389,9 +2428,7 @@
             if (!targetBlock || targetBlock.answered) return;
             targetBlock.answered = true;
             targetBlock.resultStr = opt.label;
-            if (typeof this.notifyChatStateChanged === 'function') {
-                this.notifyChatStateChanged();
-            }
+            this.emitChatStateChanged();
 
             // 将用户选择作为新消息发送
             this.inputText = opt.label;
@@ -2926,7 +2963,14 @@
         // ═══════════════ Skills Management ═══════════════
         notifySkillsChanged() {
             window.dispatchEvent(new CustomEvent('openguiclaw:skills-updated', {
-                detail: { skills: this.skills }
+                detail: {
+                    skills: this.skills,
+                    skillMarketplace: this.skillMarketplace,
+                    skillInstallMsg: this.skillInstallMsg,
+                    skillMarketLoading: this.skillMarketLoading,
+                    skillInstallingId: this.skillInstallingId,
+                    skillsVersion: this.skillsVersion
+                }
             }));
         },
 
@@ -2938,6 +2982,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     console.log('[Skills] Loaded skills:', data.skills);
+                    this.skillsVersion = Number(data.skills_version || this.skillsVersion || 0);
                     this.skills = (data.skills || []).map(skill => {
                         return {
                             ...skill,
@@ -2946,6 +2991,11 @@
                             config_values: skill.config_values || {}
                         };
                     });
+                    const installedSkillNames = new Set(this.skills.map(skill => skill.name));
+                    this.skillMarketplace = (this.skillMarketplace || []).map(item => ({
+                        ...item,
+                        installed: installedSkillNames.has(item.name || item.id || '')
+                    }));
                     console.log('[Skills] Skills array length:', this.skills.length);
                     this.notifySkillsChanged();
                 } else {
@@ -2965,7 +3015,9 @@
                     return;
                 }
                 const payload = {
-                    name: skill?.registry_category || name,
+                    name: (skill?.tools && skill.tools.length > 0)
+                        ? (skill?.registry_category || name)
+                        : name,
                     enabled,
                     tools: skill?.tools || []
                 };
@@ -3019,20 +3071,20 @@
 
         async reloadSkills() {
             try {
-                this.pushLog('status', '正在重新加载技能...');
+                this.pushLog('status', '正在刷新技能目录...');
                 const response = await fetch('/api/skills/reload', {
                     method: 'POST'
                 });
 
                 if (response.ok) {
                     await this.loadSkills();
-                    this.pushLog('success', '技能已重新加载');
+                    this.pushLog('success', '技能目录已刷新');
                 } else {
-                    this.pushLog('error', '重新加载技能失败');
+                    this.pushLog('error', '刷新技能目录失败');
                 }
             } catch (error) {
                 console.error('Failed to reload skills:', error);
-                this.pushLog('error', `重新加载技能失败: ${error.message}`);
+                this.pushLog('error', `刷新技能目录失败: ${error.message}`);
             }
         },
 
@@ -3056,6 +3108,7 @@
         async searchSkillMarketplace(q) {
             this.skillMarketLoading = true;
             this.skillInstallMsg = null;
+            this.notifySkillsChanged();
             try {
                 const res = await fetch('/api/skills/marketplace?q=' + encodeURIComponent(q || 'agent'));
                 const data = await res.json();
@@ -3063,20 +3116,27 @@
                     this.skillInstallMsg = { type: 'error', text: '同步失败: ' + data.error };
                     this.skillMarketplace = [];
                 } else {
-                    this.skillMarketplace = data.skills || [];
+                    const installedSkillNames = new Set((this.skills || []).map(skill => skill.name));
+                    this.skillMarketplace = (data.skills || []).map(item => ({
+                        ...item,
+                        installed: Boolean(item.installed || installedSkillNames.has(item.name || item.id || ''))
+                    }));
                 }
             } catch (e) {
                 this.skillInstallMsg = { type: 'error', text: '网络请求异常: ' + e.message };
                 this.skillMarketplace = [];
             } finally {
                 this.skillMarketLoading = false;
+                this.notifySkillsChanged();
             }
         },
 
         async installSkillFromUrl(url, skillId = null) {
-            if (!url.trim()) return;
+            if (!url.trim()) return false;
             this.skillInstallMsg = null;
             if (skillId) this.skillInstallingId = skillId;
+            this.pendingSkillInstallNotice = true;
+            this.notifySkillsChanged();
             try {
                 const res = await fetch('/api/skills/install', {
                     method: 'POST',
@@ -3087,16 +3147,31 @@
                 if (!res.ok || data.error) throw new Error(data.error || data.detail || '安装失败');
                 this.skillInstallMsg = { type: 'success', text: data.applied_immediately ? '✓ 技能安装成功，已立即生效' : '✓ 技能安装成功' };
                 await this.loadSkills();
+                this.skillMarketplace = (this.skillMarketplace || []).map(item => {
+                    const itemName = item.name || item.id || '';
+                    const itemUrl = item.url || item.git_url || '';
+                    if ((skillId && itemName === skillId) || (itemUrl && itemUrl === url)) {
+                        return { ...item, installed: true };
+                    }
+                    return item;
+                });
+                this.notifySkillsChanged();
+                return true;
             } catch (e) {
+                this.pendingSkillInstallNotice = false;
                 this.skillInstallMsg = { type: 'error', text: e.message };
+                this.notifySkillsChanged();
+                return false;
             } finally {
                 this.skillInstallingId = null;
+                this.notifySkillsChanged();
             }
         },
 
         async uninstallSkill(name) {
             if (!confirm('确认卸载技能「' + name + '」？这将从注册表中移除该技能。')) return;
             this.skillInstallMsg = null;
+            this.notifySkillsChanged();
             try {
                 const res = await fetch('/api/skills/uninstall', {
                     method: 'POST',
@@ -3107,8 +3182,14 @@
                 if (!res.ok || data.error) throw new Error(data.error || data.detail || '卸载失败');
                 this.skillInstallMsg = { type: 'success', text: '已卸载技能「' + name + '」' };
                 await this.loadSkills();
+                this.skillMarketplace = (this.skillMarketplace || []).map(item => ({
+                    ...item,
+                    installed: (item.name || item.id || '') === name ? false : Boolean(item.installed)
+                }));
+                this.notifySkillsChanged();
             } catch (e) {
                 this.skillInstallMsg = { type: 'error', text: e.message };
+                this.notifySkillsChanged();
             }
         },
 

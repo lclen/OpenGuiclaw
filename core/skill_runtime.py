@@ -21,6 +21,7 @@ SKILLS_DIR_NAME = "skills"
 LEGACY_SKILLS_DIR_NAME = ".agents/skills"
 MIGRATION_MANIFEST_RELATIVE_PATH = Path("data") / "skill_migration_manifest.json"
 PLUGIN_MIGRATION_MANIFEST_RELATIVE_PATH = Path("data") / "plugin_skill_migration_manifest.json"
+INSTALL_METADATA_FILENAME = ".openguiclaw-skill.json"
 _FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 
 
@@ -166,6 +167,7 @@ def _install_from_raw_skill_md(source_url: str, skills_dir: Path, requested_name
     dest_dir.mkdir(parents=True, exist_ok=True)
     skill_md_path = dest_dir / "SKILL.md"
     skill_md_path.write_text(content, encoding="utf-8")
+    _write_install_metadata(dest_dir, source_url=source_url)
     return InstalledSkill(
         name=parsed["name"],
         description=parsed["description"],
@@ -212,6 +214,7 @@ def _install_from_repository_source(source_url: str, skills_dir: Path, requested
                     if dest_dir.exists():
                         shutil.rmtree(dest_dir)
                     shutil.copytree(source_dir, dest_dir)
+                    _write_install_metadata(dest_dir, source_url=source_url)
                     return InstalledSkill(
                         name=parsed["name"],
                         description=parsed["description"],
@@ -269,3 +272,21 @@ def _parse_repo_source(source_url: str) -> Dict[str, Any]:
 def _sanitize_skill_dir_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", name.strip()).strip("-._")
     return cleaned or "skill"
+
+
+def read_install_metadata(skill_dir: Path) -> Dict[str, Any]:
+    metadata_path = skill_dir / INSTALL_METADATA_FILENAME
+    if not metadata_path.exists():
+        return {}
+    try:
+        return json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_install_metadata(skill_dir: Path, *, source_url: str) -> None:
+    metadata_path = skill_dir / INSTALL_METADATA_FILENAME
+    metadata_path.write_text(
+        json.dumps({"source_url": source_url}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )

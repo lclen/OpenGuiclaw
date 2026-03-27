@@ -52,7 +52,7 @@ def _broadcast_skills_version(agent, *, action: str, installed_skill_names: Opti
         "action": action,
         "skills_version": agent.skills.get_version(),
         "installed_skill_names": installed_skill_names or [],
-        "message": "新技能已加载，本线程后续消息可直接使用",
+        "message": "新技能已加载，本线程后续消息可直接使用" if action == "install" else "",
     }
     try:
         _ctx_event_queue.put(event)
@@ -95,11 +95,11 @@ def _build_skill_records(agent) -> list[dict[str, Any]]:
                 "name": name,
                 "description": info.get("description", ""),
                 "category": "skills",
-                "registry_category": "skills",
+                "registry_category": name,
                 "type": "user_skill",
                 "enabled": info.get("enabled", True),
                 "locked": False,
-                "source": info.get("path", ""),
+                "source": info.get("source_url") or info.get("path", ""),
                 "tools": info.get("tools", []) or [],
                 "config_values": {},
             }
@@ -213,14 +213,14 @@ async def skills_marketplace(q: str = "agent"):
     try:
         import httpx
     except ImportError:
-        import subprocess
-        import sys
+        from core.runtime_deps import DependencySpec, ensure_runtime_dependencies
 
-        subprocess.run([sys.executable, "-m", "pip", "install", "httpx", "-q"], check=False)
-        try:
-            import httpx
-        except ImportError:
+        if not ensure_runtime_dependencies(
+            DependencySpec(module="httpx", package="httpx>=0.24.0", reason="技能市场需要 httpx"),
+            context="skills_marketplace",
+        ):
             return {"skills": [], "error": "httpx not available"}
+        import httpx
 
     q = q.strip() or "agent"
     cache_key = q.lower()
@@ -263,6 +263,10 @@ async def skills_marketplace(q: str = "agent"):
         for skill in agent.skills.list_all():
             if skill.source_url:
                 installed_urls.add(skill.source_url)
+        for info in (getattr(agent, "_local_skills_catalog", {}) or {}).values():
+            source_url = info.get("source_url")
+            if source_url:
+                installed_urls.add(source_url)
 
     enriched = []
     for item in data.get("skills", []):

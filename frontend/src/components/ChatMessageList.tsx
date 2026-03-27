@@ -14,6 +14,35 @@ type ChatSnapshot = {
   messages: ChatMessage[];
 };
 
+function getBlockScrollFingerprint(block: ChatBlock): string {
+  return [
+    block.type || '',
+    block.id || '',
+    block.status || '',
+    block.content?.length || 0,
+    block.html?.length || 0,
+    block.resultStr?.length || 0,
+    block.question?.length || 0,
+    block.options?.length || 0,
+    block.answered ? 1 : 0
+  ].join(':');
+}
+
+function getMessageScrollFingerprint(message?: ChatMessage): string {
+  if (!message) return '';
+  return [
+    message.id || '',
+    message.role || '',
+    message.content?.length || 0,
+    message.html?.length || 0,
+    message.thinkingHtml?.length || 0,
+    message._isThinking ? 1 : 0,
+    message._thinkCollapsed ? 1 : 0,
+    message.blocks?.length || 0,
+    (message.blocks || []).map(getBlockScrollFingerprint).join('|')
+  ].join('::');
+}
+
 function cloneChatBlock(block: ChatBlock): ChatBlock {
   return {
     ...block,
@@ -49,7 +78,7 @@ export function ChatMessageList() {
   );
   const [errorText, setErrorText] = useState('');
   // 用于判断是否应该滚底：只跟踪消息数量和最后一条消息的内容/blocks长度
-  const scrollAnchorRef = useRef<{ count: number; lastId: string; lastBlockCount: number } | null>(null);
+  const scrollAnchorRef = useRef<{ count: number; lastFingerprint: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -92,17 +121,15 @@ export function ChatMessageList() {
 
     const last = messages[messages.length - 1];
     const count = messages.length;
-    const lastId = last?.id ?? '';
-    const lastBlockCount = last?.blocks?.length ?? 0;
+    const lastFingerprint = getMessageScrollFingerprint(last);
 
     const prev = scrollAnchorRef.current;
     const shouldScroll =
       !prev ||
       count !== prev.count ||
-      lastId !== prev.lastId ||
-      lastBlockCount !== prev.lastBlockCount;
+      lastFingerprint !== prev.lastFingerprint;
 
-    scrollAnchorRef.current = { count, lastId, lastBlockCount };
+    scrollAnchorRef.current = { count, lastFingerprint };
 
     if (!shouldScroll) return;
 
