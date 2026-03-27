@@ -285,6 +285,7 @@ export type OpenGuiclawApp = {
   openNewWorkspaceModal?: () => void;
   pickWorkspacePath?: () => Promise<void>;
   createWorkspace?: (name?: string, path?: string) => Promise<void>;
+  archiveWorkspace?: (wsId: string) => Promise<void>;
   setNewWorkspaceName?: (value: string) => void;
   setNewWorkspacePath?: (value: string) => void;
   closeNewWorkspaceModal?: () => void;

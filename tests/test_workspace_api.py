@@ -492,3 +492,75 @@ class TestWorkspaceChatContext:
         session_file = wm._sessions_dir(ws["id"]) / f"{session['session_id']}.json"
         session_data = json.loads(session_file.read_text(encoding="utf-8"))
         assert session_data["metadata"]["workspace_path"] == str(ws_path.resolve())
+
+    async def test_archived_workspace_session_messages_rejected(self, workspace_chat_client, ws_path, wm):
+        client, _ = workspace_chat_client
+        ws = await create_ws(client, ws_path, "Archived Session")
+        session = make_session(wm, ws["id"], "sess_archived_messages", archived=True)
+
+        response = await client.get(
+            f"/api/workspaces/{ws['id']}/sessions/{session['session_id']}/messages"
+        )
+
+        assert response.status_code == 409
+        assert "archived" in response.json()["detail"]
+
+    async def test_archived_workspace_stream_rejected(self, workspace_chat_client, ws_path, wm):
+        client, _ = workspace_chat_client
+        ws = await create_ws(client, ws_path, "Archived Stream")
+        session = make_session(wm, ws["id"], "sess_archived_stream", archived=True)
+
+        response = await client.post(
+            f"/api/workspaces/{ws['id']}/sessions/{session['session_id']}/stream",
+            json={
+                "workspace_id": ws["id"],
+                "session_id": session["session_id"],
+                "message": "继续这个线程",
+            },
+        )
+
+        assert response.status_code == 409
+        assert "archived" in response.json()["detail"]
+
+    async def test_stream_save_preserves_concurrent_session_metadata(self, workspace_chat_client, ws_path, wm):
+        client, fake_agent = workspace_chat_client
+        ws = await create_ws(client, ws_path, "Concurrent Session")
+        session = make_session(wm, ws["id"], "sess_merge", archived=False)
+        session_path = wm._sessions_dir(ws["id"]) / f"{session['session_id']}.json"
+
+        class _ConcurrentMutationCompletions:
+            def create(self, **kwargs):
+                payload = json.loads(session_path.read_text(encoding="utf-8"))
+                payload["archived"] = True
+                payload["pinned"] = True
+                payload["title"] = "并发修改后的标题"
+                payload["updated_at"] = "2026-01-02T03:04:05Z"
+                session_path.write_text(json.dumps(payload), encoding="utf-8")
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=_FakeResponseMessage(content="流式回复完成。"))],
+                    usage=None,
+                )
+
+        fake_agent.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=_ConcurrentMutationCompletions())
+        )
+
+        async with client.stream(
+            "POST",
+            f"/api/workspaces/{ws['id']}/sessions/{session['session_id']}/stream",
+            json={
+                "workspace_id": ws["id"],
+                "session_id": session["session_id"],
+                "message": "请继续处理",
+            },
+        ) as response:
+            assert response.status_code == 200
+            body = await response.aread()
+            assert b"[DONE]" in body
+
+        saved = json.loads(session_path.read_text(encoding="utf-8"))
+        assert saved["archived"] is True
+        assert saved["pinned"] is True
+        assert saved["title"] == "并发修改后的标题"
+        assert any(msg.get("role") == "user" and msg.get("content") == "请继续处理" for msg in saved["messages"])
+        assert any(msg.get("role") == "assistant" and msg.get("content") == "流式回复完成。" for msg in saved["messages"])

@@ -225,6 +225,7 @@ class TestSessionManagement:
         sessions = wm.list_sessions(ws.id, include_archived=True)
         s = next(x for x in sessions if x.session_id == "sess_001")
         assert s.archived is True
+        assert s.updated_at != "2025-01-01T00:00:00Z"
 
     def test_unarchive_session(self, wm, ws_path):
         ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
@@ -234,6 +235,7 @@ class TestSessionManagement:
         sessions = wm.list_sessions(ws.id, include_archived=True)
         s = next(x for x in sessions if x.session_id == "sess_001")
         assert s.archived is False
+        assert s.updated_at != "2025-01-01T00:00:00Z"
 
     def test_delete_archived_session(self, wm, ws_path):
         ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
@@ -262,6 +264,18 @@ class TestSessionManagement:
         sessions = wm.list_sessions(ws.id, include_archived=True)
         renamed = next(x for x in sessions if x.session_id == "sess_rename")
         assert renamed.title == "新的标题"
+        assert renamed.updated_at != "2025-01-01T00:00:00Z"
+
+    def test_pin_session_updates_timestamp(self, wm, ws_path):
+        ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
+        self._make_session(wm, ws.id, "sess_pin", archived=False)
+
+        wm.set_session_pinned(ws.id, "sess_pin", True)
+
+        sessions = wm.list_sessions(ws.id, include_archived=True)
+        pinned = next(x for x in sessions if x.session_id == "sess_pin")
+        assert pinned.pinned is True
+        assert pinned.updated_at != "2025-01-01T00:00:00Z"
 
     def test_rename_session_empty_title_rejected(self, wm, ws_path):
         ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))

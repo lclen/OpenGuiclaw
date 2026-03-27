@@ -10,12 +10,15 @@ import glob
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from core.automation_context import get_automation_source_context
 from core.im_bots import make_im_session_id, parse_im_session_id
+from core.process_runtime import cleanup_process_runtime_targets, detect_runtime_mode
+from core.runtime_diagnostics import collect_runtime_selfcheck_snapshot
 from core.session import Session
 from core.state import app_state, _APP_BASE, logger
 from core.workspace_manager import get_workspace_manager
@@ -427,7 +430,7 @@ async def execute_system_task(task, push_fn: Callable) -> tuple[bool, str]:
     """Route a system task to its handler by action name."""
     action = task.action or ""
     if action == "system:daily_selfcheck":
-        return await _system_daily_selfcheck(push_fn)
+        return await _system_daily_selfcheck(push_fn, task)
     if action == "system:memory_consolidate":
         return await _system_memory_consolidate(push_fn, task)
     if action == "system:memory_audit":
@@ -439,130 +442,402 @@ async def execute_system_task(task, push_fn: Callable) -> tuple[bool, str]:
 
 # ── Daily self-check ──────────────────────────────────────────────────────────
 
-async def _system_daily_selfcheck(push_fn: Callable) -> tuple[bool, str]:
-    """
-    Check data-directory integrity, scan log files for errors, and
-    summarise scheduler task health.  Pushes a Markdown report to chat.
-    """
-    lines = [f"## 🔍 系统自检报告 — {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
-    issues: list[str] = []
+_SELFCHECK_REQUIRED_DIRS = [
+    "data",
+    "data/sessions",
+    "data/memory",
+    "data/scheduler",
+    "data/diary",
+    "data/journals",
+    "data/identities",
+    "data/identity",
+    "data/plans",
+    "data/consolidation",
+]
+_STATUS_EMOJI = {"healthy": "✅", "degraded": "⚠️", "unhealthy": "❌", "unknown": "❔"}
 
-    # 1. Required directories
-    required_dirs = [
-        str(_APP_BASE / d) for d in [
-            "data", "data/sessions", "data/memory", "data/scheduler",
-            "data/diary", "data/journals", "data/identities", "data/identity",
-            "data/plans", "data/consolidation",
-        ]
-    ]
-    for d in required_dirs:
-        if not os.path.exists(d):
-            try:
-                os.makedirs(d, exist_ok=True)
-                issues.append(f"⚠️ 目录 `{d}` 不存在，已自动创建")
-            except Exception as e:
-                issues.append(f"❌ 目录 `{d}` 创建失败: {e}")
 
-    # 2. Log error scan
+def _scan_log_error_summary() -> dict[str, int]:
     log_errors: dict[str, int] = {}
-    for lf in glob.glob("*.log") + glob.glob("logs/*.log"):
+    candidates = list((_APP_BASE).glob("*.log")) + list((_APP_BASE / "logs").glob("*.log"))
+    for path in candidates:
         try:
-            with open(lf, "r", encoding="utf-8", errors="ignore") as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
-                    if " ERROR " in line or " CRITICAL " in line:
-                        parts = line.split(" - ")
-                        module = parts[1].strip() if len(parts) > 2 else "unknown"
-                        log_errors[module] = log_errors.get(module, 0) + 1
+                    if " ERROR " not in line and " CRITICAL " not in line:
+                        continue
+                    parts = line.split(" - ")
+                    module = parts[1].strip() if len(parts) > 2 else "unknown"
+                    log_errors[module] = log_errors.get(module, 0) + 1
         except Exception:
-            pass
+            continue
+    return log_errors
 
-    # 3. Scheduler summary
+
+def _summarize_scheduler_health() -> dict[str, int]:
     scheduler = app_state.get("task_scheduler")
-    task_summary = {"total": 0, "enabled": 0, "failed": 0}
-    if scheduler:
-        tasks = scheduler.list_tasks()
-        task_summary["total"] = len(tasks)
-        task_summary["enabled"] = sum(1 for t in tasks if t.enabled)
-        task_summary["failed"] = sum(1 for t in tasks if t.fail_count > 0)
+    if not scheduler:
+        return {"total": 0, "enabled": 0, "failed": 0}
+    tasks = scheduler.list_tasks()
+    return {
+        "total": len(tasks),
+        "enabled": sum(1 for task in tasks if task.enabled),
+        "failed": sum(1 for task in tasks if task.fail_count > 0),
+    }
 
-    # 4. Agent + session + memory counts
-    ag = app_state.get("agent")
-    agent_ok = ag is not None
-    session_count = len(glob.glob(str(_APP_BASE / "data" / "sessions" / "*.json")))
-    memory_count = 0
-    memory_file = str(_APP_BASE / "data" / "memory.jsonl")
-    if os.path.exists(memory_file):
+
+def _count_memory_entries() -> int:
+    memory_file = _APP_BASE / "data" / "memory.jsonl"
+    if not memory_file.exists():
+        return 0
+    try:
+        with open(memory_file, "r", encoding="utf-8") as f:
+            return sum(1 for line in f if line.strip())
+    except Exception:
+        return 0
+
+
+def _fix_record_to_dict(record: Any) -> dict[str, Any]:
+    if hasattr(record, "model_dump"):
+        return record.model_dump()
+    if hasattr(record, "dict"):
+        return record.dict()
+    return {
+        "component": getattr(record, "component", "unknown"),
+        "error_pattern": getattr(record, "error_pattern", ""),
+        "can_fix": bool(getattr(record, "can_fix", False)),
+        "fix_action": getattr(record, "fix_action", ""),
+        "success": bool(getattr(record, "success", False)),
+        "verification_result": getattr(record, "verification_result", ""),
+    }
+
+
+def _merge_overall_status(statuses: list[str]) -> str:
+    normalized = [str(item or "") for item in statuses if item]
+    if any(item == "unhealthy" for item in normalized):
+        return "unhealthy"
+    if any(item == "degraded" for item in normalized):
+        return "degraded"
+    if any(item == "healthy" for item in normalized):
+        return "healthy"
+    return "unknown"
+
+
+def _render_status(status: str, label: str) -> str:
+    return f"{_STATUS_EMOJI.get(status, '❔')} {label}"
+
+
+def _persist_selfcheck_artifacts(result: dict[str, Any], report: str) -> None:
+    reports_dir = _APP_BASE / "data" / "selfcheck"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    latest_json = reports_dir / "latest.json"
+    latest_md = reports_dir / "latest.md"
+    dated_json = reports_dir / f"selfcheck_{timestamp}.json"
+    dated_md = reports_dir / f"selfcheck_{timestamp}.md"
+    payload = json.dumps(result, ensure_ascii=False, indent=2)
+    latest_json.write_text(payload, encoding="utf-8")
+    latest_md.write_text(report, encoding="utf-8")
+    dated_json.write_text(payload, encoding="utf-8")
+    dated_md.write_text(report, encoding="utf-8")
+
+
+def _build_selfcheck_report(result: dict[str, Any]) -> str:
+    generated_at = result["generated_at"]
+    service = result["runtime"]["service"]
+    process_runtime = result["runtime"]["process_runtime"]
+    endpoints = result["endpoints"]
+    network_matrix = result["network_matrix"]
+    im_channels = result["im_channels"]
+    scheduler = result["scheduler"]
+    logs = result["logs"]
+    fixes = result["fixes"]
+
+    lines = [f"## 🔍 系统自检报告 — {generated_at}"]
+    lines.append(f"\n**总体状态**: {_render_status(result['overall_status'], result['overall_summary'])}")
+    lines.append(
+        f"**服务运行**: PID `{service['pid']}` · 版本 `{service['version']}` · 模式 `{service['restart_mode']}` · 运行 {service['uptime_seconds']}s"
+    )
+    lines.append(
+        f"**计划任务**: 共 {scheduler['total']} 个，启用 {scheduler['enabled']} 个，失败 {scheduler['failed']} 个"
+    )
+    lines.append(
+        f"**数据概况**: 会话 {result['environment']['session_count']} 个 · 记忆 {result['environment']['memory_count']} 条"
+    )
+
+    lines.append(f"\n### 运行时探测")
+    lines.append(
+        f"- 服务: {_render_status('healthy', '在线')} · 重启模式 `{result['environment']['restart']['mode']}`"
+    )
+    endpoint_label = f"{len(endpoints['results'])} 个目标"
+    im_label = f"{len(im_channels['results'])} 个通道"
+    lines.append(
+        f"- 端点: {_render_status(endpoints['status'], endpoint_label)}"
+    )
+    lines.append(
+        f"- 网络矩阵: {_render_status(network_matrix['status'], network_matrix['summary'])}"
+    )
+    lines.append(
+        f"- IM 通道: {_render_status(im_channels['status'], im_label)}"
+    )
+
+    conflicts = process_runtime.get("conflicts", [])
+    if conflicts:
+        lines.append("\n### 进程残留 / 冲突")
+        for item in conflicts[:6]:
+            pid_text = f"pid={item.get('pid')}" if item.get("pid") is not None else "pid=-"
+            lines.append(f"- `{item.get('type')}` {pid_text}: {item.get('summary')}")
+    else:
+        lines.append("\n### 进程残留 / 冲突")
+        lines.append("- ✅ 未发现残留进程或 stale run record")
+
+    if network_matrix["results"]:
+        lines.append("\n### 网络矩阵")
+        for probe in network_matrix["results"]:
+            label = probe.get("probe_label") or probe.get("probe_mode")
+            detail = f"{probe['latency_ms']}ms" if probe.get("latency_ms") is not None else "未返回延迟"
+            if probe.get("error"):
+                detail = f"{detail} · {probe['error']}"
+            lines.append(f"- {_render_status(probe['status'], str(label))}: {detail}")
+
+    if endpoints["results"]:
+        lines.append("\n### LLM Endpoints")
+        for endpoint in endpoints["results"]:
+            detail = f"{endpoint['latency_ms']}ms" if endpoint.get("latency_ms") is not None else "未返回延迟"
+            if endpoint.get("error"):
+                detail = f"{detail} · {endpoint['error']}"
+            lines.append(f"- {_render_status(endpoint['status'], endpoint['label'] or endpoint['name'])}: {detail}")
+    else:
+        lines.append("\n### LLM Endpoints")
+        lines.append("- ❔ 当前未配置可测活端点")
+
+    lines.append("\n### IM 通道")
+    if im_channels["results"]:
+        for channel in im_channels["results"]:
+            detail = channel.get("summary") or "无摘要"
+            if channel.get("last_error"):
+                detail = f"{detail} · {channel['last_error']}"
+            lines.append(f"- {_render_status(channel['status'], channel['display_name'])}: {detail}")
+    else:
+        lines.append("- ❔ 当前未配置 IM 通道")
+
+    lines.append("\n### 日志与轻修复")
+    lines.append(
+        f"- 日志错误模块: {len(logs['by_module'])} 个 · 错误行 {logs['total_errors']} 条"
+    )
+    if logs["by_module"]:
+        for module, count in sorted(logs["by_module"].items(), key=lambda item: -item[1])[:5]:
+            lines.append(f"  - `{module}`: {count} 次")
+    lines.append(
+        f"- AI 分析: core={fixes['core_error_count']} · capability={fixes['tool_error_count']} · 自动修复成功={fixes['fixed_count']}"
+    )
+    if fixes["actions"]:
+        for item in fixes["actions"]:
+            prefix = "✅" if item.get("success") else ("⚠️" if item.get("can_fix") else "🔴")
+            lines.append(f"  - {prefix} `{item.get('component')}`: {item.get('error_pattern')}")
+            if item.get("fix_action"):
+                lines.append(f"    👉 {item['fix_action']}")
+            if item.get("verification_result"):
+                lines.append(f"    🔍 {item['verification_result']}")
+
+    if fixes["stale_record_cleanup"]:
+        lines.append("\n### 自动清理")
+        for cleanup in fixes["stale_record_cleanup"]:
+            target = cleanup.get("record_id") or cleanup.get("pid")
+            lines.append(f"- `{target}`: {cleanup.get('status')} ({cleanup.get('action')})")
+
+    return "\n".join(lines)
+
+
+def _build_selfcheck_im_summary(result: dict[str, Any]) -> str:
+    lines = [
+        f"🔍 系统自检摘要 {result['generated_at']}",
+        f"- 总体状态: {_render_status(result['overall_status'], result['overall_summary'])}",
+        f"- 服务: PID {result['runtime']['service']['pid']} / {result['runtime']['service']['restart_mode']}",
+        f"- 端点: {result['endpoints']['status']} ({len(result['endpoints']['results'])} 个)",
+        f"- 网络矩阵: {result['network_matrix']['status']} / {result['network_matrix']['summary']}",
+        f"- IM 通道: {result['im_channels']['status']} ({len(result['im_channels']['results'])} 个)",
+        f"- 日志错误: {result['logs']['total_errors']} 条 / 模块 {len(result['logs']['by_module'])} 个",
+    ]
+    conflicts = result["runtime"]["process_runtime"].get("conflicts", [])
+    if conflicts:
+        lines.append(f"- 进程冲突: {len(conflicts)} 项，建议在 Diagnostics 中人工处理")
+    if result["fixes"]["stale_record_cleanup"]:
+        lines.append(f"- 已自动清理 stale record: {len(result['fixes']['stale_record_cleanup'])} 项")
+    return "\n".join(lines)
+
+
+def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str) -> None:
+    targets = _resolve_task_delivery_target(task) if task else []
+    if not targets:
+        deliver_automation_event("assistant", report)
+        return
+
+    non_im_targets = [item for item in targets if item.get("target_kind") != "im_session"]
+    im_targets = [item for item in targets if item.get("target_kind") == "im_session"]
+
+    for target in non_im_targets:
+        deliver_automation_event(
+            "assistant",
+            report,
+            target_kind=target["target_kind"],
+            target_workspace_id=target["target_workspace_id"],
+            target_session_id=target["target_session_id"],
+            target_channel=target["target_channel"],
+            target_chat_id=target["target_chat_id"],
+        )
+
+    if im_targets and not non_im_targets:
+        deliver_automation_event("assistant", report, target_kind="workspace_inbox")
+
+    for target in im_targets:
+        deliver_automation_event(
+            "assistant",
+            im_summary,
+            target_kind=target["target_kind"],
+            target_workspace_id=target["target_workspace_id"],
+            target_session_id=target["target_session_id"],
+            target_channel=target["target_channel"],
+            target_chat_id=target["target_chat_id"],
+        )
+
+
+async def _system_daily_selfcheck(push_fn: Callable, task: Optional[Any] = None) -> tuple[bool, str]:
+    """Daily automated selfcheck with runtime probes, light repair, and summary delivery."""
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    created_dirs: list[str] = []
+    dir_failures: list[str] = []
+    for rel_path in _SELFCHECK_REQUIRED_DIRS:
+        target = _APP_BASE / rel_path
+        if target.exists():
+            continue
         try:
-            with open(memory_file, "r", encoding="utf-8") as f:
-                memory_count = sum(1 for line in f if line.strip())
-        except Exception:
-            pass
+            target.mkdir(parents=True, exist_ok=True)
+            created_dirs.append(str(target))
+        except Exception as exc:
+            dir_failures.append(f"{target}: {exc}")
 
-    # 5. AI log analysis & auto-fix (分层修复 + 验证 + 重试降级)
-    core_errs, tool_errs, records = 0, 0, []
+    runtime_snapshot = await collect_runtime_selfcheck_snapshot(
+        _APP_BASE,
+        current_pid=os.getpid(),
+        version=str(app_state.get("server_version") or "unknown"),
+        started_at=float(app_state.get("server_started_at") or datetime.now().timestamp()),
+        mode=detect_runtime_mode(),
+        is_frozen=getattr(sys, "frozen", False),
+    )
+
+    stale_records = [
+        item.get("record_id")
+        for item in runtime_snapshot["runtime"]["process_runtime"].get("conflicts", [])
+        if item.get("type") == "stale_record" and item.get("record_id")
+    ]
+    stale_cleanup_results: list[dict[str, Any]] = []
+    if stale_records:
+        cleanup_result = cleanup_process_runtime_targets(
+            _APP_BASE,
+            current_pid=os.getpid(),
+            version=str(app_state.get("server_version") or "unknown"),
+            started_at=float(app_state.get("server_started_at") or datetime.now().timestamp()),
+            target_records=stale_records,
+            target_pids=[],
+            mode=detect_runtime_mode(),
+            is_frozen=getattr(sys, "frozen", False),
+        )
+        stale_cleanup_results = cleanup_result.get("results", [])
+        runtime_snapshot = await collect_runtime_selfcheck_snapshot(
+            _APP_BASE,
+            current_pid=os.getpid(),
+            version=str(app_state.get("server_version") or "unknown"),
+            started_at=float(app_state.get("server_started_at") or datetime.now().timestamp()),
+            mode=detect_runtime_mode(),
+            is_frozen=getattr(sys, "frozen", False),
+        )
+
+    log_errors = _scan_log_error_summary()
+    ag = app_state.get("agent")
+    fix_records: list[dict[str, Any]] = []
+    core_errs = 0
+    tool_errs = 0
     if log_errors and ag:
         try:
             from core.self_check import SelfChecker
+
             checker = SelfChecker(agent=ag)
-            core_errs, tool_errs, records = await checker.analyze_and_fix(push_fn)
-        except Exception as e:
-            logger.error(f"AI self-check failed: {e}")
+            core_errs, tool_errs, raw_records = await checker.analyze_and_fix(push_fn)
+            fix_records = [_fix_record_to_dict(item) for item in raw_records]
+        except Exception as exc:
+            logger.error(f"AI self-check failed: {exc}")
 
-    # Build report
-    lines.append(f"\n**Agent 状态**: {'✅ 在线' if agent_ok else '❌ 离线'}")
-    lines.append(f"**会话文件**: {session_count} 个")
-    lines.append(f"**记忆条目**: {memory_count} 条")
-    lines.append(
-        f"\n**计划任务**: 共 {task_summary['total']} 个，"
-        f"启用 {task_summary['enabled']} 个，"
-        f"有失败记录 {task_summary['failed']} 个"
-    )
-    if log_errors:
-        lines.append(f"\n**日志错误** ({sum(log_errors.values())} 条):")
-        for mod, cnt in sorted(log_errors.items(), key=lambda x: -x[1])[:5]:
-            lines.append(f"  - `{mod}`: {cnt} 次")
-        if records:
-            fixed_count = sum(1 for r in records if r.success)
-            lines.append(
-                f"\n  *AI 诊断*: 核心错误 **{core_errs}** 个 (需人工处理)，"
-                f"能力层错误 **{tool_errs}** 个，"
-                f"自动修复成功 **{fixed_count}** 个"
-            )
+    scheduler_summary = _summarize_scheduler_health()
+    environment = {
+        "session_count": len(glob.glob(str(_APP_BASE / "data" / "sessions" / "*.json"))),
+        "memory_count": _count_memory_entries(),
+        "directories_created": created_dirs,
+        "directory_failures": dir_failures,
+        **runtime_snapshot["environment"],
+    }
+    fixes = {
+        "core_error_count": core_errs,
+        "tool_error_count": tool_errs,
+        "fixed_count": sum(1 for item in fix_records if item.get("success")),
+        "actions": fix_records,
+        "stale_record_cleanup": stale_cleanup_results,
+    }
+    logs = {
+        "total_errors": sum(log_errors.values()),
+        "by_module": log_errors,
+    }
+
+    process_conflicts = runtime_snapshot["runtime"]["process_runtime"].get("conflicts", [])
+    status_inputs: list[str] = []
+    if dir_failures:
+        status_inputs.append("unhealthy")
+    elif created_dirs:
+        status_inputs.append("degraded")
+    if any(item.get("type") in {"running_conflict", "orphan_process"} for item in process_conflicts):
+        status_inputs.append("unhealthy")
+    if scheduler_summary["failed"] > 0:
+        status_inputs.append("degraded")
+    if logs["total_errors"] > 0 or core_errs > 0:
+        status_inputs.append("degraded")
+    if any(item.get("can_fix") and not item.get("success") for item in fix_records):
+        status_inputs.append("degraded")
+    if runtime_snapshot["endpoints"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append(runtime_snapshot["endpoints"]["status"])
+    if runtime_snapshot["network_matrix"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append(runtime_snapshot["network_matrix"]["status"])
+    if runtime_snapshot["im_channels"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append("degraded")
+    overall_status = _merge_overall_status(status_inputs) if status_inputs else "healthy"
+
+    if overall_status == "healthy":
+        overall_summary = "运行时与环境检查均正常"
+    elif overall_status == "degraded":
+        overall_summary = "存在可恢复问题，已完成轻修复并保留人工处理建议"
     else:
-        lines.append("\n**日志错误**: 无")
+        overall_summary = "存在运行时风险，请优先查看 Diagnostics 手动排障"
 
-    if issues or records:
-        lines.append("\n**自动修复 / 诊断建议**:")
-        for issue in issues:
-            lines.append(f"  - {issue}")
-        for rec in records:
-            if not rec.can_fix:
-                prefix = "🔴 [需人工处理]"
-            elif rec.success:
-                prefix = "✅ [已自动修复]"
-            else:
-                prefix = "⚠️ [修复失败]"
-            lines.append(f"  - {prefix} `{rec.component}`: {rec.error_pattern}")
-            lines.append(f"    👉 {rec.fix_action}")
-            if rec.verification_result:
-                lines.append(f"    🔍 验证: {rec.verification_result}")
+    result = {
+        "generated_at": generated_at,
+        "environment": environment,
+        "runtime": runtime_snapshot["runtime"],
+        "network_matrix": runtime_snapshot["network_matrix"],
+        "endpoints": runtime_snapshot["endpoints"],
+        "im_channels": runtime_snapshot["im_channels"],
+        "scheduler": scheduler_summary,
+        "logs": logs,
+        "fixes": fixes,
+        "overall_status": overall_status,
+        "overall_summary": overall_summary,
+    }
+    report = _build_selfcheck_report(result)
+    im_summary = _build_selfcheck_im_summary(result)
+    _persist_selfcheck_artifacts(result, report)
+    _deliver_selfcheck_reports(task, report, im_summary)
+    push_fn({"type": "chat_event", "role": "assistant", "content": im_summary})
 
-    status = (
-        "✅ 系统运行正常"
-        if not issues and not log_errors
-        else f"⚠️ 发现 {len(issues)} 个问题，{len(log_errors)} 个错误模块"
-    )
-    lines.append(f"\n**总结**: {status}")
-    report = "\n".join(lines)
-
-    workspace_ids: list[str] = []
-    if ag:
-        ag.sessions.current.add_message("assistant", report)
-        ag.sessions.save()
-        workspace_ids = _sync_current_session_to_workspace_mirrors(ag)
-    _push_chat_event(push_fn, ag, "assistant", report, workspace_ids)
-    logger.info(f"System selfcheck completed: {status}")
-    return True, status
+    logger.info("System selfcheck completed: %s", overall_summary)
+    return True, f"{_STATUS_EMOJI.get(overall_status, '❔')} {overall_summary}"
 
 
 # ── Memory consolidation ──────────────────────────────────────────────────────

@@ -6,6 +6,12 @@ import aiofiles
 import aiofiles.os
 import re
 from core.automation_context import get_request_workspace_path
+from core.tool_path_repair import (
+    format_missing_path_message,
+    format_repair_notice,
+    log_path_resolution,
+    resolve_tool_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +23,20 @@ class FileTool:
 
     def _resolve_path(self, path: str) -> Path:
         """解析路径（支持相对目录隔离）"""
-        p = Path(path)
-        if p.is_absolute():
-            return p
         workspace_path = get_request_workspace_path()
-        effective_base = Path(workspace_path) if workspace_path else self.base_path
-        return effective_base / p
+        resolution = resolve_tool_path(
+            path,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+            expect="any",
+        )
+        log_path_resolution(
+            tool_name="filesystem.resolve",
+            result=resolution,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+        )
+        return Path(resolution.resolved_path)
 
     # 二进制文件扩展名判断防呆
     BINARY_EXTENSIONS = {
@@ -36,9 +50,17 @@ class FileTool:
     }
 
     async def read(self, path: str, encoding: str = "utf-8") -> str:
-        file_path = self._resolve_path(path)
+        workspace_path = get_request_workspace_path()
+        resolution = resolve_tool_path(path, cwd=self.base_path, workspace_path=workspace_path, expect="file")
+        log_path_resolution(
+            tool_name="read_file",
+            result=resolution,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+        )
+        file_path = Path(resolution.resolved_path)
         if not file_path.exists():
-            raise FileNotFoundError(f"文件不存在: {file_path}")
+            raise FileNotFoundError(format_missing_path_message(resolution, "文件不存在"))
             
         suffix = file_path.suffix.lower()
         if suffix in self.BINARY_EXTENSIONS:
@@ -47,21 +69,39 @@ class FileTool:
 
         try:
             async with aiofiles.open(file_path, encoding=encoding) as f:
-                return await f.read()
+                content = await f.read()
+                notice = format_repair_notice(resolution)
+                return f"{notice}\n{content}" if notice else content
         except UnicodeDecodeError:
             stat = await aiofiles.os.stat(file_path)
             return f"[无法解码的文件: {file_path.name}, 大小: {stat.st_size / 1024:.1f}KB - 可能是二进制文件]"
 
     async def write(self, path: str, content: str, encoding: str = "utf-8") -> None:
-        file_path = self._resolve_path(path)
+        workspace_path = get_request_workspace_path()
+        resolution = resolve_tool_path(path, cwd=self.base_path, workspace_path=workspace_path, expect="parent")
+        log_path_resolution(
+            tool_name="write_file",
+            result=resolution,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+        )
+        file_path = Path(resolution.resolved_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(file_path, mode="w", encoding=encoding) as f:
             await f.write(content)
 
     async def list_dir(self, path: str = ".", pattern: str = "*", recursive: bool = False) -> list[str]:
-        dir_path = self._resolve_path(path)
+        workspace_path = get_request_workspace_path()
+        resolution = resolve_tool_path(path, cwd=self.base_path, workspace_path=workspace_path, expect="dir")
+        log_path_resolution(
+            tool_name="list_directory",
+            result=resolution,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+        )
+        dir_path = Path(resolution.resolved_path)
         if not dir_path.exists():
-            raise FileNotFoundError(f"目录不存在: {dir_path}")
+            raise FileNotFoundError(format_missing_path_message(resolution, "目录不存在"))
             
         if recursive:
             return [str(p.relative_to(dir_path)) for p in dir_path.rglob(pattern)]
@@ -69,9 +109,17 @@ class FileTool:
             return [str(p.relative_to(dir_path)) for p in dir_path.glob(pattern)]
 
     async def search(self, pattern: str, path: str = ".", content_pattern: str | None = None) -> list[str]:
-        dir_path = self._resolve_path(path)
+        workspace_path = get_request_workspace_path()
+        resolution = resolve_tool_path(path, cwd=self.base_path, workspace_path=workspace_path, expect="dir")
+        log_path_resolution(
+            tool_name="search_file",
+            result=resolution,
+            cwd=self.base_path,
+            workspace_path=workspace_path,
+        )
+        dir_path = Path(resolution.resolved_path)
         if not dir_path.exists():
-            raise FileNotFoundError(f"搜索目录不存在: {dir_path}")
+            raise FileNotFoundError(format_missing_path_message(resolution, "搜索目录不存在"))
             
         matches = []
         for file_path in dir_path.rglob(pattern):
@@ -88,10 +136,15 @@ class FileTool:
         return matches
 
     async def copy(self, src: str, dst: str) -> None:
-        src_path = self._resolve_path(src)
-        dst_path = self._resolve_path(dst)
+        workspace_path = get_request_workspace_path()
+        src_resolution = resolve_tool_path(src, cwd=self.base_path, workspace_path=workspace_path, expect="any")
+        dst_resolution = resolve_tool_path(dst, cwd=self.base_path, workspace_path=workspace_path, expect="parent")
+        log_path_resolution(tool_name="copy_path.src", result=src_resolution, cwd=self.base_path, workspace_path=workspace_path)
+        log_path_resolution(tool_name="copy_path.dst", result=dst_resolution, cwd=self.base_path, workspace_path=workspace_path)
+        src_path = Path(src_resolution.resolved_path)
+        dst_path = Path(dst_resolution.resolved_path)
         if not src_path.exists():
-            raise FileNotFoundError(f"源路径不存在: {src_path}")
+            raise FileNotFoundError(format_missing_path_message(src_resolution, "源路径不存在"))
             
         if src_path.is_file():
             dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,10 +153,15 @@ class FileTool:
             shutil.copytree(src_path, dst_path)
 
     async def move(self, src: str, dst: str) -> None:
-        src_path = self._resolve_path(src)
-        dst_path = self._resolve_path(dst)
+        workspace_path = get_request_workspace_path()
+        src_resolution = resolve_tool_path(src, cwd=self.base_path, workspace_path=workspace_path, expect="any")
+        dst_resolution = resolve_tool_path(dst, cwd=self.base_path, workspace_path=workspace_path, expect="parent")
+        log_path_resolution(tool_name="move_path.src", result=src_resolution, cwd=self.base_path, workspace_path=workspace_path)
+        log_path_resolution(tool_name="move_path.dst", result=dst_resolution, cwd=self.base_path, workspace_path=workspace_path)
+        src_path = Path(src_resolution.resolved_path)
+        dst_path = Path(dst_resolution.resolved_path)
         if not src_path.exists():
-            raise FileNotFoundError(f"源路径不存在: {src_path}")
+            raise FileNotFoundError(format_missing_path_message(src_resolution, "源路径不存在"))
             
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(src_path, dst_path)
@@ -150,7 +208,10 @@ def register(skills_manager):
     async def write_file(path: str, content: str, encoding: str = "utf-8") -> str:
         try:
             await ft.write(path, content, encoding)
-            return f"✅ 成功写入文件: {path}"
+            resolution = resolve_tool_path(path, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="parent")
+            notice = format_repair_notice(resolution)
+            base = f"✅ 成功写入文件: {resolution.resolved_path if resolution.was_repaired else path}"
+            return f"{notice}\n{base}" if notice else base
         except Exception as e:
             return f"❌ 文件写入失败: {e}"
 
@@ -170,7 +231,10 @@ def register(skills_manager):
     async def list_directory(path: str = ".", pattern: str = "*", recursive: bool = False) -> str:
         try:
             files = await ft.list_dir(path, pattern, recursive)
-            return "\\n".join(files) if files else "(空目录或无匹配文件)"
+            resolution = resolve_tool_path(path, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="dir")
+            notice = format_repair_notice(resolution)
+            body = "\\n".join(files) if files else "(空目录或无匹配文件)"
+            return f"{notice}\n{body}" if notice else body
         except Exception as e:
             return f"❌ 目录读取失败: {e}"
 
@@ -190,7 +254,10 @@ def register(skills_manager):
     async def search_file(pattern: str, path: str = ".", content_pattern: str = None) -> str:
         try:
             matches = await ft.search(pattern, path, content_pattern)
-            return "\\n".join(matches) if matches else "(未找到匹配的内容)"
+            resolution = resolve_tool_path(path, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="dir")
+            notice = format_repair_notice(resolution)
+            body = "\\n".join(matches) if matches else "(未找到匹配的内容)"
+            return f"{notice}\n{body}" if notice else body
         except Exception as e:
             return f"❌ 搜索文件失败: {e}"
 
@@ -207,14 +274,19 @@ def register(skills_manager):
     )
     async def delete_path(path: str) -> str:
         try:
-            p = ft._resolve_path(path)
+            workspace_path = get_request_workspace_path()
+            resolution = resolve_tool_path(path, cwd=ft.base_path, workspace_path=workspace_path, expect="any")
+            log_path_resolution(tool_name="delete_path", result=resolution, cwd=ft.base_path, workspace_path=workspace_path)
+            p = Path(resolution.resolved_path)
             if not p.exists():
-                return f"⚠️ 路径已被删除或不存在: {path}"
+                return f"⚠️ {format_missing_path_message(resolution, '路径已被删除或不存在')}"
             if p.is_file():
                 await aiofiles.os.remove(p)
             elif p.is_dir():
                 shutil.rmtree(p)
-            return f"✅ 成功删除: {path}"
+            notice = format_repair_notice(resolution)
+            base = f"✅ 成功删除: {resolution.resolved_path if resolution.was_repaired else path}"
+            return f"{notice}\n{base}" if notice else base
         except Exception as e:
             return f"❌ 删除失败: {e}"
 
@@ -233,7 +305,11 @@ def register(skills_manager):
     async def copy_path(src: str, dst: str) -> str:
         try:
             await ft.copy(src, dst)
-            return f"✅ 成功从 {src} 复制到 {dst}"
+            src_resolution = resolve_tool_path(src, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="any")
+            dst_resolution = resolve_tool_path(dst, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="parent")
+            notices = [notice for notice in (format_repair_notice(src_resolution), format_repair_notice(dst_resolution)) if notice]
+            base = f"✅ 成功从 {src_resolution.resolved_path if src_resolution.was_repaired else src} 复制到 {dst_resolution.resolved_path if dst_resolution.was_repaired else dst}"
+            return "\n".join([*notices, base]) if notices else base
         except Exception as e:
             return f"❌ 复制失败: {e}"
 
@@ -252,7 +328,11 @@ def register(skills_manager):
     async def move_path(src: str, dst: str) -> str:
         try:
             await ft.move(src, dst)
-            return f"✅ 成功从 {src} 移动到 {dst}"
+            src_resolution = resolve_tool_path(src, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="any")
+            dst_resolution = resolve_tool_path(dst, cwd=ft.base_path, workspace_path=get_request_workspace_path(), expect="parent")
+            notices = [notice for notice in (format_repair_notice(src_resolution), format_repair_notice(dst_resolution)) if notice]
+            base = f"✅ 成功从 {src_resolution.resolved_path if src_resolution.was_repaired else src} 移动到 {dst_resolution.resolved_path if dst_resolution.was_repaired else dst}"
+            return "\n".join([*notices, base]) if notices else base
         except Exception as e:
             return f"❌ 移动失败: {e}"
 
@@ -269,8 +349,13 @@ def register(skills_manager):
     )
     async def create_directory(path: str) -> str:
         try:
-            p = ft._resolve_path(path)
+            workspace_path = get_request_workspace_path()
+            resolution = resolve_tool_path(path, cwd=ft.base_path, workspace_path=workspace_path, expect="parent")
+            log_path_resolution(tool_name="create_directory", result=resolution, cwd=ft.base_path, workspace_path=workspace_path)
+            p = Path(resolution.resolved_path)
             p.mkdir(parents=True, exist_ok=True)
-            return f"✅ 成功创建目录: {path}"
+            notice = format_repair_notice(resolution)
+            base = f"✅ 成功创建目录: {resolution.resolved_path if resolution.was_repaired else path}"
+            return f"{notice}\n{base}" if notice else base
         except Exception as e:
             return f"❌ 目录创建失败: {e}"

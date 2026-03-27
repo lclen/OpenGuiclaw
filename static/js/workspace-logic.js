@@ -581,6 +581,52 @@
                 }
             };
 
+            obj.archiveWorkspace = async function (wsId) {
+                if (!wsId) return;
+                var workspace = (this.workspaces || []).find(function (w) { return w.id === wsId; }) || null;
+                if (workspace && workspace.is_default) {
+                    throw new Error('默认工作区不可移除');
+                }
+
+                try {
+                    var r = await fetch('/api/workspaces/' + wsId, { method: 'DELETE' });
+                    var data = {};
+                    try {
+                        data = await r.json();
+                    } catch (_) {}
+                    if (!r.ok) throw new Error(data.detail || '移除工作区失败');
+
+                    delete this.workspaceThreadMap[wsId];
+                    delete this.expandedWorkspaceIds[wsId];
+
+                    if (this.activeWorkspaceId === wsId) {
+                        this.activeWorkspaceId = null;
+                        this.activeWorkspace = null;
+                        this.workspaceThreads = [];
+                        this.currentThreadId = null;
+                        this.messages = [];
+                        this.resetDraftState();
+                        localStorage.removeItem('activeWorkspaceId');
+                        this.notifyChatStateChanged();
+                    }
+
+                    await this.loadWorkspaces();
+                    await this.loadHome();
+
+                    var fallbackWorkspace = (this.workspaces || []).find(function (w) { return !w.archived; }) || this.workspaces[0];
+                    if (!this.activeWorkspaceId && fallbackWorkspace && fallbackWorkspace.id) {
+                        await this.switchWorkspace(fallbackWorkspace.id, true);
+                    } else {
+                        this.notifyShellStateChanged();
+                    }
+
+                    this.pushLog('status', '工作区已移除');
+                } catch (e) {
+                    console.error('[Shell] archiveWorkspace:', e);
+                    throw e;
+                }
+            };
+
             // ── Threads ───────────────────────────────────────────────────
             obj.createThread = async function (wsId) {
                 if (!wsId) return;

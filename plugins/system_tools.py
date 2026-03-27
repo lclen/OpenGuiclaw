@@ -6,6 +6,7 @@ import subprocess
 import os
 from core.skills import SkillManager
 from core.automation_context import get_automation_source_context
+from core.tool_path_repair import format_missing_path_message, format_repair_notice, log_path_resolution, resolve_tool_path
 
 
 def register(manager: SkillManager) -> None:
@@ -34,13 +35,27 @@ def register(manager: SkillManager) -> None:
             effective_cwd = cwd
             if (not effective_cwd or effective_cwd == ".") and source_context and source_context.workspace_path:
                 effective_cwd = source_context.workspace_path
+            cwd_resolution = resolve_tool_path(
+                effective_cwd or ".",
+                cwd=os.getcwd(),
+                workspace_path=source_context.workspace_path if source_context else None,
+                expect="dir",
+            )
+            log_path_resolution(
+                tool_name="execute_command.cwd",
+                result=cwd_resolution,
+                cwd=os.getcwd(),
+                workspace_path=source_context.workspace_path if source_context else None,
+            )
+            if not os.path.isdir(cwd_resolution.resolved_path):
+                return f"错误: {format_missing_path_message(cwd_resolution, '工作目录不存在')}"
                 
             res = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                cwd=effective_cwd,
+                cwd=cwd_resolution.resolved_path,
                 timeout=30
             )
             
@@ -48,7 +63,9 @@ def register(manager: SkillManager) -> None:
             if res.stderr:
                 output += f"\n[Error/Stderr]:\n{res.stderr}"
                 
-            return output if output else f"命令执行完成 (退出码: {res.returncode})"
+            notice = format_repair_notice(cwd_resolution)
+            base = output if output else f"命令执行完成 (退出码: {res.returncode})"
+            return f"{notice}\n{base}" if notice else base
         except subprocess.TimeoutExpired:
             return "错误: 命令执行超时（超过 30 秒）。"
         except Exception as e:

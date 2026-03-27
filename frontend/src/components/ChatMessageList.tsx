@@ -37,7 +37,6 @@ function getMessageScrollFingerprint(message?: ChatMessage): string {
     message.html?.length || 0,
     message.thinkingHtml?.length || 0,
     message._isThinking ? 1 : 0,
-    message._thinkCollapsed ? 1 : 0,
     message.blocks?.length || 0,
     (message.blocks || []).map(getBlockScrollFingerprint).join('|')
   ].join('::');

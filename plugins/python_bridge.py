@@ -16,6 +16,8 @@ import tempfile
 import subprocess
 import logging
 from pathlib import Path
+from core.automation_context import get_request_workspace_path
+from core.tool_path_repair import format_repair_notice, repair_python_script_paths
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,19 @@ def register(skills_manager):
     def execute_python_script(script: str, timeout: int = 60) -> str:
         if not script.strip():
             return "❌ 没有提供任何 Python 代码。"
+
+        workspace_path = get_request_workspace_path()
+        repaired_script, repairs = repair_python_script_paths(
+            script,
+            cwd=Path.cwd(),
+            workspace_path=workspace_path,
+        )
         
         # Write to temporary file
         fd, temp_path = tempfile.mkstemp(suffix=".py", prefix="openguiclaw_bridge_")
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(script)
+                f.write(repaired_script)
             
             python_exe = _get_python_executable()
             logger.info(f"[PythonBridge] Executing temp script: {temp_path} using {python_exe} (Timeout: {timeout}s)")
@@ -72,9 +81,24 @@ def register(skills_manager):
             
             try:
                 # Spawn subprocess
-                res = subprocess.run([python_exe, temp_path], timeout=timeout, **kwargs)
+                res = subprocess.run(
+                    [python_exe, temp_path],
+                    timeout=timeout,
+                    cwd=workspace_path or None,
+                    **kwargs,
+                )
                 
                 output = []
+                repair_notices: list[str] = []
+                seen_repairs: set[tuple[str, str]] = set()
+                for repair in repairs:
+                    key = (repair.original_path, repair.resolved_path)
+                    if key in seen_repairs:
+                        continue
+                    seen_repairs.add(key)
+                    repair_notices.append(format_repair_notice(repair))
+                if repair_notices:
+                    output.append("\n".join(repair_notices))
                 if res.stdout:
                     output.append(res.stdout)
                 if res.stderr:

@@ -7,15 +7,20 @@ import shutil
 from pathlib import Path
 from core.skills import SkillManager
 from core.automation_context import get_request_workspace_path
+from core.tool_path_repair import (
+    format_missing_path_message,
+    format_repair_notice,
+    log_path_resolution,
+    resolve_tool_path,
+)
 
 
-def _resolve_path(path: str) -> Path:
-    candidate = Path(path)
-    if candidate.is_absolute():
-        return candidate
+def _resolve_path(path: str, *, expect: str = "any") -> tuple[Path, object]:
     workspace_path = get_request_workspace_path()
     base_path = Path(workspace_path) if workspace_path else Path.cwd()
-    return base_path / candidate
+    resolution = resolve_tool_path(path, cwd=base_path, workspace_path=workspace_path, expect=expect)
+    log_path_resolution(tool_name="file_manager.resolve", result=resolution, cwd=base_path, workspace_path=workspace_path)
+    return Path(resolution.resolved_path), resolution
 
 
 def register(manager: SkillManager) -> None:
@@ -33,10 +38,13 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def read_file(path: str) -> str:
-        p = _resolve_path(path)
-        if not p.exists(): return f"错误: 文件不存在 {path}"
+        p, resolution = _resolve_path(path, expect="file")
+        if not p.exists():
+            return f"错误: {format_missing_path_message(resolution, '文件不存在')}"
         try:
-            return p.read_text(encoding="utf-8")
+            content = p.read_text(encoding="utf-8")
+            notice = format_repair_notice(resolution)
+            return f"{notice}\n{content}" if notice else content
         except Exception as e:
             return f"读取失败: {e}"
 
@@ -53,11 +61,13 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def write_file(path: str, content: str) -> str:
-        p = _resolve_path(path)
+        p, resolution = _resolve_path(path, expect="parent")
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
-            return f"[OK] 成功写入: {path}"
+            notice = format_repair_notice(resolution)
+            base = f"[OK] 成功写入: {resolution.resolved_path if resolution.was_repaired else path}"
+            return f"{notice}\n{base}" if notice else base
         except Exception as e:
             return f"写入异常: {e}"
 
@@ -73,15 +83,18 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def list_dir(path: str = ".") -> str:
-        p = _resolve_path(path)
-        if not p.exists() or not p.is_dir(): return f"错误: 路径无效 {path}"
+        p, resolution = _resolve_path(path, expect="dir")
+        if not p.exists() or not p.is_dir():
+            return f"错误: {format_missing_path_message(resolution, '路径无效')}"
         try:
             items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
             lines = []
             for item in items:
                 icon = "📁" if item.is_dir() else "📄"
                 lines.append(f"{icon} {item.name}")
-            return "\n".join(lines) if lines else "(空目录)"
+            body = "\n".join(lines) if lines else "(空目录)"
+            notice = format_repair_notice(resolution)
+            return f"{notice}\n{body}" if notice else body
         except Exception as e:
             return f"列目录失败: {e}"
 
@@ -99,8 +112,12 @@ def register(manager: SkillManager) -> None:
     )
     def move_path(src: str, dst: str) -> str:
         try:
-            shutil.move(_resolve_path(src), _resolve_path(dst))
-            return f"[OK] 已将 {src} 移动到 {dst}"
+            src_path, src_resolution = _resolve_path(src, expect="any")
+            dst_path, dst_resolution = _resolve_path(dst, expect="parent")
+            shutil.move(src_path, dst_path)
+            notices = [notice for notice in (format_repair_notice(src_resolution), format_repair_notice(dst_resolution)) if notice]
+            base = f"[OK] 已将 {src_resolution.resolved_path if src_resolution.was_repaired else src} 移动到 {dst_resolution.resolved_path if dst_resolution.was_repaired else dst}"
+            return "\n".join([*notices, base]) if notices else base
         except Exception as e:
             return f"移动失败: {e}"
 
@@ -116,12 +133,15 @@ def register(manager: SkillManager) -> None:
         category="filesystem",
     )
     def delete_path(path: str) -> str:
-        p = _resolve_path(path)
-        if not p.exists(): return f"跳过: 路径不存在 {path}"
+        p, resolution = _resolve_path(path, expect="any")
+        if not p.exists():
+            return f"跳过: {format_missing_path_message(resolution, '路径不存在')}"
         try:
             if p.is_file(): p.unlink()
             else: shutil.rmtree(p)
-            return f"[OK] 已成功删除: {path}"
+            notice = format_repair_notice(resolution)
+            base = f"[OK] 已成功删除: {resolution.resolved_path if resolution.was_repaired else path}"
+            return f"{notice}\n{base}" if notice else base
         except Exception as e:
             return f"删除失败: {e}"
 
@@ -139,8 +159,13 @@ def register(manager: SkillManager) -> None:
     )
     def search_files(pattern: str, root: str = ".") -> str:
         try:
-            results = list(_resolve_path(root).rglob(pattern))
+            root_path, resolution = _resolve_path(root, expect="dir")
+            if not root_path.exists():
+                return f"错误: {format_missing_path_message(resolution, '搜索目录不存在')}"
+            results = list(root_path.rglob(pattern))
             if not results: return "未找到匹配项。"
-            return "\n".join([str(r) for r in results[:50]]) # Limit to 50
+            body = "\n".join([str(r) for r in results[:50]])
+            notice = format_repair_notice(resolution)
+            return f"{notice}\n{body}" if notice else body
         except Exception as e:
             return f"搜索异常: {e}"

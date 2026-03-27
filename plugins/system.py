@@ -8,6 +8,7 @@
 import subprocess
 import os
 from core.automation_context import get_automation_source_context
+from core.tool_path_repair import format_missing_path_message, format_repair_notice, log_path_resolution, resolve_tool_path
 
 def register(skills_manager):
     @skills_manager.skill(
@@ -46,6 +47,20 @@ def register(skills_manager):
             effective_cwd = cwd
             if (not effective_cwd or effective_cwd == ".") and source_context and source_context.workspace_path:
                 effective_cwd = source_context.workspace_path
+            cwd_resolution = resolve_tool_path(
+                effective_cwd or ".",
+                cwd=os.getcwd(),
+                workspace_path=source_context.workspace_path if source_context else None,
+                expect="dir",
+            )
+            log_path_resolution(
+                tool_name="execute_command.cwd",
+                result=cwd_resolution,
+                cwd=os.getcwd(),
+                workspace_path=source_context.workspace_path if source_context else None,
+            )
+            if not os.path.isdir(cwd_resolution.resolved_path):
+                return f"错误: {format_missing_path_message(cwd_resolution, '工作目录不存在')}"
                 
             # shell=True 允许使用管道、重定向、内部命令等
             # capture_output 捕获原始字节流，以便我们手动处理乱码
@@ -56,7 +71,7 @@ def register(skills_manager):
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 timeout=timeout,
-                cwd=effective_cwd,
+                cwd=cwd_resolution.resolved_path,
                 **kwargs
             )
             
@@ -91,7 +106,8 @@ def register(skills_manager):
             if len(full_output) > max_len:
                 full_output = full_output[:max_len] + f"\n... (输出已在 {max_len} 字符处被截断，防止超出限制)"
                 
-            return full_output
+            notice = format_repair_notice(cwd_resolution)
+            return f"{notice}\n{full_output}" if notice else full_output
             
         except subprocess.TimeoutExpired:
             return f"❌ 错误: 命令 '{command}' 运行超过了给定的 {timeout} 秒超时时间，已被系统强制中止。这可能是因为它是一个交互式或无穷无尽的进程（如 'top'）。"

@@ -8,13 +8,30 @@
 
 随后又补入一层 OpenAkita 风格的**进程残留诊断与人工清理**：后端会维护 `data/run/` 下的运行记录，并在 diagnostics 页展示旧实例冲突、孤儿进程和 stale record，允许用户显式触发安全清理。
 
-**文件位置**: `core/self_check.py`, `core/tasks.py::_system_daily_selfcheck`
+同日，`system:daily_selfcheck` 也升级为 OpenAkita 风格的**自动化运行时自检**：每日任务会复用 diagnostics 的共享 helper，执行服务态/进程残留/端点测活/网络矩阵/IM 通道检查，并只做低风险自动修复（如缺失目录重建、stale run record 清理），再把完整报告投递到自动化收件箱，把摘要投递到 IM 目标。
+
+**文件位置**: `core/self_check.py`, `core/runtime_diagnostics.py`, `core/tasks.py::_system_daily_selfcheck`
 
 **调度方式**: 每日凌晨 04:00 自动执行（通过 TaskScheduler）
 
 ---
 
 ## 核心功能
+
+### 0. 共享运行时探测
+
+`core/runtime_diagnostics.py` 统一封装 diagnostics 与 automated selfcheck 共用的只读探测能力：
+
+- 服务健康快照
+- 进程残留扫描
+- LLM endpoint 测活
+- 主端点网络矩阵
+- IM 通道运行态
+
+职责边界：
+
+- diagnostics：人工触发、分项排障
+- daily selfcheck：定时巡检、批量汇总、低风险修复、自动投递
 
 ### 1. 日志错误收集
 
@@ -149,6 +166,23 @@ _DENY_PATTERNS = [
 ---
 
 ## 报告格式
+
+### 自动化运行时报告新增内容
+
+每日自检除原有日志分析外，还会输出：
+
+- 总体健康等级：`healthy / degraded / unhealthy`
+- 服务 PID / 版本 / 重启模式 / 运行时长
+- 进程残留与冲突摘要
+- LLM endpoints 测活结果
+- 主端点网络矩阵结论
+- IM 通道运行态
+- stale run record 自动清理结果
+
+并同时写入：
+
+- `data/selfcheck/latest.json`
+- `data/selfcheck/latest.md`
 
 ### Markdown 报告示例
 

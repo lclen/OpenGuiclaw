@@ -1,6 +1,5 @@
 """Agent profiles, models, diagnostics, scheduler, and token-stats routes."""
 
-import asyncio
 import sys
 import json
 import os
@@ -14,7 +13,15 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from core.process_runtime import cleanup_process_runtime_targets, collect_process_runtime, detect_runtime_mode
+from core.process_runtime import cleanup_process_runtime_targets, detect_runtime_mode
+from core.runtime_diagnostics import (
+    ROLE_HEALTH_LABELS as _ROLE_HEALTH_LABELS,
+    build_health_targets as _build_health_targets_impl,
+    classify_health_error as _classify_health_error_impl,
+    collect_diagnostics_snapshot,
+    probe_health_target as _probe_health_target_impl,
+    safe_text as _safe_text_impl,
+)
 from core.state import app_state, _APP_BASE, logger, get_profile_store
 
 router = APIRouter(tags=["agents"])
@@ -46,32 +53,11 @@ def _load_config_json() -> tuple[dict[str, Any], Path]:
 
 
 def _safe_text(value: Any) -> str:
-    return str(value or "").strip()
+    return _safe_text_impl(value)
 
 
 def _classify_health_error(exc: Exception) -> tuple[str, str, str]:
-    raw = str(exc).strip()
-    lowered = raw.lower()
-
-    if "401" in lowered or "unauthorized" in lowered or "invalid_api_key" in lowered or "authentication" in lowered:
-        return ("auth_failed", "API Key 无效或已过期", "请检查 API Key 是否正确，或确认服务端是否要求鉴权")
-    if "403" in lowered or "forbidden" in lowered or "permission" in lowered:
-        return ("permission_denied", "API Key 权限不足", "请检查当前 Key 的模型权限、组织权限或访问范围")
-    if "404" in lowered or "not found" in lowered:
-        return ("model_or_route_not_found", "模型不存在，或服务接口不可用", "请检查模型名、Base URL 与服务商协议路径是否匹配")
-    if "timeout" in lowered or "timed out" in lowered:
-        return ("timeout", "请求超时，请检查网络、代理或服务负载", "请检查代理、网络质量，或稍后重试")
-    if (
-        "connection refused" in lowered
-        or "connect" in lowered
-        or "unreachable" in lowered
-        or "name resolution" in lowered
-        or "nodename nor servname provided" in lowered
-    ):
-        return ("connection_failed", "无法连接到服务，请检查 Base URL、网络或代理", "请检查 Base URL 是否可访问，并确认代理配置是否生效")
-    if not raw:
-        return ("unknown_error", "健康检查失败", "请查看服务端日志或复制完整错误继续排查")
-    return ("unknown_error", raw[:240], "请查看服务端日志或复制完整错误继续排查")
+    return _classify_health_error_impl(exc)
 
 
 def _build_probe_result(
@@ -121,137 +107,11 @@ def _check_target_configuration(target: dict[str, Any]) -> tuple[bool, str | Non
 
 
 def _build_health_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
-    targets: list[dict[str, Any]] = []
-
-    active_id = config.get("active_chat_endpoint_id")
-    chat_endpoints = config.get("chat_endpoints", [])
-    for index, endpoint in enumerate(chat_endpoints):
-        endpoint_id = _safe_text(endpoint.get("id")) or f"idx-{index}"
-        targets.append(
-            {
-                "name": f"chat:{endpoint_id}",
-                "label": _safe_text(endpoint.get("name")) or _safe_text(endpoint.get("model")) or f"聊天端点 {index + 1}",
-                "kind": "chat",
-                "role": "api",
-                "endpoint_id": endpoint_id,
-                "active": bool(active_id and endpoint_id == active_id),
-                "base_url": _safe_text(endpoint.get("base_url")),
-                "api_key": _safe_text(endpoint.get("api_key")),
-                "model": _safe_text(endpoint.get("model")),
-            }
-        )
-
-    primary_roles = ["api", "vision", "image_analyzer", "embedding", "autogui"]
-    for role in primary_roles:
-        section = config.get(role, {})
-        if not isinstance(section, dict):
-            continue
-        base_url = _safe_text(section.get("base_url"))
-        api_key = _safe_text(section.get("api_key"))
-        model = _safe_text(section.get("model"))
-        has_any_value = bool(base_url or api_key or model)
-        if not has_any_value:
-            continue
-        if role == "api" and targets:
-            continue
-        targets.append(
-            {
-                "name": f"role:{role}",
-                "label": _ROLE_HEALTH_LABELS.get(role, role),
-                "kind": "role",
-                "role": role,
-                "active": role == "api" and not targets,
-                "base_url": base_url,
-                "api_key": api_key,
-                "model": model,
-            }
-        )
-
-    return targets
-
-
-def _run_health_probe(target: dict[str, Any], timeout_seconds: float = 15.0) -> dict[str, Any]:
-    from openai import OpenAI
-
-    base_url = _safe_text(target.get("base_url"))
-    api_key = _safe_text(target.get("api_key")) or "test"
-    model = _safe_text(target.get("model"))
-    role = _safe_text(target.get("role"))
-
-    if not base_url:
-        raise ValueError("Base URL 未配置")
-    if not model:
-        raise ValueError("模型名称未配置")
-
-    client = OpenAI(base_url=base_url, api_key=api_key)
-
-    if role == "embedding":
-        client.embeddings.create(
-            model=model,
-            input="health-check",
-            timeout=timeout_seconds,
-        )
-    else:
-        client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": "Reply with a single word: OK"}],
-            max_tokens=8,
-            timeout=timeout_seconds,
-        )
-
-    return _build_probe_result(
-        target,
-        status="healthy",
-        latency_ms=None,
-        error=None,
-        error_code=None,
-        hint=None,
-        configured=True,
-    )
+    return _build_health_targets_impl(config)
 
 
 async def _probe_health_target(target: dict[str, Any], timeout_seconds: float = 15.0) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    configured, error_code, error, hint = _check_target_configuration(target)
-    if not configured:
-        return _build_probe_result(
-            target,
-            status="unknown",
-            latency_ms=None,
-            error=error,
-            error_code=error_code,
-            hint=hint,
-            configured=False,
-        )
-
-    try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(_run_health_probe, dict(target), timeout_seconds),
-            timeout=timeout_seconds + 1,
-        )
-        result["latency_ms"] = int((time.perf_counter() - started_at) * 1000)
-        return result
-    except asyncio.TimeoutError:
-        return _build_probe_result(
-            target,
-            status="unhealthy",
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            error=f"健康检查超时（{int(timeout_seconds)}s）",
-            error_code="timeout",
-            hint="请检查代理、网络质量，或稍后重试",
-            configured=True,
-        )
-    except Exception as exc:
-        normalized_code, normalized_error, normalized_hint = _classify_health_error(exc)
-        return _build_probe_result(
-            target,
-            status="unhealthy",
-            latency_ms=int((time.perf_counter() - started_at) * 1000),
-            error=normalized_error,
-            error_code=normalized_code,
-            hint=normalized_hint,
-            configured=True,
-        )
+    return await _probe_health_target_impl(target, timeout_seconds=timeout_seconds)
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -395,51 +255,14 @@ async def list_available_models():
 
 @router.get("/api/diagnostics")
 async def get_diagnostics():
-    import importlib.util, platform, sys, time, urllib.request
-    restart_mode = detect_runtime_mode()
-    def check_module(name):
-        return importlib.util.find_spec(name) is not None
-    def check_network():
-        try:
-            start = time.time()
-            urllib.request.urlopen("https://mirrors.aliyun.com/", timeout=3)
-            return {"status": "ok", "latency_ms": int((time.time() - start) * 1000)}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
-    proxies = {
-        "http":  os.environ.get("HTTP_PROXY")  or os.environ.get("http_proxy"),
-        "https": os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"),
-        "all":   os.environ.get("ALL_PROXY")   or os.environ.get("all_proxy"),
-    }
-    return {
-        "system": {
-            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
-            "python_version": sys.version.replace("\n", " "),
-            "python_executable": sys.executable,
-            "app_dir": str(_APP_BASE),
-            "frozen": getattr(sys, "frozen", False),
-            "pid": os.getpid(),
-        },
-        "restart": {
-            "supported": restart_mode in {"watchdog", "reload"},
-            "mode": restart_mode,
-            "reason": None if restart_mode in {"watchdog", "reload"} else "当前运行模式不带 watchdog，也未启用 uvicorn --reload。"
-        },
-        "network": {"proxies": proxies, "connectivity": check_network()},
-        "dependencies": {
-            mod: check_module(mod)
-            for mod in ["fastapi", "uvicorn", "webview", "playwright", "mss", "numpy", "psutil"]
-        },
-        "process_runtime": collect_process_runtime(
-            _APP_BASE,
-            current_pid=os.getpid(),
-            version=str(app_state.get("server_version") or "unknown"),
-            started_at=float(app_state.get("server_started_at") or time.time()),
-            mode=restart_mode,
-            is_frozen=getattr(sys, "frozen", False),
-        ),
-        "timestamp": int(time.time()),
-    }
+    return collect_diagnostics_snapshot(
+        _APP_BASE,
+        current_pid=os.getpid(),
+        version=str(app_state.get("server_version") or "unknown"),
+        started_at=float(app_state.get("server_started_at") or time.time()),
+        mode=detect_runtime_mode(),
+        is_frozen=getattr(sys, "frozen", False),
+    )
 
 
 @router.post("/api/health/check")

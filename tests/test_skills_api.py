@@ -14,7 +14,9 @@ from core.session import Session
 from core.skill_runtime import InstalledSkill
 from core.skills import SkillManager
 from core.state import _ctx_event_queue, app_state
+from core.tool_path_repair import resolve_tool_path
 from plugins import file_manager, filesystem
+from plugins import python_bridge
 from plugins import system_tools
 
 
@@ -314,8 +316,8 @@ async def test_workspace_stream_persists_session_skills_version(monkeypatch, tmp
     }
     saved: dict = {}
 
-    monkeypatch.setattr(chat_router, "_load_ws_session_data", lambda workspace_id, session_id: dict(session_data))
-    monkeypatch.setattr(chat_router, "_save_ws_session_data", lambda workspace_id, data: saved.update(data))
+    monkeypatch.setattr(chat_router, "_load_ws_session_data", lambda workspace_id, session_id, **kwargs: dict(session_data))
+    monkeypatch.setattr(chat_router, "_merge_save_ws_session_data", lambda workspace_id, data: saved.update(data))
     monkeypatch.setattr(
         chat_router,
         "_get_workspace_context",
@@ -447,3 +449,128 @@ async def test_file_manager_plugin_uses_workspace_default_path(tmp_path):
     assert (workspace_dir / "summary.txt").read_text(encoding="utf-8") == "workspace scoped"
     assert "workspace scoped" in read_result
     assert "summary.txt" in list_result
+
+
+@pytest.mark.asyncio
+async def test_filesystem_plugin_repairs_hyphen_spacing_in_absolute_path(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    filesystem.register(manager)
+
+    workspace_dir = tmp_path / "项目-报文"
+    workspace_dir.mkdir()
+    target = workspace_dir / "notes.txt"
+    target.write_text("fixed path", encoding="utf-8")
+    broken_path = str(target).replace("项目-报文", "项目 - 报文")
+
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="项目-报文",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        read_result = await manager.execute("read_file", {"path": broken_path})
+        list_result = await manager.execute("list_directory", {"path": str(workspace_dir).replace("项目-报文", "项目 - 报文")})
+    finally:
+        reset_automation_source_context(token)
+
+    assert "已自动修正路径" in read_result
+    assert "fixed path" in read_result
+    assert "已自动修正路径" in list_result
+    assert "notes.txt" in list_result
+
+
+@pytest.mark.asyncio
+async def test_file_manager_plugin_repairs_hyphen_spacing_in_absolute_path(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    file_manager.register(manager)
+
+    workspace_dir = tmp_path / "项目-报文"
+    workspace_dir.mkdir()
+    target = workspace_dir / "summary.txt"
+    target.write_text("manager fixed path", encoding="utf-8")
+    broken_path = str(target).replace("项目-报文", "项目 - 报文")
+
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="项目-报文",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        read_result = await manager.execute("read_file", {"path": broken_path})
+        list_result = await manager.execute("list_dir", {"path": str(workspace_dir).replace("项目-报文", "项目 - 报文")})
+    finally:
+        reset_automation_source_context(token)
+
+    assert "已自动修正路径" in read_result
+    assert "manager fixed path" in read_result
+    assert "已自动修正路径" in list_result
+    assert "summary.txt" in list_result
+
+
+@pytest.mark.asyncio
+async def test_execute_command_repairs_workspace_cwd_path(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    system_tools.register(manager)
+
+    workspace_dir = tmp_path / "项目-报文"
+    workspace_dir.mkdir()
+    broken_cwd = str(workspace_dir.resolve()).replace("项目-报文", "项目 - 报文")
+    command = f'"{sys.executable}" -c "import os; print(os.getcwd())"'
+
+    result = await manager.execute("execute_command", {"command": command, "cwd": broken_cwd})
+
+    assert "已自动修正路径" in result
+    assert str(workspace_dir.resolve()) in result
+
+
+@pytest.mark.asyncio
+async def test_execute_python_script_repairs_absolute_path_literals(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    python_bridge.register(manager)
+
+    workspace_dir = tmp_path / "项目-报文"
+    workspace_dir.mkdir()
+    target = workspace_dir / "README.md"
+    target.write_text("bridge fixed path", encoding="utf-8")
+    broken_path = str(target.resolve()).replace("项目-报文", "项目 - 报文")
+
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_workspace",
+        workspace_id="ws_test",
+        workspace_name="项目-报文",
+        workspace_path=str(workspace_dir.resolve()),
+    )
+    try:
+        result = await manager.execute(
+            "execute_python_script",
+            {"script": f"from pathlib import Path\nprint(Path({broken_path!r}).read_text(encoding='utf-8'))"},
+        )
+    finally:
+        reset_automation_source_context(token)
+
+    assert "已自动修正路径" in result
+    assert "bridge fixed path" in result
+
+
+def test_resolve_tool_path_returns_candidates_without_auto_repair_when_ambiguous(tmp_path):
+    cwd_root = tmp_path / "cwd_root"
+    ws_root = tmp_path / "ws_root"
+    cwd_root.mkdir()
+    ws_root.mkdir()
+    (cwd_root / "项目-报文").mkdir()
+    (ws_root / "项目-报文").mkdir()
+
+    result = resolve_tool_path(
+        "项目 - 报文",
+        cwd=cwd_root,
+        workspace_path=str(ws_root),
+        expect="dir",
+    )
+
+    assert result.was_repaired is False
+    assert len(result.candidates) == 2

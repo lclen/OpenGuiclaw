@@ -411,14 +411,20 @@ def _ws_sessions_dir(workspace_id: str):
     return sessions_dir
 
 
-def _load_ws_session_data(workspace_id: str, session_id: str) -> dict:
+def _load_ws_session_data(workspace_id: str, session_id: str, allow_archived: bool = True) -> dict:
     """Load a session JSON from a workspace's sessions directory."""
     sessions_dir = _ws_sessions_dir(workspace_id)
     path = sessions_dir / f"{session_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if not allow_archived and data.get("archived", False):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Session is archived and cannot be used: {session_id}",
+        )
+    return data
 
 
 def _save_ws_session_data(workspace_id: str, session_data: dict):
@@ -428,6 +434,42 @@ def _save_ws_session_data(workspace_id: str, session_data: dict):
     path = sessions_dir / f"{session_id}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(session_data, f, ensure_ascii=False, indent=2)
+
+
+def _merge_save_ws_session_data(workspace_id: str, session_data: dict):
+    """Persist streamed session data while preserving newer disk-side metadata changes."""
+    from core.workspace_manager import get_workspace_manager
+
+    wm = get_workspace_manager()
+    session_id = session_data["session_id"]
+
+    with wm._lock:
+        sessions_dir = _ws_sessions_dir(workspace_id)
+        path = sessions_dir / f"{session_id}.json"
+        if not path.exists():
+            raise FileNotFoundError(f"Session not found during save: {session_id}")
+
+        with open(path, "r", encoding="utf-8") as f:
+            current_data = json.load(f)
+
+        merged_data = dict(current_data)
+        merged_data.update({
+            "session_id": session_data["session_id"],
+            "created_at": session_data.get("created_at", current_data.get("created_at", "")),
+            "updated_at": session_data.get("updated_at", current_data.get("updated_at", "")),
+            "summary": session_data.get("summary", current_data.get("summary", "")),
+            "messages": session_data.get("messages", current_data.get("messages", [])),
+        })
+
+        current_metadata = current_data.get("metadata", {})
+        next_metadata = session_data.get("metadata", {})
+        merged_data["metadata"] = {
+            **(current_metadata if isinstance(current_metadata, dict) else {}),
+            **(next_metadata if isinstance(next_metadata, dict) else {}),
+        }
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(merged_data, f, ensure_ascii=False, indent=2)
 
 
 @router.post("/api/workspaces/{workspace_id}/sessions/new")
@@ -444,7 +486,7 @@ async def new_workspace_session(workspace_id: str):
 @router.get("/api/workspaces/{workspace_id}/sessions/{session_id}/messages")
 async def get_workspace_session_messages(workspace_id: str, session_id: str):
     """返回工作区内指定线程的消息列表。"""
-    data = _load_ws_session_data(workspace_id, session_id)
+    data = _load_ws_session_data(workspace_id, session_id, allow_archived=False)
     EXCLUDED_ROLES = {"system", "visual_log", "debug_log"}
     messages = [m for m in data.get("messages", []) if m.get("role") not in EXCLUDED_ROLES]
     return {
@@ -483,7 +525,7 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
         raise HTTPException(status_code=500, detail="Agent not initialized")
 
     # Load session data from workspace directory (not global sessions)
-    session_data = _load_ws_session_data(workspace_id, session_id)
+    session_data = _load_ws_session_data(workspace_id, session_id, allow_archived=False)
     workspace_context = _get_workspace_context(workspace_id)
 
     from core.session import Session
@@ -671,7 +713,9 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
             reset_automation_source_context(source_token)
             # Write session ONLY to workspace directory — never to global data/sessions/
             try:
-                _save_ws_session_data(workspace_id, session.to_dict())
+                _merge_save_ws_session_data(workspace_id, session.to_dict())
+            except FileNotFoundError:
+                logger.warning(f"Workspace session disappeared before save: {session_id}")
             except Exception as save_err:
                 logger.warning(f"Failed to save workspace session: {save_err}")
             with _streams_lock:

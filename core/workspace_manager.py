@@ -321,6 +321,10 @@ class WorkspaceManager:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+    def _mark_session_updated(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        data["updated_at"] = _utcnow()
+        return data
+
     def list_sessions(
         self,
         workspace_id: str,
@@ -401,6 +405,7 @@ class WorkspaceManager:
             self._read_workspace_json(workspace_id)  # validate workspace
             data = self._read_session_json(workspace_id, session_id)
             data["archived"] = True
+            self._mark_session_updated(data)
             self._write_session_json(workspace_id, data)
 
     def set_session_pinned(self, workspace_id: str, session_id: str, pinned: bool) -> None:
@@ -409,6 +414,7 @@ class WorkspaceManager:
             self._read_workspace_json(workspace_id)
             data = self._read_session_json(workspace_id, session_id)
             data["pinned"] = bool(pinned)
+            self._mark_session_updated(data)
             self._write_session_json(workspace_id, data)
 
     def rename_session(self, workspace_id: str, session_id: str, title: str) -> None:
@@ -420,6 +426,7 @@ class WorkspaceManager:
                 raise ValueError("Session title cannot be empty")
             data = self._read_session_json(workspace_id, session_id)
             data["title"] = next_title
+            self._mark_session_updated(data)
             self._write_session_json(workspace_id, data)
 
     def unarchive_session(self, workspace_id: str, session_id: str) -> None:
@@ -428,6 +435,7 @@ class WorkspaceManager:
             self._read_workspace_json(workspace_id)
             data = self._read_session_json(workspace_id, session_id)
             data["archived"] = False
+            self._mark_session_updated(data)
             self._write_session_json(workspace_id, data)
 
     def delete_session(self, workspace_id: str, session_id: str) -> None:

@@ -7,6 +7,7 @@ const CONTEXT_MENU_WIDTH = 196;
 const CONTEXT_MENU_HEIGHT = 156;
 
 type ThreadContextMenuState = {
+  kind: 'thread';
   workspaceId: string;
   sessionId: string;
   workspaceName: string;
@@ -15,6 +16,18 @@ type ThreadContextMenuState = {
   x: number;
   y: number;
 };
+
+type WorkspaceContextMenuState = {
+  kind: 'workspace';
+  workspaceId: string;
+  workspaceName: string;
+  isDefault: boolean;
+  threadCount: number;
+  x: number;
+  y: number;
+};
+
+type ContextMenuState = ThreadContextMenuState | WorkspaceContextMenuState;
 
 type RenameDialogState = {
   workspaceId: string;
@@ -46,7 +59,7 @@ function formatThreadTime(hostFormat: ((value?: string | null) => string) | unde
 
 export function WorkspaceSidebar() {
   const { hostApp, snapshot, errorText } = useWorkspaceShellBridge();
-  const [contextMenu, setContextMenu] = useState<ThreadContextMenuState | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameError, setRenameError] = useState('');
@@ -77,8 +90,13 @@ export function WorkspaceSidebar() {
 
   async function handleNewThread() {
     if (!hostApp) return;
-    if (snapshot.activeWorkspaceId) {
-      await hostApp.createThread?.(snapshot.activeWorkspaceId);
+    const fallbackWorkspace =
+      snapshot.workspaces.find((workspace) => workspace.id === snapshot.activeWorkspaceId) ||
+      snapshot.workspaces.find((workspace) => !!workspace.is_default) ||
+      snapshot.workspaces[0];
+
+    if (fallbackWorkspace?.id) {
+      await hostApp.createThread?.(fallbackWorkspace.id);
     } else {
       hostApp.openNewWorkspaceModal?.();
     }
@@ -97,6 +115,21 @@ export function WorkspaceSidebar() {
 
   async function handleOpenThread(workspaceId: string, sessionId: string) {
     await hostApp?.openSidebarThread?.(workspaceId, sessionId);
+    emitShellUpdate();
+  }
+
+  async function handleOpenWorkspace(workspaceId: string) {
+    if (!hostApp || !workspaceId) return;
+    await hostApp.focusWorkspaceHome?.(workspaceId);
+    emitShellUpdate();
+  }
+
+  async function handleCreateThreadForWorkspace(workspaceId: string) {
+    if (!hostApp || !workspaceId) return;
+    if (snapshot.activeWorkspaceId !== workspaceId) {
+      await hostApp.switchWorkspace?.(workspaceId, true);
+    }
+    await hostApp.createThread?.(workspaceId);
     emitShellUpdate();
   }
 
@@ -128,6 +161,44 @@ export function WorkspaceSidebar() {
     emitShellUpdate();
   }
 
+  async function handleArchiveWorkspace(workspaceId: string, workspaceName: string, isDefault: boolean) {
+    if (!hostApp || !workspaceId) return;
+    if (isDefault) return;
+    const confirmed = window.confirm(`移除工作区“${workspaceName}”？工作区会进入归档，可在设置页恢复。`);
+    if (!confirmed) return;
+    await hostApp.archiveWorkspace?.(workspaceId);
+    emitShellUpdate();
+  }
+
+  function getMenuPosition(clientX: number, clientY: number) {
+    const clampedX = Math.min(clientX, window.innerWidth - CONTEXT_MENU_WIDTH);
+    const clampedY = Math.min(clientY, window.innerHeight - CONTEXT_MENU_HEIGHT);
+    return {
+      x: Math.max(12, clampedX),
+      y: Math.max(12, clampedY)
+    };
+  }
+
+  function handleWorkspaceContextMenu(
+    event: React.MouseEvent<HTMLElement>,
+    workspaceId: string,
+    workspaceName: string,
+    isDefault: boolean,
+    threadCount: number
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = getMenuPosition(event.clientX, event.clientY);
+    setContextMenu({
+      kind: 'workspace',
+      workspaceId,
+      workspaceName,
+      isDefault,
+      threadCount,
+      ...position
+    });
+  }
+
   function handleThreadContextMenu(
     event: React.MouseEvent<HTMLDivElement>,
     workspaceId: string,
@@ -138,21 +209,20 @@ export function WorkspaceSidebar() {
   ) {
     event.preventDefault();
     event.stopPropagation();
-    const clampedX = Math.min(event.clientX, window.innerWidth - CONTEXT_MENU_WIDTH);
-    const clampedY = Math.min(event.clientY, window.innerHeight - CONTEXT_MENU_HEIGHT);
+    const position = getMenuPosition(event.clientX, event.clientY);
     setContextMenu({
+      kind: 'thread',
       workspaceId,
       workspaceName,
       sessionId,
       title,
       pinned,
-      x: Math.max(12, clampedX),
-      y: Math.max(12, clampedY)
+      ...position
     });
   }
 
   function handleStartRename() {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'thread') return;
     setRenameDialog({
       workspaceId: contextMenu.workspaceId,
       sessionId: contextMenu.sessionId,
@@ -255,19 +325,55 @@ export function WorkspaceSidebar() {
 
           return (
             <section key={workspace.id} className="sidebar-workspace-group">
-              <button
-                type="button"
+              <div
                 className={`sidebar-workspace-header${snapshot.activeWorkspaceId === workspace.id ? ' active' : ''}`}
-                onClick={() => handleToggleWorkspace(workspace.id)}
+                onContextMenu={(event) =>
+                  handleWorkspaceContextMenu(
+                    event,
+                    workspace.id,
+                    getDisplayWorkspaceName(workspace.name),
+                    !!workspace.is_default,
+                    workspace.thread_count || threads.length || 0
+                  )
+                }
               >
-                <span className="sidebar-workspace-folder">区</span>
-                <span className="sidebar-workspace-name">
-                  {getDisplayWorkspaceName(workspace.name)}
-                  {workspace.is_default ? ' · 默认' : ''}
-                </span>
-                <span className="sidebar-workspace-count">{workspace.thread_count || threads.length || 0}</span>
-                <CaretDownIcon className={`sidebar-workspace-chevron${expanded ? ' open' : ''}`} />
-              </button>
+                <button
+                  type="button"
+                  className="sidebar-workspace-header-main"
+                  onClick={() => handleOpenWorkspace(workspace.id)}
+                >
+                  <span className="sidebar-workspace-folder">区</span>
+                  <span className="sidebar-workspace-name">
+                    {getDisplayWorkspaceName(workspace.name)}
+                    {workspace.is_default ? ' · 默认' : ''}
+                  </span>
+                  <span className="sidebar-workspace-count">{workspace.thread_count || threads.length || 0}</span>
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-workspace-chevron-trigger"
+                  aria-label={expanded ? '收起工作区' : '展开工作区'}
+                  onClick={() => handleToggleWorkspace(workspace.id)}
+                >
+                  <CaretDownIcon className={`sidebar-workspace-chevron${expanded ? ' open' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-workspace-menu-trigger"
+                  aria-label={`${getDisplayWorkspaceName(workspace.name)} 菜单`}
+                  onClick={(event) =>
+                    handleWorkspaceContextMenu(
+                      event,
+                      workspace.id,
+                      getDisplayWorkspaceName(workspace.name),
+                      !!workspace.is_default,
+                      workspace.thread_count || threads.length || 0
+                    )
+                  }
+                >
+                  <MoreHorizontalIcon className="sidebar-workspace-menu-icon" />
+                </button>
+              </div>
 
               {expanded && threads.length > 0 ? (
                 <div className="sidebar-group-threads sidebar-fade-scroll custom-scrollbar">
@@ -300,6 +406,22 @@ export function WorkspaceSidebar() {
                             {formatThreadTime(hostApp?.formatSidebarSessionTime, thread.updated_at)}
                           </span>
                         </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="sidebar-thread-menu-trigger"
+                        aria-label="对话菜单"
+                        onClick={(event) =>
+                          handleThreadContextMenu(
+                            event as unknown as React.MouseEvent<HTMLDivElement>,
+                            workspace.id,
+                            getDisplayWorkspaceName(workspace.name),
+                            thread.session_id,
+                            thread.title || `${thread.session_id.slice(0, 24)}...`,
+                            !!thread.pinned
+                          )
+                        }
+                      >
                         <MoreHorizontalIcon className="sidebar-thread-preview-more" />
                       </button>
                     </div>
@@ -328,47 +450,91 @@ export function WorkspaceSidebar() {
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onMouseDown={(event) => event.stopPropagation()}
         >
-          <div className="sidebar-thread-context-header">
-            <div className="sidebar-thread-context-title">{contextMenu.title}</div>
-            <div className="sidebar-thread-context-subtitle">{contextMenu.workspaceName}</div>
-          </div>
-          <div className="sidebar-thread-context-divider"></div>
-          <button
-            type="button"
-            className="sidebar-thread-context-item"
-            onClick={() => {
-              void handleTogglePin(contextMenu.workspaceId, contextMenu.sessionId, contextMenu.pinned);
-              setContextMenu(null);
-            }}
-          >
-            <span className="sidebar-thread-context-item-main">
-              <span className={`sidebar-thread-context-icon ${contextMenu.pinned ? 'is-active' : ''}`}>↑</span>
-              <span className="sidebar-thread-context-label">{contextMenu.pinned ? '取消置顶' : '置顶'}</span>
-            </span>
-            <span className="sidebar-thread-context-hint">{contextMenu.pinned ? '已固定' : '固定到顶部'}</span>
-          </button>
-          <button type="button" className="sidebar-thread-context-item" onClick={handleStartRename}>
-            <span className="sidebar-thread-context-item-main">
-              <span className="sidebar-thread-context-icon">✎</span>
-              <span className="sidebar-thread-context-label">重命名</span>
-            </span>
-            <span className="sidebar-thread-context-hint">编辑标题</span>
-          </button>
-          <div className="sidebar-thread-context-divider"></div>
-          <button
-            type="button"
-            className="sidebar-thread-context-item danger"
-            onClick={() => {
-              void handleDeleteThread(contextMenu.workspaceId, contextMenu.sessionId);
-              setContextMenu(null);
-            }}
-          >
-            <span className="sidebar-thread-context-item-main">
-              <span className="sidebar-thread-context-icon danger">×</span>
-              <span className="sidebar-thread-context-label">删除</span>
-            </span>
-            <span className="sidebar-thread-context-hint">归档到历史</span>
-          </button>
+          {contextMenu.kind === 'thread' ? (
+            <>
+              <div className="sidebar-thread-context-header">
+                <div className="sidebar-thread-context-title">{contextMenu.title}</div>
+                <div className="sidebar-thread-context-subtitle">{contextMenu.workspaceName}</div>
+              </div>
+              <div className="sidebar-thread-context-divider"></div>
+              <button
+                type="button"
+                className="sidebar-thread-context-item"
+                onClick={() => {
+                  void handleTogglePin(contextMenu.workspaceId, contextMenu.sessionId, contextMenu.pinned);
+                  setContextMenu(null);
+                }}
+              >
+                <span className="sidebar-thread-context-item-main">
+                  <span className={`sidebar-thread-context-icon ${contextMenu.pinned ? 'is-active' : ''}`}>↑</span>
+                  <span className="sidebar-thread-context-label">{contextMenu.pinned ? '取消置顶' : '置顶'}</span>
+                </span>
+                <span className="sidebar-thread-context-hint">{contextMenu.pinned ? '已固定' : '固定到顶部'}</span>
+              </button>
+              <button type="button" className="sidebar-thread-context-item" onClick={handleStartRename}>
+                <span className="sidebar-thread-context-item-main">
+                  <span className="sidebar-thread-context-icon">✎</span>
+                  <span className="sidebar-thread-context-label">重命名</span>
+                </span>
+                <span className="sidebar-thread-context-hint">编辑标题</span>
+              </button>
+              <div className="sidebar-thread-context-divider"></div>
+              <button
+                type="button"
+                className="sidebar-thread-context-item danger"
+                onClick={() => {
+                  void handleDeleteThread(contextMenu.workspaceId, contextMenu.sessionId);
+                  setContextMenu(null);
+                }}
+              >
+                <span className="sidebar-thread-context-item-main">
+                  <span className="sidebar-thread-context-icon danger">×</span>
+                  <span className="sidebar-thread-context-label">删除</span>
+                </span>
+                <span className="sidebar-thread-context-hint">归档到历史</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="sidebar-thread-context-header">
+                <div className="sidebar-thread-context-title">{contextMenu.workspaceName}</div>
+                <div className="sidebar-thread-context-subtitle">
+                  {contextMenu.isDefault ? '默认工作区' : `${contextMenu.threadCount} 条历史对话`}
+                </div>
+              </div>
+              <div className="sidebar-thread-context-divider"></div>
+              <button
+                type="button"
+                className="sidebar-thread-context-item"
+                onClick={() => {
+                  void handleCreateThreadForWorkspace(contextMenu.workspaceId);
+                  setContextMenu(null);
+                }}
+              >
+                <span className="sidebar-thread-context-item-main">
+                  <span className="sidebar-thread-context-icon">+</span>
+                  <span className="sidebar-thread-context-label">新建线程</span>
+                </span>
+                <span className="sidebar-thread-context-hint">在此工作区开始聊天</span>
+              </button>
+              <div className="sidebar-thread-context-divider"></div>
+              <button
+                type="button"
+                className="sidebar-thread-context-item danger"
+                disabled={contextMenu.isDefault}
+                onClick={() => {
+                  void handleArchiveWorkspace(contextMenu.workspaceId, contextMenu.workspaceName, contextMenu.isDefault);
+                  setContextMenu(null);
+                }}
+              >
+                <span className="sidebar-thread-context-item-main">
+                  <span className="sidebar-thread-context-icon danger">×</span>
+                  <span className="sidebar-thread-context-label">{contextMenu.isDefault ? '默认工作区不可移除' : '移除工作区'}</span>
+                </span>
+                <span className="sidebar-thread-context-hint">{contextMenu.isDefault ? '保留默认入口' : '进入归档，可恢复'}</span>
+              </button>
+            </>
+          )}
         </div>
       ) : null}
 
