@@ -119,12 +119,35 @@ async def chat_sync(request: ChatRequest):
         source_session_id=getattr(current_session_id, "session_id", None),
     )
     try:
-        response = agent.chat(
-            request.message,
-            system_prompt_override=system_prompt_override,
-            allowed_skills=allowed_skills,
-            skills_mode=skills_mode,
-        )
+        response = ""
+        if callable(getattr(agent, "chat_stream", None)):
+            chunks: list[str] = []
+            waiting_for_user = False
+            async for raw_event in agent.chat_stream(
+                request.message,
+                system_prompt_override=system_prompt_override,
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+            ):
+                event = json.loads(raw_event)
+                event_type = event.get("type")
+                if event_type in {"text_delta", "message_chunk"}:
+                    chunks.append(str(event.get("content", "")))
+                elif event_type == "ask_user_interrupt":
+                    waiting_for_user = True
+                elif event_type == "error":
+                    raise RuntimeError(str(event.get("content", "Unknown chat stream error")))
+
+            response = "".join(chunks).strip()
+            if waiting_for_user and not response:
+                response = "（正在等待您做出选择...）"
+        else:
+            response = agent.chat(
+                request.message,
+                system_prompt_override=system_prompt_override,
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+            )
         return {"response": response}
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 import { PlatformLogo } from './icons/PlatformLogos';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type PlatformId = 'telegram' | 'feishu' | 'dingtalk' | 'wework' | 'wechat' | 'qqbot' | 'onebot';
 
@@ -157,6 +160,13 @@ function healthTone(result?: HealthStatus | null) {
   return 'is-idle';
 }
 
+function healthPillTone(result?: HealthStatus | null): 'neutral' | 'success' | 'danger' {
+  if (!result) return 'neutral';
+  if (result.status === 'healthy') return 'success';
+  if (result.status === 'unhealthy') return 'danger';
+  return 'neutral';
+}
+
 function boolCredential(value: string | boolean | undefined, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
@@ -185,14 +195,14 @@ function RestartBanner({
         <div className="integrations-restart-banner__title">已保存，重启后生效</div>
         <div className="integrations-restart-banner__desc">IM Bot 的创建、编辑、启停和删除都会在后端重启后正式加载到通道网关。</div>
       </div>
-      <div className="integrations-restart-banner__actions">
-        <button type="button" className="integrations-panel__ghost-btn" onClick={onDismiss}>
+      <UiActionTray className="integrations-restart-banner__actions">
+        <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={onDismiss}>
           稍后处理
-        </button>
-        <button type="button" className="integrations-panel__accent-btn" onClick={() => void onRestart()} disabled={restarting}>
+        </UiButton>
+        <UiButton type="button" variant="primary" className="integrations-panel__action-btn integrations-panel__action-btn--primary" onClick={() => void onRestart()} disabled={restarting}>
           {restarting ? '重启中...' : '立即重启'}
-        </button>
-      </div>
+        </UiButton>
+      </UiActionTray>
     </div>
   );
 }
@@ -277,9 +287,9 @@ function BotRegistry({
                   <h6>{group.title}</h6>
                   <p>{group.bots.length > 0 ? `共 ${group.bots.length} 个实例` : '暂未创建实例'}</p>
                 </div>
-                <button type="button" className="integrations-panel__ghost-btn" onClick={() => onCreate(group.platform)}>
+                <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => onCreate(group.platform)}>
                   新建 {group.title}
-                </button>
+                </UiButton>
               </div>
               {group.bots.length > 0 ? (
                 <div className="integrations-bot-grid">
@@ -290,14 +300,14 @@ function BotRegistry({
                           <div className="integrations-bot-card__name">{bot.name}</div>
                           <div className="integrations-bot-card__meta">{bot.id}</div>
                         </div>
-                        <span className={`integrations-status-pill ${bot.enabled ? 'is-online' : 'is-muted'}`}>
+                        <UiStatusPill tone={bot.enabled ? 'success' : 'disabled'} className="integrations-status-pill">
                           {bot.enabled ? '已启用' : '已停用'}
-                        </span>
+                        </UiStatusPill>
                       </div>
                       <div className="integrations-bot-card__health">
-                        <span className={`integrations-health-pill ${healthTone(bot.last_health)}`}>
+                        <UiStatusPill tone={healthPillTone(bot.last_health)} className={`integrations-health-pill ${healthTone(bot.last_health)}`}>
                           {bot.last_health?.status === 'healthy' ? '验证成功' : bot.last_health?.status === 'unhealthy' ? '验证失败' : '未检测'}
-                        </span>
+                        </UiStatusPill>
                         <span className="integrations-bot-card__checked">{formatCheckTime(bot.last_health?.checked_at)}</span>
                       </div>
                       {bot.platform === 'dingtalk' ? (
@@ -306,20 +316,20 @@ function BotRegistry({
                         </div>
                       ) : null}
                       {bot.last_health?.error ? <div className="integrations-bot-card__error">{bot.last_health.error}</div> : null}
-                      <div className="integrations-bot-card__actions">
-                        <button type="button" className="integrations-panel__soft-btn is-neutral" onClick={() => void onTest(bot)}>
+                      <UiActionTray className="integrations-bot-card__actions">
+                        <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void onTest(bot)}>
                           重新测活
-                        </button>
-                        <button type="button" className="integrations-panel__soft-btn is-neutral" onClick={() => onEdit(bot)}>
+                        </UiButton>
+                        <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => onEdit(bot)}>
                           编辑 / 高级模式
-                        </button>
-                        <button type="button" className="integrations-panel__soft-btn is-neutral" onClick={() => void onToggle(bot)}>
+                        </UiButton>
+                        <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void onToggle(bot)}>
                           {bot.enabled ? '停用' : '启用'}
-                        </button>
-                        <button type="button" className="integrations-panel__soft-btn is-danger" onClick={() => void onDelete(bot)}>
+                        </UiButton>
+                        <UiButton type="button" variant="danger" className="integrations-panel__action-btn integrations-panel__action-btn--danger" onClick={() => void onDelete(bot)}>
                           删除
-                        </button>
-                      </div>
+                        </UiButton>
+                      </UiActionTray>
                     </article>
                   ))}
                 </div>
@@ -557,9 +567,9 @@ function BotWizardModal({
                   <strong>{draft.name}</strong>
                   <span>{draft.platform} / {draft.id}</span>
                 </div>
-                <button type="button" className="integrations-panel__accent-btn" onClick={() => void onTest()} disabled={testing || missingRequired.length > 0}>
+                <UiButton type="button" variant="primary" className="integrations-panel__action-btn integrations-panel__action-btn--primary" onClick={() => void onTest()} disabled={testing || missingRequired.length > 0}>
                   {testing ? '检测中...' : '开始测活'}
-                </button>
+                </UiButton>
               </div>
               {missingRequired.length > 0 ? (
                 <div className="integrations-panel__notice integrations-panel__notice--error">
@@ -600,28 +610,29 @@ function BotWizardModal({
         <div className="integrations-modal__footer">
           <div>
             {currentIndex > 0 ? (
-              <button type="button" className="integrations-panel__ghost-btn" onClick={() => onChangeStep(stepOrder[currentIndex - 1])}>
+              <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => onChangeStep(stepOrder[currentIndex - 1])}>
                 上一步
-              </button>
+              </UiButton>
             ) : null}
           </div>
           <div className="integrations-modal__footer-actions">
-            <button type="button" className="integrations-panel__ghost-btn" onClick={onClose}>
+            <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={onClose}>
               取消
-            </button>
+            </UiButton>
             {step === 'done' ? (
-              <button type="button" className="integrations-panel__accent-btn" onClick={() => void onSave()} disabled={saving}>
+              <UiButton type="button" variant="primary" className="integrations-panel__action-btn integrations-panel__action-btn--primary" onClick={() => void onSave()} disabled={saving}>
                 {saving ? '保存中...' : mode === 'create' ? '创建 Bot' : '保存修改'}
-              </button>
+              </UiButton>
             ) : (
-              <button
+              <UiButton
                 type="button"
-                className="integrations-panel__accent-btn"
+                variant="primary"
+                className="integrations-panel__action-btn integrations-panel__action-btn--primary"
                 onClick={() => onChangeStep(stepOrder[currentIndex + 1])}
                 disabled={(step === 'basic' && (!draft.id.trim() || !draft.name.trim())) || (step === 'credentials' && missingRequired.length > 0)}
               >
                 下一步
-              </button>
+              </UiButton>
             )}
           </div>
         </div>
@@ -836,14 +847,14 @@ export function IntegrationsPanel() {
           <h4 className="integrations-panel__title">即时通讯通道配置</h4>
           <p className="integrations-panel__meta">从“固定三张表单”升级为“平台概览 + Bot 注册表 + 引导创建 + 高级模式”，并支持同平台多实例。</p>
         </div>
-        <div className="integrations-panel__toolbar">
-          <button type="button" className="integrations-panel__ghost-btn" onClick={() => void loadBots()} disabled={loadState.loading}>
+        <UiActionTray className="integrations-panel__toolbar integrations-panel__toolbar-tray">
+          <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void loadBots()} disabled={loadState.loading}>
             刷新
-          </button>
-          <button type="button" className="integrations-panel__accent-btn" onClick={() => openCreate('telegram')}>
+          </UiButton>
+          <UiButton type="button" variant="primary" className="integrations-panel__action-btn integrations-panel__action-btn--primary" onClick={() => openCreate('telegram')}>
             新建 IM Bot
-          </button>
-        </div>
+          </UiButton>
+        </UiActionTray>
       </header>
 
       <RestartBanner visible={showRestartNotice} restarting={restarting} onRestart={restartBackend} onDismiss={() => setShowRestartNotice(false)} />

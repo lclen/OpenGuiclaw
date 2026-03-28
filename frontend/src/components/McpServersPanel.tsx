@@ -4,6 +4,7 @@ import { CaretDownIcon } from './icons/ShellIcons';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 import { UiButton } from './ui/UiButton';
 import { UiCard } from './ui/UiCard';
+import { UiActionTray } from './ui/UiActionTray';
 import { UiSection } from './ui/UiSection';
 import { UiStatusPill } from './ui/UiStatusPill';
 
@@ -338,17 +339,17 @@ export function McpServersPanel() {
             <span className="mcp-panel__meta-code">config/mcp_servers.json</span>
           </p>
         </div>
-        <div className="mcp-panel__toolbar">
-          <UiButton variant="secondary" className="mcp-panel__ghost-btn" onClick={addServer}>
+        <UiActionTray className="mcp-panel__toolbar mcp-panel__toolbar-tray">
+          <UiButton variant="secondary" className="mcp-panel__toolbar-btn" onClick={addServer}>
             + 添加服务器
           </UiButton>
-          <UiButton variant="secondary" className="mcp-panel__ghost-btn" onClick={() => void loadServers({ silent: true })} disabled={refreshing || loadState.loading}>
+          <UiButton variant="secondary" className="mcp-panel__toolbar-btn" onClick={() => void loadServers({ silent: true })} disabled={refreshing || loadState.loading}>
             {refreshing ? '刷新中...' : '刷新'}
           </UiButton>
-          <UiButton variant="primary" className="mcp-panel__accent-btn" onClick={saveServers} disabled={saving}>
+          <UiButton variant="primary" className="mcp-panel__toolbar-btn mcp-panel__toolbar-btn--primary" onClick={saveServers} disabled={saving}>
             {saving ? '保存中...' : '保存配置'}
           </UiButton>
-        </div>
+        </UiActionTray>
       </header>
 
       {!sdkAvailable ? <div className="mcp-panel__notice mcp-panel__notice--error">当前环境未安装 MCP SDK，请先执行 `pip install mcp`。</div> : null}
@@ -380,23 +381,23 @@ export function McpServersPanel() {
                     <UiStatusPill tone="brand" className="mcp-panel__status-pill">{toolCount} 工具</UiStatusPill>
                   </button>
 
-                  <div className="mcp-panel__card-actions">
-                    <UiButton variant="secondary" className="mcp-panel__ghost-btn" onClick={() => toggleConfig(server, index)}>
+                  <UiActionTray className="mcp-panel__card-actions">
+                    <UiButton variant="secondary" className="mcp-panel__card-action-btn" onClick={() => toggleConfig(server, index)}>
                       {configOpen ? '收起配置' : '配置'}
                     </UiButton>
                     {server.connected ? (
-                      <UiButton variant="secondary" className="mcp-panel__ghost-btn" onClick={() => void disconnectServer(server, index)} disabled={busyServer === key || actionDisabled}>
+                      <UiButton variant="secondary" className="mcp-panel__card-action-btn" onClick={() => void disconnectServer(server, index)} disabled={busyServer === key || actionDisabled}>
                         {busyServer === key ? '断开中...' : '断开'}
                       </UiButton>
                     ) : (
-                      <UiButton variant="primary" className="mcp-panel__accent-btn" onClick={() => void connectServer(server, index)} disabled={busyServer === key || actionDisabled}>
+                      <UiButton variant="primary" className="mcp-panel__card-action-btn mcp-panel__card-action-btn--primary" onClick={() => void connectServer(server, index)} disabled={busyServer === key || actionDisabled}>
                         {busyServer === key ? '连接中...' : '连接'}
                       </UiButton>
                     )}
-                    <UiButton variant="danger" className="mcp-panel__danger-btn" onClick={() => removeServer(index)}>
+                    <UiButton variant="danger" className="mcp-panel__card-action-btn mcp-panel__card-action-btn--danger" onClick={() => removeServer(index)}>
                       删除
                     </UiButton>
-                  </div>
+                  </UiActionTray>
                 </div>
 
                 {isExpanded ? (

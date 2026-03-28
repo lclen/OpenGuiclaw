@@ -1,5 +1,6 @@
 .react-home-root,
-.react-sidebar-root {
+.react-sidebar-root,
+.react-im-root {
   display: contents;
 }
 

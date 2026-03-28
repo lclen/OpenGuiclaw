@@ -245,7 +245,7 @@ export function buildImTimeline(
           paramsStr: toolCall.function?.arguments || '{}',
           status: 'done',
           _collapsed: true,
-          resultStr: null
+          resultStr: undefined
         });
       });
       return;

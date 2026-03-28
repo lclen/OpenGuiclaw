@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base import ChannelAdapter
+from ..markdown import contains_markdown
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -634,23 +635,7 @@ class FeishuAdapter(ChannelAdapter):
 
     def _contains_markdown(self, text: str) -> bool:
         """检测文本是否包含 markdown 格式"""
-        import re
-
-        # 常见 markdown 标记模式
-        patterns = [
-            r"\*\*[^*]+\*\*",  # **bold**
-            r"__[^_]+__",  # __bold__
-            r"(?<!\*)\*[^*]+\*(?!\*)",  # *italic* (非 **)
-            r"(?<!_)_[^_]+_(?!_)",  # _italic_ (非 __)
-            r"^#{1,6}\s",  # # heading
-            r"\[.+?\]\(.+?\)",  # [link](url)
-            r"`[^`]+`",  # `code`
-            r"```",  # code block
-            r"^[-*+]\s",  # - list item
-            r"^\d+\.\s",  # 1. ordered list
-            r"^>\s",  # > quote
-        ]
-        return any(re.search(pattern, text, re.MULTILINE) for pattern in patterns)
+        return contains_markdown(text)
 
     async def _upload_image(self, path: str) -> str:
         """上传图片"""

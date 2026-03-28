@@ -7,6 +7,7 @@ import { DiaryPanel } from './components/DiaryPanel';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { HomeWorkspaceDashboard } from './components/HomeWorkspaceDashboard';
 import { IdentityPanel } from './components/IdentityPanel';
+import { ImChannelsPanel } from './components/ImChannelsPanel';
 import { IntegrationsPanel } from './components/IntegrationsPanel';
 import { MemoryPanel } from './components/MemoryPanel';
 import { McpServersPanel } from './components/McpServersPanel';
@@ -31,6 +32,8 @@ const schedulerRoot = document.querySelector<HTMLElement>('[data-react-scheduler
 const legacySchedulerRoot = document.querySelector<HTMLElement>('[data-legacy-scheduler-main-root]');
 const homeRoot = document.querySelector<HTMLElement>('[data-react-home-root]');
 const legacyHomeRoot = document.querySelector<HTMLElement>('[data-legacy-home-root]');
+const imRoot = document.querySelector<HTMLElement>('[data-react-im-root]');
+const legacyImRoot = document.querySelector<HTMLElement>('[data-legacy-im-root]');
 const sidebarRoot = document.querySelector<HTMLElement>('[data-react-sidebar-root]');
 const legacySidebarRoot = document.querySelector<HTMLElement>('[data-legacy-sidebar-root]');
 const workspaceModalRoot = document.querySelector<HTMLElement>('[data-react-workspace-modal-root]');
@@ -86,6 +89,19 @@ if (homeRoot) {
   ReactDOM.createRoot(homeRoot).render(
     <React.StrictMode>
       <HomeWorkspaceDashboard />
+    </React.StrictMode>
+  );
+}
+
+if (imRoot) {
+  imRoot.hidden = false;
+  if (legacyImRoot) {
+    legacyImRoot.hidden = true;
+    legacyImRoot.style.display = 'none';
+  }
+  ReactDOM.createRoot(imRoot).render(
+    <React.StrictMode>
+      <ImChannelsPanel />
     </React.StrictMode>
   );
 }

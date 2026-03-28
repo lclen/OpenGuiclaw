@@ -159,6 +159,9 @@
             <div x-show="currentView === 'home'" class="shell-view">
                 {% include "panels/home_view.html" %}
             </div>
+            <div x-show="currentView === 'im'" class="shell-view">
+                {% include "panels/im_view.html" %}
+            </div>
             <!-- Chat view -->
             <div x-show="currentView === 'chat'" class="shell-view">
                 {% include "panels/chat_view.html" %}

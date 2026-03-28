@@ -295,6 +295,14 @@ export function WorkspaceSidebar() {
           <span className="sidebar-shortcut-icon">自</span>
           <span>自动化</span>
         </button>
+        <button
+          type="button"
+          className={`sidebar-shortcut-btn${snapshot.currentView === 'im' ? ' active' : ''}`}
+          onClick={() => handleOpenPanel('im')}
+        >
+          <span className="sidebar-shortcut-icon">IM</span>
+          <span>通道</span>
+        </button>
       </div>
 
       <div className="sidebar-divider"></div>

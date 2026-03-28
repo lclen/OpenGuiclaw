@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base import ChannelAdapter
+from ..markdown import contains_markdown
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -1407,9 +1408,7 @@ class DingTalkAdapter(ChannelAdapter):
 
         # 纯文本 / Markdown
         text = message.content.text or ""
-        if message.parse_mode == "markdown" or any(
-            c in text for c in ["**", "##", "- ", "```"]
-        ):
+        if message.parse_mode == "markdown" or contains_markdown(text):
             return "sampleMarkdown", {"title": text[:20], "text": text}
         return "sampleText", {"content": text}
 
@@ -1424,9 +1423,7 @@ class DingTalkAdapter(ChannelAdapter):
         """
         text = message.content.text or ""
 
-        is_markdown = message.parse_mode == "markdown" or (
-            text and any(c in text for c in ["**", "##", "- ", "```", "[", "]"])
-        )
+        is_markdown = message.parse_mode == "markdown" or contains_markdown(text)
         chunks = self._chunk_markdown_text(text, self._MARKDOWN_MAX_LENGTH) if text else [text]
         result_id = ""
         for chunk in chunks:

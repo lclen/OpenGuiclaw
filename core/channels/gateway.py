@@ -13,6 +13,7 @@ import mimetypes
 from typing import Dict, Any
 
 from .base import ChannelAdapter
+from .markdown import contains_markdown, normalize_markdown_for_channel
 from .types import UnifiedMessage, OutgoingMessage, MessageContent
 from core.automation_context import (
     reset_automation_source_context,
@@ -333,10 +334,12 @@ class ChannelGateway:
                         )
                         if finalized:
                             return
+                    rendered_text = normalize_markdown_for_channel(final_text, adapter.channel_name)
                     out_msg = OutgoingMessage.text(
                         chat_id=message.chat_id,
-                        text=final_text,
+                        text=rendered_text,
                         thread_id=message.thread_id,
+                        parse_mode="markdown" if contains_markdown(final_text) else None,
                         metadata={
                             "session_webhook": message.metadata.get("session_webhook", ""),
                             "is_group": message.is_group,
@@ -351,15 +354,19 @@ class ChannelGateway:
                         "[Gateway] reply sent channel=%s chat=%s len=%s streaming=%s",
                         message.channel,
                         message.chat_id,
-                        len(final_text),
+                        len(rendered_text),
                         used_streaming,
                     )
 
             except Exception as e:
                 logger.error(f"[Gateway] Error during agent execution: {e}", exc_info=True)
+                rendered_text = normalize_markdown_for_channel(
+                    f"机器人处理消息时发生异常：{str(e)}",
+                    adapter.channel_name,
+                )
                 out_msg = OutgoingMessage.text(
                     chat_id=message.chat_id,
-                    text=f"机器人处理消息时发生异常：{str(e)}",
+                    text=rendered_text,
                     thread_id=message.thread_id,
                     metadata={
                         "session_webhook": message.metadata.get("session_webhook", ""),

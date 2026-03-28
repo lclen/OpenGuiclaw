@@ -170,6 +170,62 @@ export type HomeData = {
   workspaces?: WorkspaceSummary[];
 };
 
+export type IMChannelSummary = {
+  id: string;
+  channel_name: string;
+  platform: string;
+  bot_id?: string;
+  name: string;
+  display_name?: string;
+  status: 'online' | 'offline' | string;
+  enabled: boolean;
+  stream_state?: string | null;
+  last_error?: string | null;
+  session_count?: number;
+  last_active?: string | null;
+};
+
+export type IMSessionSummary = {
+  id: string;
+  session_id: string;
+  channel: string;
+  channel_name: string;
+  platform: string;
+  bot_id?: string;
+  chat_id: string;
+  chat_type?: string;
+  chat_name?: string;
+  display_name?: string;
+  alias?: string | null;
+  bot_enabled?: boolean;
+  response_mode?: string | null;
+  last_message?: string | null;
+  message_count?: number;
+  updated_at?: string | null;
+};
+
+export type SessionToolCall = {
+  id?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+};
+
+export type SessionMessagePayload = {
+  session_id: string;
+  messages: Array<{
+    role?: string;
+    content?: unknown;
+    timestamp?: string;
+    thinking?: string;
+    tool_calls?: SessionToolCall[];
+    tool_call_id?: string;
+    name?: string;
+  }>;
+  estimated_tokens?: number;
+};
+
 export type WorkspaceThreadMap = Record<string, WorkspaceThread[]>;
 
 export type ExpandedWorkspaceMap = Record<string, boolean>;

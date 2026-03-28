@@ -366,6 +366,9 @@
                 if (this.currentView === 'scheduler') {
                     return '自动化';
                 }
+                if (this.currentView === 'im') {
+                    return 'IM 通道';
+                }
                 if (!this.activeWorkspace) return 'Select a workspace';
 
                 var title = this.activeWorkspace.name;
@@ -382,6 +385,7 @@
                 if (this.currentView === 'home') return 'New Thread';
                 if (this.currentView === 'skills') return 'Skill Library';
                 if (this.currentView === 'scheduler') return 'Automation';
+                if (this.currentView === 'im') return 'IM Channels';
                 if (this.currentView === 'settings') return 'Settings';
                 return 'Active Workspace';
             };
@@ -407,6 +411,16 @@
                     this.notifyShellStateChanged();
                     if (typeof this.loadSchedulerTasks === 'function') {
                         await this.loadSchedulerTasks();
+                    }
+                    return;
+                }
+
+                if (view === 'im') {
+                    this.currentView = 'im';
+                    this.activePanel = 'im';
+                    this.notifyShellStateChanged();
+                    if (typeof this.fetchIMData === 'function') {
+                        await this.fetchIMData();
                     }
                     return;
                 }

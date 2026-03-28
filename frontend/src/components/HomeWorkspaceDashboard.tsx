@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { dispatchShellAction } from '../bridge/openGuiclaw';
 import { ChatComposer } from './ChatComposer';
 import { CaretDownIcon } from './icons/ShellIcons';
+import { ImOverviewCard } from './ImOverviewCard';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 export function HomeWorkspaceDashboard() {
@@ -137,6 +138,8 @@ export function HomeWorkspaceDashboard() {
           )}
         </div>
       </section>
+
+      <ImOverviewCard />
     </div>
   );
 }

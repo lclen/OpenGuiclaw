@@ -57,13 +57,15 @@ function buildSnapshot(app: OpenGuiclawApp): ToolbarSnapshot {
       title = '技能';
     } else if (view === 'scheduler') {
       title = '自动化';
+    } else if (view === 'im') {
+      title = 'IM 通道';
     } else {
       title = wsName || '选择工作区';
     }
   }
 
   if (!kicker) {
-    kicker = view === 'chat' ? '当前线程' : view === 'skills' ? '技能' : view === 'scheduler' ? '自动化' : '工作区';
+    kicker = view === 'chat' ? '当前线程' : view === 'skills' ? '技能' : view === 'scheduler' ? '自动化' : view === 'im' ? 'IM 通道' : '工作区';
   }
 
   return {

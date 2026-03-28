@@ -160,6 +160,65 @@ class SkillManager:
     def list_enabled(self) -> List[SkillDefinition]:
         return [s for s in self.list_all() if s.enabled]
 
+    def _normalize_allowed_values(self, allowed_skills: Optional[List[str]]) -> set[str]:
+        values: set[str] = set()
+        for value in allowed_skills or []:
+            text = str(value or "").strip().lower()
+            if text:
+                values.add(text)
+        return values
+
+    def _skill_match_keys(self, skill: SkillDefinition) -> set[str]:
+        keys = {
+            str(skill.name or "").strip().lower(),
+            str(skill.category or "").strip().lower(),
+            str(skill.plugin_name or "").strip().lower(),
+            str(skill.source_type or "").strip().lower(),
+        }
+        source_path = str(skill.source_path or "").replace("\\", "/").strip().lower()
+        if source_path:
+            keys.add(source_path)
+            if "/" in source_path:
+                keys.add(source_path.rsplit("/", 1)[-1])
+        return {key for key in keys if key}
+
+    def _is_builtin_always_available(self, skill: SkillDefinition) -> bool:
+        return str(skill.source_type or "").strip().lower() == "builtin_skill"
+
+    def _matches_allowed_scope(self, skill: SkillDefinition, allowed_skills: Optional[List[str]]) -> bool:
+        allowed = self._normalize_allowed_values(allowed_skills)
+        if not allowed:
+            return False
+        return bool(self._skill_match_keys(skill) & allowed)
+
+    def is_skill_visible(
+        self,
+        skill: SkillDefinition,
+        allowed_skills: Optional[List[str]] = None,
+        skills_mode: str = "inclusive",
+    ) -> bool:
+        """Decide whether a skill should be exposed to the current agent profile."""
+        mode = str(skills_mode or "inclusive").strip().lower()
+        if mode == "all" or not allowed_skills:
+            return True
+        if self._is_builtin_always_available(skill):
+            return True
+        matched = self._matches_allowed_scope(skill, allowed_skills)
+        if mode == "exclusive":
+            return not matched
+        return matched
+
+    def list_visible(
+        self,
+        allowed_skills: Optional[List[str]] = None,
+        skills_mode: str = "inclusive",
+    ) -> List[SkillDefinition]:
+        return [
+            skill
+            for skill in self.list_enabled()
+            if self.is_skill_visible(skill, allowed_skills=allowed_skills, skills_mode=skills_mode)
+        ]
+
     def set_registration_context(self, **kwargs: Any) -> None:
         self._registration_context = dict(kwargs)
 
@@ -197,10 +256,9 @@ class SkillManager:
             return f"[SkillManager] Error executing '{name}': {e}"
 
     def get_tool_definitions(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> List[Dict[str, Any]]:
-        """Return tool definitions in OpenAI function-calling format. All tools are returned globally (No Isolation)."""
+        """Return tool definitions in OpenAI function-calling format, filtered by profile scope."""
         tools = []
-        for skill in self.list_enabled():
-            # User relaxed strict isolation: all agents get all tools.
+        for skill in self.list_visible(allowed_skills=allowed_skills, skills_mode=skills_mode):
             tools.append({
                 "type": "function",
                 "function": {
@@ -216,18 +274,10 @@ class SkillManager:
         return tools
 
     def summary(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> str:
-        """Return a text summary of all enabled skills. Highlights specialized skills."""
+        """Return a text summary of visible skills. Highlights profile-preferred skills."""
         lines = []
-        for skill in self.list_enabled():
-            is_specialized = False
-            # Check if this skill is the agent's core specialized ability
-            if allowed_skills is not None and allowed_skills:
-                if skills_mode == "inclusive":
-                    if skill.name in allowed_skills or skill.category in allowed_skills:
-                        is_specialized = True
-                elif skills_mode == "exclusive":
-                    if skill.name not in allowed_skills and skill.category not in allowed_skills:
-                        is_specialized = True
+        for skill in self.list_visible(allowed_skills=allowed_skills, skills_mode=skills_mode):
+            is_specialized = self._matches_allowed_scope(skill, allowed_skills)
 
             if is_specialized:
                 lines.append(f"- **{skill.name}** ({skill.category}) [✨优先核心技能]: {skill.description}")
