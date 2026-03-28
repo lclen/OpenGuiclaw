@@ -32,6 +32,7 @@
 
             obj.currentThreadId = null;
             obj.threadLoading = false;
+            obj.currentStreamTarget = null;
 
             obj.showSettings = false;
             obj.settingsTab = 'models';
@@ -47,7 +48,7 @@
                 { id: 'integrations', cfgTab: 'channels', title: '集成', description: '配置 IM 通道、服务连接与外部桥接' },
                 { id: 'identity', cfgTab: 'identity', title: '身份', description: '维护角色设定、记忆摘要与个性化配置' },
                 { id: 'diagnostics', cfgTab: 'system', title: '诊断', description: '查看环境信息、运行状态与问题排查项' },
-                { id: 'archived', cfgTab: null, title: '归档', description: '整理已归档的工作区与线程' }
+                { id: 'archived', cfgTab: null, title: '归档', description: '恢复归档内容或执行永久删除' }
             ];
 
             obj.showNewWorkspaceModal = false;
@@ -585,7 +586,7 @@
                 if (!wsId) return;
                 var workspace = (this.workspaces || []).find(function (w) { return w.id === wsId; }) || null;
                 if (workspace && workspace.is_default) {
-                    throw new Error('默认工作区不可移除');
+                    throw new Error('默认工作区不可归档');
                 }
 
                 try {
@@ -594,7 +595,7 @@
                     try {
                         data = await r.json();
                     } catch (_) {}
-                    if (!r.ok) throw new Error(data.detail || '移除工作区失败');
+                    if (!r.ok) throw new Error(data.detail || '归档工作区失败');
 
                     delete this.workspaceThreadMap[wsId];
                     delete this.expandedWorkspaceIds[wsId];
@@ -620,7 +621,7 @@
                         this.notifyShellStateChanged();
                     }
 
-                    this.pushLog('status', '工作区已移除');
+                    this.pushLog('status', '工作区已归档');
                 } catch (e) {
                     console.error('[Shell] archiveWorkspace:', e);
                     throw e;
@@ -799,12 +800,32 @@
             };
 
             obj.abortReceiving = function () {
-                if (this.activeWorkspaceId && this.currentThreadId) {
-                    fetch('/api/workspaces/' + this.activeWorkspaceId + '/sessions/' + this.currentThreadId + '/abort', {
-                        method: 'POST'
-                    }).catch(function () {});
+                var target = this.currentStreamTarget || (
+                    this.activeWorkspaceId && this.currentThreadId
+                        ? { workspaceId: this.activeWorkspaceId, sessionId: this.currentThreadId }
+                        : null
+                );
+                if (target) {
+                    this._abortWorkspaceThreadStream(target.workspaceId, target.sessionId);
                 }
                 if (_baseAbortReceiving) _baseAbortReceiving();
+            };
+
+            obj._abortWorkspaceThreadStream = function (wsId, sessionId) {
+                if (!wsId || !sessionId) return Promise.resolve();
+                if (
+                    this.currentController
+                    && this.currentStreamTarget
+                    && this.currentStreamTarget.workspaceId === wsId
+                    && this.currentStreamTarget.sessionId === sessionId
+                ) {
+                    try {
+                        this.currentController.abort();
+                    } catch (_) {}
+                }
+                return fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId + '/abort', {
+                    method: 'POST'
+                }).catch(function () {});
             };
 
             obj._pushWorkspaceAssistantPlaceholder = function (aiId, initialHtml) {
@@ -1095,6 +1116,10 @@
                 try {
                     var streamController = new AbortController();
                     this.currentController = streamController;
+                    this.currentStreamTarget = {
+                        workspaceId: requestWorkspaceId,
+                        sessionId: requestSessionId
+                    };
                     var response = await fetch(
                         '/api/workspaces/' + requestWorkspaceId + '/sessions/' + requestSessionId + '/stream',
                         {
@@ -1164,6 +1189,13 @@
                     if (this.currentController === streamController) {
                         this.currentController = null;
                     }
+                    if (
+                        this.currentStreamTarget
+                        && this.currentStreamTarget.workspaceId === requestWorkspaceId
+                        && this.currentStreamTarget.sessionId === requestSessionId
+                    ) {
+                        this.currentStreamTarget = null;
+                    }
                     this.notifyChatStateChanged();
                     this.scrollToBottom();
                     this.loadTokenStats(this.tokenPeriod);
@@ -1175,6 +1207,14 @@
             obj.archiveThread = async function (wsId, sessionId) {
                 if (!wsId || !sessionId) return;
                 try {
+                    if (
+                        this.isReceiving
+                        && this.currentStreamTarget
+                        && this.currentStreamTarget.workspaceId === wsId
+                        && this.currentStreamTarget.sessionId === sessionId
+                    ) {
+                        await this._abortWorkspaceThreadStream(wsId, sessionId);
+                    }
                     var r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId + '/archive', { method: 'POST' });
                     if (r.ok) {
                         if (this.currentThreadId === sessionId) {
@@ -1191,7 +1231,7 @@
 
             obj.deleteThread = async function (wsId, sessionId) {
                 if (!wsId || !sessionId) return;
-                if (!confirm('删除后会从左侧历史中移除，并可在设置的归档页中恢复。继续吗？')) return;
+                if (!confirm('归档这条对话？归档后会从侧栏移除，但仍可在“归档”中恢复。')) return;
                 await this.archiveThread(wsId, sessionId);
             };
 
@@ -1236,13 +1276,21 @@
 
             obj.deleteArchivedThread = async function (wsId, sessionId) {
                 if (!wsId || !sessionId) return;
-                if (!confirm('确定永久删除该对话？此操作无法撤销。')) return;
+                if (!confirm('确定永久删除该归档对话？删除后将立即清除数据，且无法恢复。')) return;
                 try {
+                    if (
+                        this.isReceiving
+                        && this.currentStreamTarget
+                        && this.currentStreamTarget.workspaceId === wsId
+                        && this.currentStreamTarget.sessionId === sessionId
+                    ) {
+                        await this._abortWorkspaceThreadStream(wsId, sessionId);
+                    }
                     var r = await fetch('/api/workspaces/' + wsId + '/sessions/' + sessionId, { method: 'DELETE' });
                     if (r.ok) {
                         await this.loadWorkspaceThreads(wsId, true);
                         await this.loadHome();
-                        this.pushLog('status', '对话已永久删除');
+                        this.pushLog('status', '归档对话已永久删除');
                     }
                 } catch (e) { console.error('[Shell] deleteArchivedThread:', e); }
             };

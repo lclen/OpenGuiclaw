@@ -161,3 +161,69 @@ async def test_daily_selfcheck_handles_empty_runtime_without_failing(tmp_path, m
     assert status.startswith("✅")
     assert len(deliveries) == 1
     assert "当前未配置可测活端点" in deliveries[0][1]
+
+
+@pytest.mark.asyncio
+async def test_daily_selfcheck_initializes_missing_dirs_without_degrading(tmp_path, monkeypatch):
+    from core import tasks
+
+    monkeypatch.setattr(tasks, "_APP_BASE", tmp_path)
+    monkeypatch.setitem(tasks.app_state, "server_version", "test-version")
+    monkeypatch.setitem(tasks.app_state, "server_started_at", 1_711_000_000.0)
+    monkeypatch.setitem(tasks.app_state, "agent", None)
+    monkeypatch.setitem(tasks.app_state, "task_scheduler", None)
+
+    async def fake_collect_runtime(*args, **kwargs):
+        return _runtime_snapshot(endpoints=[], im_channels=[], network_status="unknown")
+
+    deliveries = []
+    monkeypatch.setattr(tasks, "collect_runtime_selfcheck_snapshot", fake_collect_runtime)
+    monkeypatch.setattr(tasks, "deliver_automation_event", lambda role, content, **kwargs: deliveries.append((role, content, kwargs)) or ([], None))
+    monkeypatch.setattr(tasks, "_scan_log_error_summary", lambda: {})
+
+    task = SimpleNamespace(
+        get_delivery_targets=lambda: [
+            {"kind": "workspace_inbox", "workspace_id": "default", "session_id": None, "channel": None, "chat_id": None}
+        ]
+    )
+
+    success, status = await tasks._system_daily_selfcheck(lambda event: None, task)
+
+    assert success is True
+    assert status.startswith("✅")
+    assert tmp_path.joinpath("data", "consolidation").exists()
+    assert "总体状态**: ✅" in deliveries[0][1]
+
+
+@pytest.mark.asyncio
+async def test_daily_selfcheck_survives_artifact_write_failure(tmp_path, monkeypatch):
+    from core import tasks
+
+    _ensure_required_dirs(tmp_path)
+    monkeypatch.setattr(tasks, "_APP_BASE", tmp_path)
+    monkeypatch.setitem(tasks.app_state, "server_version", "test-version")
+    monkeypatch.setitem(tasks.app_state, "server_started_at", 1_711_000_000.0)
+    monkeypatch.setitem(tasks.app_state, "agent", None)
+    monkeypatch.setitem(tasks.app_state, "task_scheduler", None)
+
+    async def fake_collect_runtime(*args, **kwargs):
+        return _runtime_snapshot(endpoints=[], im_channels=[], network_status="unknown")
+
+    deliveries = []
+    monkeypatch.setattr(tasks, "collect_runtime_selfcheck_snapshot", fake_collect_runtime)
+    monkeypatch.setattr(tasks, "deliver_automation_event", lambda role, content, **kwargs: deliveries.append((role, content, kwargs)) or ([], None))
+    monkeypatch.setattr(tasks, "_scan_log_error_summary", lambda: {})
+    monkeypatch.setattr(tasks, "_write_selfcheck_file", lambda path, content: (_ for _ in ()).throw(OSError("disk full")))
+
+    task = SimpleNamespace(
+        get_delivery_targets=lambda: [
+            {"kind": "workspace_inbox", "workspace_id": "default", "session_id": None, "channel": None, "chat_id": None}
+        ]
+    )
+
+    success, status = await tasks._system_daily_selfcheck(lambda event: None, task)
+
+    assert success is True
+    assert status.startswith("✅")
+    assert "报告落盘" in deliveries[0][1]
+    assert "disk full" in deliveries[0][1]

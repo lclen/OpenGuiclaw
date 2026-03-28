@@ -304,6 +304,23 @@ class WorkspaceManager:
             self._write_workspace_json(info)
             logger.info(f"Unarchived workspace {workspace_id!r}")
 
+    def delete_workspace(self, workspace_id: str) -> None:
+        """Permanently delete an archived workspace directory from disk."""
+        with self._lock:
+            info = self._read_workspace_json(workspace_id)
+            if not info.archived:
+                raise ValueError(
+                    f"Workspace {workspace_id} is not archived. "
+                    "Archive it first before permanent deletion."
+                )
+
+            ws_dir = self._ws_dir(workspace_id)
+            if not ws_dir.exists():
+                raise WorkspaceNotFoundError(f"Workspace not found: {workspace_id}")
+
+            shutil.rmtree(ws_dir)
+            logger.info(f"Permanently deleted workspace {workspace_id!r}")
+
     # ── Session management ────────────────────────────────────────────────────
 
     def _read_session_json(self, workspace_id: str, session_id: str) -> Dict[str, Any]:

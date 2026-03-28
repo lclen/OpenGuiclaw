@@ -16,24 +16,13 @@ from pydantic import BaseModel
 
 from core.process_runtime import cleanup_process_runtime_targets, detect_runtime_mode
 from core.runtime_diagnostics import (
-    ROLE_HEALTH_LABELS as _ROLE_HEALTH_LABELS,
     build_health_targets as _build_health_targets_impl,
-    classify_health_error as _classify_health_error_impl,
     collect_diagnostics_snapshot,
     probe_health_target as _probe_health_target_impl,
-    safe_text as _safe_text_impl,
 )
 from core.state import app_state, _APP_BASE, logger, get_profile_store
 
 router = APIRouter(tags=["agents"])
-
-_ROLE_HEALTH_LABELS = {
-    "api": "主模型",
-    "vision": "视觉模型",
-    "image_analyzer": "图像解析",
-    "embedding": "嵌入模型",
-    "autogui": "GUI 操作",
-}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -51,61 +40,6 @@ def _load_config_json() -> tuple[dict[str, Any], Path]:
         raise HTTPException(status_code=404, detail="config.json not found")
     with open(cfg_path, encoding="utf-8") as f:
         return json.load(f), cfg_path
-
-
-def _safe_text(value: Any) -> str:
-    return _safe_text_impl(value)
-
-
-def _classify_health_error(exc: Exception) -> tuple[str, str, str]:
-    return _classify_health_error_impl(exc)
-
-
-def _build_probe_result(
-    target: dict[str, Any],
-    *,
-    status: str,
-    latency_ms: int | None,
-    error: str | None,
-    error_code: str | None,
-    hint: str | None,
-    configured: bool,
-) -> dict[str, Any]:
-    return {
-        "name": target["name"],
-        "label": target.get("label"),
-        "kind": target.get("kind"),
-        "role": target.get("role"),
-        "status": status,
-        "latency_ms": latency_ms,
-        "error": error,
-        "error_code": error_code,
-        "hint": hint,
-        "configured": configured,
-        "last_checked_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-
-def _check_target_configuration(target: dict[str, Any]) -> tuple[bool, str | None, str | None, str | None]:
-    base_url = _safe_text(target.get("base_url"))
-    model = _safe_text(target.get("model"))
-
-    if not base_url:
-        return (
-            False,
-            "missing_base_url",
-            "Base URL 未配置",
-            "请在模型设置中填写 Base URL 后再执行健康检查",
-        )
-    if not model:
-        return (
-            False,
-            "missing_model",
-            "模型名称未配置",
-            "请在模型设置中填写模型名后再执行健康检查",
-        )
-    return (True, None, None, None)
-
 
 def _build_health_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
     return _build_health_targets_impl(config)

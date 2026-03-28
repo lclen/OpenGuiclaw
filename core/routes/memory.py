@@ -15,12 +15,14 @@ router = APIRouter(tags=["memory"])
 class MemoryCreateRequest(BaseModel):
     content: str
     type: Optional[str] = "fact"
+    usage_layer: Optional[str] = None
     tags: Optional[list] = []
 
 
 class MemoryUpdateRequest(BaseModel):
     content: Optional[str] = None
     type: Optional[str] = None
+    usage_layer: Optional[str] = None
     tags: Optional[list] = None
 
 
@@ -40,15 +42,30 @@ def _require_memory():
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/api/memory")
-async def list_memory(type: Optional[str] = None, q: Optional[str] = None):
+async def list_memory(type: Optional[str] = None, usage_layer: Optional[str] = None, q: Optional[str] = None):
     """Return memory items, optionally filtered by type or keyword."""
     agent = app_state.get("agent")
     if not agent or not agent.memory:
         return {"memories": []}
-    items = agent.memory.list_by_type(type) if type else agent.memory.list_all()
+    if type:
+        items = agent.memory.list_by_type(type)
+    elif usage_layer:
+        items = agent.memory.list_by_usage_layer(usage_layer)
+    else:
+        items = agent.memory.list_all()
     if q:
         q_lower = q.lower()
-        items = [m for m in items if q_lower in m.content.lower()]
+        items = [
+            m for m in items
+            if q_lower in " ".join(
+                [
+                    m.content.lower(),
+                    (m.type or "").lower(),
+                    (getattr(m, "usage_layer", "") or "").lower(),
+                    " ".join(m.tags or []).lower(),
+                ]
+            )
+        ]
     return {"memories": [m.to_dict() for m in items]}
 
 
@@ -56,7 +73,7 @@ async def list_memory(type: Optional[str] = None, q: Optional[str] = None):
 async def create_memory(req: MemoryCreateRequest):
     """Create a new memory item."""
     agent = _require_memory()
-    item = agent.memory.add(req.content, tags=req.tags, type=req.type)
+    item = agent.memory.add(req.content, tags=req.tags, type=req.type, usage_layer=req.usage_layer)
     return {"memory": item.to_dict()}
 
 
@@ -78,6 +95,7 @@ async def update_memory(memory_id: str, req: MemoryUpdateRequest):
         new_content=req.content,
         new_tags=req.tags,
         new_type=req.type,
+        new_usage_layer=req.usage_layer,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found")

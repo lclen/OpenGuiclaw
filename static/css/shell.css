@@ -3002,6 +3002,11 @@
   color: #fca5a5;
 }
 
+.sidebar-thread-context-icon.archive {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fdba74;
+}
+
 .sidebar-thread-context-label {
   min-width: 0;
   font-size: 12px;
@@ -3016,6 +3021,15 @@
 .sidebar-thread-context-item.danger:hover {
   background: rgba(239, 68, 68, 0.12);
   color: #fecaca;
+}
+
+.sidebar-thread-context-item.archive {
+  color: #fdba74;
+}
+
+.sidebar-thread-context-item.archive:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fed7aa;
 }
 
 .sidebar-thread-context-hint {

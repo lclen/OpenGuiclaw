@@ -138,10 +138,8 @@ export function WorkspaceSidebar() {
     emitShellUpdate();
   }
 
-  async function handleDeleteThread(workspaceId: string, sessionId: string) {
+  async function handleArchiveThread(workspaceId: string, sessionId: string) {
     if (!hostApp) return;
-    const confirmed = window.confirm('删除这条历史对话？此操作不可撤销。');
-    if (!confirmed) return;
     await hostApp.deleteThread?.(workspaceId, sessionId);
     emitShellUpdate();
   }
@@ -164,7 +162,7 @@ export function WorkspaceSidebar() {
   async function handleArchiveWorkspace(workspaceId: string, workspaceName: string, isDefault: boolean) {
     if (!hostApp || !workspaceId) return;
     if (isDefault) return;
-    const confirmed = window.confirm(`移除工作区“${workspaceName}”？工作区会进入归档，可在设置页恢复。`);
+    const confirmed = window.confirm(`归档工作区“${workspaceName}”？归档后会从侧栏移除，但仍可在“归档”中恢复。`);
     if (!confirmed) return;
     await hostApp.archiveWorkspace?.(workspaceId);
     emitShellUpdate();
@@ -318,6 +316,11 @@ export function WorkspaceSidebar() {
             typeof hostApp?.getSidebarWorkspaceThreads === 'function'
               ? hostApp.getSidebarWorkspaceThreads(workspace.id)
               : snapshot.workspaceThreadMap[workspace.id] || [];
+          const hasThreadCache =
+            typeof hostApp?.getSidebarWorkspaceThreads === 'function'
+              ? Array.isArray(threads)
+              : Array.isArray(snapshot.workspaceThreadMap[workspace.id]);
+          const threadCount = hasThreadCache ? threads.length : workspace.thread_count || 0;
           const expanded =
             typeof hostApp?.isWorkspaceExpanded === 'function'
               ? hostApp.isWorkspaceExpanded(workspace.id)
@@ -333,7 +336,7 @@ export function WorkspaceSidebar() {
                     workspace.id,
                     getDisplayWorkspaceName(workspace.name),
                     !!workspace.is_default,
-                    workspace.thread_count || threads.length || 0
+                    threadCount
                   )
                 }
               >
@@ -347,7 +350,7 @@ export function WorkspaceSidebar() {
                     {getDisplayWorkspaceName(workspace.name)}
                     {workspace.is_default ? ' · 默认' : ''}
                   </span>
-                  <span className="sidebar-workspace-count">{workspace.thread_count || threads.length || 0}</span>
+                  <span className="sidebar-workspace-count">{threadCount}</span>
                 </button>
                 <button
                   type="button"
@@ -367,7 +370,7 @@ export function WorkspaceSidebar() {
                       workspace.id,
                       getDisplayWorkspaceName(workspace.name),
                       !!workspace.is_default,
-                      workspace.thread_count || threads.length || 0
+                      threadCount
                     )
                   }
                 >
@@ -481,17 +484,17 @@ export function WorkspaceSidebar() {
               <div className="sidebar-thread-context-divider"></div>
               <button
                 type="button"
-                className="sidebar-thread-context-item danger"
+                className="sidebar-thread-context-item archive"
                 onClick={() => {
-                  void handleDeleteThread(contextMenu.workspaceId, contextMenu.sessionId);
+                  void handleArchiveThread(contextMenu.workspaceId, contextMenu.sessionId);
                   setContextMenu(null);
                 }}
               >
                 <span className="sidebar-thread-context-item-main">
-                  <span className="sidebar-thread-context-icon danger">×</span>
-                  <span className="sidebar-thread-context-label">删除</span>
+                  <span className="sidebar-thread-context-icon archive">↧</span>
+                  <span className="sidebar-thread-context-label">归档对话</span>
                 </span>
-                <span className="sidebar-thread-context-hint">归档到历史</span>
+                <span className="sidebar-thread-context-hint">从侧栏移除，可恢复</span>
               </button>
             </>
           ) : (
@@ -520,7 +523,7 @@ export function WorkspaceSidebar() {
               <div className="sidebar-thread-context-divider"></div>
               <button
                 type="button"
-                className="sidebar-thread-context-item danger"
+                className="sidebar-thread-context-item archive"
                 disabled={contextMenu.isDefault}
                 onClick={() => {
                   void handleArchiveWorkspace(contextMenu.workspaceId, contextMenu.workspaceName, contextMenu.isDefault);
@@ -528,10 +531,10 @@ export function WorkspaceSidebar() {
                 }}
               >
                 <span className="sidebar-thread-context-item-main">
-                  <span className="sidebar-thread-context-icon danger">×</span>
-                  <span className="sidebar-thread-context-label">{contextMenu.isDefault ? '默认工作区不可移除' : '移除工作区'}</span>
+                  <span className="sidebar-thread-context-icon archive">↧</span>
+                  <span className="sidebar-thread-context-label">{contextMenu.isDefault ? '默认工作区不可归档' : '归档工作区'}</span>
                 </span>
-                <span className="sidebar-thread-context-hint">{contextMenu.isDefault ? '保留默认入口' : '进入归档，可恢复'}</span>
+                <span className="sidebar-thread-context-hint">{contextMenu.isDefault ? '保留默认入口' : '从侧栏移除，可恢复'}</span>
               </button>
             </>
           )}

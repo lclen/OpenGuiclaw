@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { emitShellUpdate, type OpenGuiclawApp, getHostApp } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiCard } from './ui/UiCard';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type WorkspaceRecord = {
   id: string;
@@ -76,10 +80,14 @@ export function ArchivedPanel() {
   }, [snapshot.showSettings, snapshot.settingsTab]);
 
   async function loadArchivedData(app: OpenGuiclawApp | null) {
-    await Promise.all([loadWorkspaceLists(app), loadArchivedThreads(app, selectedWorkspaceId)]);
+    const result = await loadWorkspaceLists(app);
+    await loadArchivedThreads(app, result.selectedWorkspaceId, result.workspaces);
   }
 
-  async function loadWorkspaceLists(app: OpenGuiclawApp | null) {
+  async function loadWorkspaceLists(app: OpenGuiclawApp | null): Promise<{
+    workspaces: WorkspaceRecord[];
+    selectedWorkspaceId: string;
+  }> {
     setWorkspaceState({ loading: true, errorText: '' });
     try {
       const [activeResponse, archivedResponse] = await Promise.all([
@@ -111,7 +119,12 @@ export function ArchivedPanel() {
       setWorkspaces(combined);
       setArchivedWorkspaces(archivedOnly);
 
-      if (selectedWorkspaceId && !combined.some((workspace) => workspace.id === selectedWorkspaceId)) {
+      const nextSelectedWorkspaceId =
+        selectedWorkspaceId && combined.some((workspace) => workspace.id === selectedWorkspaceId)
+          ? selectedWorkspaceId
+          : '';
+
+      if (selectedWorkspaceId && !nextSelectedWorkspaceId) {
         setSelectedWorkspaceId('');
       }
 
@@ -122,6 +135,10 @@ export function ArchivedPanel() {
         await app.loadHome?.();
         emitShellUpdate();
       }
+      return {
+        workspaces: combined,
+        selectedWorkspaceId: nextSelectedWorkspaceId
+      };
     } catch (error) {
       setWorkspaceState({
         loading: false,
@@ -129,15 +146,25 @@ export function ArchivedPanel() {
       });
       setWorkspaces([]);
       setArchivedWorkspaces([]);
+      return {
+        workspaces: [],
+        selectedWorkspaceId: ''
+      };
     }
   }
 
-  async function loadArchivedThreads(app: OpenGuiclawApp | null, workspaceFilter: string) {
+  async function loadArchivedThreads(
+    app: OpenGuiclawApp | null,
+    workspaceFilter: string,
+    workspaceSource?: WorkspaceRecord[]
+  ) {
     setThreadState({ loading: true, errorText: '' });
     try {
       const allWorkspaces =
-        workspaces.length > 0
-          ? workspaces
+        workspaceSource && workspaceSource.length > 0
+          ? workspaceSource
+          : workspaces.length > 0
+            ? workspaces
           : await (async () => {
               const [activeResponse, archivedResponse] = await Promise.all([
                 fetch('/api/workspaces'),
@@ -235,15 +262,38 @@ export function ArchivedPanel() {
     }
   }
 
+  async function deleteWorkspace(workspaceId: string, workspaceName: string) {
+    const confirmed = window.confirm(`确定永久删除工作区“${workspaceName}”？删除后将立即清除该工作区及其全部归档对话，且无法恢复。`);
+    if (!confirmed) return;
+
+    setBusyKey(`delete-workspace:${workspaceId}`);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/permanent`, {
+        method: 'DELETE'
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, '永久删除工作区失败'));
+      }
+      pushStatus('归档工作区已永久删除');
+      await refreshAll();
+    } catch (error) {
+      pushStatus(error instanceof Error ? error.message : '永久删除工作区失败');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function restoreThread(workspaceId: string, sessionId: string) {
     setBusyKey(`restore-thread:${workspaceId}:${sessionId}`);
     try {
+      const app = hostApp ?? getHostApp();
       const response = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}/unarchive`, {
         method: 'POST'
       });
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, '恢复对话失败'));
       }
+      await app?.loadWorkspaceThreads?.(workspaceId, true);
       pushStatus('对话已恢复');
       await refreshAll();
     } catch (error) {
@@ -254,21 +304,23 @@ export function ArchivedPanel() {
   }
 
   async function deleteThread(workspaceId: string, sessionId: string) {
-    const confirmed = window.confirm('确定永久删除该对话？此操作无法撤销。');
+    const confirmed = window.confirm('确定永久删除该归档对话？删除后将立即清除数据，且无法恢复。');
     if (!confirmed) return;
 
     setBusyKey(`delete-thread:${workspaceId}:${sessionId}`);
     try {
+      const app = hostApp ?? getHostApp();
       const response = await fetch(`/api/workspaces/${workspaceId}/sessions/${sessionId}`, {
         method: 'DELETE'
       });
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, '永久删除对话失败'));
+        throw new Error(await readErrorMessage(response, '永久删除归档对话失败'));
       }
-      pushStatus('对话已永久删除');
+      await app?.loadWorkspaceThreads?.(workspaceId, true);
+      pushStatus('归档对话已永久删除');
       await refreshAll();
     } catch (error) {
-      pushStatus(error instanceof Error ? error.message : '永久删除对话失败');
+      pushStatus(error instanceof Error ? error.message : '永久删除归档对话失败');
     } finally {
       setBusyKey(null);
     }
@@ -278,14 +330,18 @@ export function ArchivedPanel() {
     <div className="archived-panel">
       <section className="archived-panel__section">
         <header className="archived-panel__section-header">
-          <div>
+          <div className="archived-panel__section-heading">
             <div className="archived-panel__eyebrow">工作区归档</div>
             <h4 className="archived-panel__title">归档工作区</h4>
             <p className="archived-panel__meta">{archivedWorkspaces.length} 个已归档工作区</p>
+            <div className="archived-panel__policy">
+              <UiStatusPill className="archived-panel__policy-pill" tone="success">可恢复</UiStatusPill>
+              <UiStatusPill className="archived-panel__policy-pill" tone="danger">永久删除不可恢复</UiStatusPill>
+            </div>
           </div>
-          <button type="button" className="archived-panel__ghost-btn" onClick={refreshAll}>
+          <UiButton variant="ghost" size="sm" className="archived-panel__refresh-btn" onClick={refreshAll}>
             刷新
-          </button>
+          </UiButton>
         </header>
 
         {workspaceState.errorText ? (
@@ -301,23 +357,35 @@ export function ArchivedPanel() {
         {!workspaceState.loading && archivedWorkspaces.length > 0 ? (
           <div className="archived-panel__stack">
             {archivedWorkspaces.map((workspace) => {
-              const actionKey = `restore-workspace:${workspace.id}`;
-              const busy = busyKey === actionKey;
+              const restoreKey = `restore-workspace:${workspace.id}`;
+              const deleteKey = `delete-workspace:${workspace.id}`;
               return (
-                <article key={workspace.id} className="archived-panel__card">
+                <UiCard key={workspace.id} as="article" variant="subtle" className="archived-panel__card">
                   <div className="archived-panel__card-main">
                     <h5 className="archived-panel__card-title">{workspace.name}</h5>
                     <div className="archived-panel__card-subtitle">{workspace.workspace_path || '未记录目录'}</div>
                   </div>
-                  <button
-                    type="button"
-                    className="archived-panel__accent-btn"
-                    onClick={() => restoreWorkspace(workspace.id)}
-                    disabled={busy}
-                  >
-                    {busy ? '恢复中...' : '恢复'}
-                  </button>
-                </article>
+                  <UiActionTray className="archived-panel__actions">
+                    <UiButton
+                      variant="primary"
+                      size="sm"
+                      className="archived-panel__action-btn archived-panel__action-btn--restore"
+                      onClick={() => restoreWorkspace(workspace.id)}
+                      disabled={busyKey === restoreKey}
+                    >
+                      {busyKey === restoreKey ? '恢复中...' : '恢复'}
+                    </UiButton>
+                    <UiButton
+                      variant="danger"
+                      size="sm"
+                      className="archived-panel__action-btn archived-panel__action-btn--danger"
+                      onClick={() => deleteWorkspace(workspace.id, workspace.name)}
+                      disabled={busyKey === deleteKey}
+                    >
+                      {busyKey === deleteKey ? '永久删除中...' : '永久删除'}
+                    </UiButton>
+                  </UiActionTray>
+                </UiCard>
               );
             })}
           </div>
@@ -326,10 +394,14 @@ export function ArchivedPanel() {
 
       <section className="archived-panel__section">
         <header className="archived-panel__section-header">
-          <div>
+          <div className="archived-panel__section-heading">
             <div className="archived-panel__eyebrow">对话归档</div>
             <h4 className="archived-panel__title">归档对话</h4>
             <p className="archived-panel__meta">{archivedThreads.length} 条已归档对话</p>
+            <div className="archived-panel__policy">
+              <UiStatusPill className="archived-panel__policy-pill" tone="success">可恢复</UiStatusPill>
+              <UiStatusPill className="archived-panel__policy-pill" tone="danger">永久删除不可恢复</UiStatusPill>
+            </div>
           </div>
           <label className="archived-panel__filter">
             <span className="archived-panel__filter-label">工作区</span>
@@ -366,7 +438,12 @@ export function ArchivedPanel() {
               const restoreKey = `restore-thread:${thread._wsId}:${thread.session_id}`;
               const deleteKey = `delete-thread:${thread._wsId}:${thread.session_id}`;
               return (
-                <article key={`${thread._wsId}:${thread.session_id}`} className="archived-panel__card archived-panel__card--thread">
+                <UiCard
+                  key={`${thread._wsId}:${thread.session_id}`}
+                  as="article"
+                  variant="subtle"
+                  className="archived-panel__card archived-panel__card--thread"
+                >
                   <div className="archived-panel__card-main">
                     <h5 className="archived-panel__card-title">{thread.title || thread.session_id}</h5>
                     <div className="archived-panel__thread-meta">
@@ -375,25 +452,27 @@ export function ArchivedPanel() {
                       <span>{formatSessionTime(thread.updated_at)}</span>
                     </div>
                   </div>
-                  <div className="archived-panel__actions">
-                    <button
-                      type="button"
-                      className="archived-panel__accent-btn"
+                  <UiActionTray className="archived-panel__actions">
+                    <UiButton
+                      variant="primary"
+                      size="sm"
+                      className="archived-panel__action-btn archived-panel__action-btn--restore"
                       onClick={() => restoreThread(thread._wsId, thread.session_id)}
                       disabled={busyKey === restoreKey}
                     >
                       {busyKey === restoreKey ? '恢复中...' : '恢复'}
-                    </button>
-                    <button
-                      type="button"
-                      className="archived-panel__danger-btn"
+                    </UiButton>
+                    <UiButton
+                      variant="danger"
+                      size="sm"
+                      className="archived-panel__action-btn archived-panel__action-btn--danger"
                       onClick={() => deleteThread(thread._wsId, thread.session_id)}
                       disabled={busyKey === deleteKey}
                     >
-                      {busyKey === deleteKey ? '删除中...' : '永久删除'}
-                    </button>
-                  </div>
-                </article>
+                      {busyKey === deleteKey ? '永久删除中...' : '永久删除'}
+                    </UiButton>
+                  </UiActionTray>
+                </UiCard>
               );
             })}
           </div>

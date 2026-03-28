@@ -548,7 +548,12 @@ def _diagnose_network_matrix(results: list[dict[str, Any]]) -> tuple[str, str, s
     )
 
 
-async def probe_network_matrix(target: dict[str, Any] | None, timeout_seconds: float = 5.0) -> dict[str, Any]:
+async def probe_network_matrix(
+    target: dict[str, Any] | None,
+    timeout_seconds: float = 5.0,
+    *,
+    default_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not target:
         return {
             "status": "unknown",
@@ -559,12 +564,22 @@ async def probe_network_matrix(target: dict[str, Any] | None, timeout_seconds: f
             "results": [],
         }
 
-    results = await asyncio.gather(
-        *[
-            probe_health_target(dict(target), timeout_seconds=timeout_seconds, probe_mode=profile["name"])
-            for profile in NETWORK_MATRIX_PROFILES
-        ]
-    )
+    results: list[dict[str, Any]] = []
+    if default_result:
+        results.append(dict(default_result))
+    remaining_profiles = [
+        profile for profile in NETWORK_MATRIX_PROFILES
+        if not (default_result and profile["name"] == "default")
+    ]
+    if remaining_profiles:
+        results.extend(
+            await asyncio.gather(
+                *[
+                    probe_health_target(dict(target), timeout_seconds=timeout_seconds, probe_mode=profile["name"])
+                    for profile in remaining_profiles
+                ]
+            )
+        )
     status, summary, diagnosis_code, hint = _diagnose_network_matrix(results)
     return {
         "status": status,
@@ -604,7 +619,15 @@ async def collect_runtime_selfcheck_snapshot(
         else []
     )
     active_target = next((item for item in targets if item.get("active")), None) or (targets[0] if targets else None)
-    network_matrix = await probe_network_matrix(active_target, timeout_seconds=network_timeout_seconds)
+    default_probe_result = next(
+        (item for item in endpoint_results if item.get("name") == (active_target or {}).get("name")),
+        None,
+    )
+    network_matrix = await probe_network_matrix(
+        active_target,
+        timeout_seconds=network_timeout_seconds,
+        default_result=default_probe_result,
+    )
     im_channels = collect_im_channel_statuses(app_base)
 
     return {
@@ -629,4 +652,3 @@ async def collect_runtime_selfcheck_snapshot(
             "results": im_channels,
         },
     }
-

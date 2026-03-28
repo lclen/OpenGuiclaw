@@ -8,6 +8,7 @@ Workspace REST API 集成测试（AsyncClient + ASGITransport，无需启动真�
 """
 
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,7 +18,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
-from core.workspace_manager import WorkspaceManager
+from core.workspace_manager import WorkspaceManager, WorkspaceNotFoundError
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -230,6 +231,32 @@ class TestUnarchiveWorkspace:
         assert r.status_code == 404
 
 
+# ── DELETE /api/workspaces/{id}/permanent ────────────────────────────────────
+
+class TestDeleteWorkspace:
+
+    async def test_delete_archived_workspace(self, client, wm, ws_path):
+        ws = await create_ws(client, ws_path)
+        make_session(wm, ws["id"], "sess_archived", archived=True)
+        wm.archive_workspace(ws["id"])
+
+        r = await client.delete(f"/api/workspaces/{ws['id']}/permanent")
+        assert r.status_code == 200
+
+        with pytest.raises(WorkspaceNotFoundError):
+            wm.get_workspace(ws["id"])
+
+    async def test_delete_non_archived_workspace_rejected(self, client, ws_path):
+        ws = await create_ws(client, ws_path)
+
+        r = await client.delete(f"/api/workspaces/{ws['id']}/permanent")
+        assert r.status_code == 422
+
+    async def test_delete_workspace_not_found(self, client):
+        r = await client.delete("/api/workspaces/ws_ghost/permanent")
+        assert r.status_code == 404
+
+
 # ── GET /api/workspaces/{id}/sessions ────────────────────────────────────────
 
 class TestListSessions:
@@ -280,6 +307,24 @@ class TestArchiveSession:
         ws = await create_ws(client, ws_path)
         r = await client.post(f"/api/workspaces/{ws['id']}/sessions/sess_ghost/archive")
         assert r.status_code == 404
+
+    async def test_archive_session_requests_abort_for_active_stream(self, client, wm, ws_path):
+        from core.routes.chat import _active_streams, _stream_key, _streams_lock
+
+        ws = await create_ws(client, ws_path)
+        make_session(wm, ws["id"], "sess_active_archive", archived=False)
+        abort_event = threading.Event()
+        key = _stream_key(ws["id"], "sess_active_archive")
+
+        with _streams_lock:
+            _active_streams[key] = abort_event
+        try:
+            r = await client.post(f"/api/workspaces/{ws['id']}/sessions/sess_active_archive/archive")
+            assert r.status_code == 200
+            assert abort_event.is_set() is True
+        finally:
+            with _streams_lock:
+                _active_streams.pop(key, None)
 
 
 # ── POST /api/workspaces/{id}/sessions/{sid}/unarchive ───────────────────────
@@ -344,6 +389,24 @@ class TestDeleteSession:
         ws = await create_ws(client, ws_path)
         r = await client.delete(f"/api/workspaces/{ws['id']}/sessions/sess_ghost")
         assert r.status_code == 404
+
+    async def test_delete_active_stream_session_rejected(self, client, wm, ws_path):
+        from core.routes.chat import _active_streams, _stream_key, _streams_lock
+
+        ws = await create_ws(client, ws_path)
+        make_session(wm, ws["id"], "sess_busy", archived=True)
+        abort_event = threading.Event()
+        key = _stream_key(ws["id"], "sess_busy")
+
+        with _streams_lock:
+            _active_streams[key] = abort_event
+        try:
+            r = await client.delete(f"/api/workspaces/{ws['id']}/sessions/sess_busy")
+            assert r.status_code == 409
+            assert "stream is active" in r.json()["detail"]
+        finally:
+            with _streams_lock:
+                _active_streams.pop(key, None)
 
 
 # ── GET /api/home ─────────────────────────────────────────────────────────────

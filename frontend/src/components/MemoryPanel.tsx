@@ -2,15 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { emitShellUpdate } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
-type MemoryType = 'all' | 'general' | 'fact' | 'preference' | 'profile' | 'error' | 'experience' | string;
+type UsageLayer = 'all' | 'context' | 'preference' | 'experience';
 
 type MemoryRecord = {
   id: string;
   content: string;
   type?: string | null;
+  usage_layer?: string | null;
   tags?: string[];
   created_at?: string | null;
-  timestamp?: string | null;
+  timestamp?: string | number | null;
   source?: string | null;
 };
 
@@ -25,15 +26,35 @@ type LoadState = {
   errorText: string;
 };
 
-const MEMORY_TYPE_OPTIONS: Array<{ value: MemoryType; label: string }> = [
-  { value: 'all', label: '全部类型' },
-  { value: 'general', label: 'general' },
-  { value: 'fact', label: 'fact' },
-  { value: 'preference', label: 'preference' },
-  { value: 'profile', label: 'profile' },
-  { value: 'error', label: 'error' },
-  { value: 'experience', label: 'experience' }
+const LAYER_OPTIONS: Array<{ value: UsageLayer; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'context', label: '上下文' },
+  { value: 'preference', label: '偏好' },
+  { value: 'experience', label: '经验' }
 ];
+
+const LAYER_LABELS: Record<string, string> = {
+  context: '上下文层',
+  preference: '偏好层',
+  experience: '经验层'
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  fact: 'fact',
+  preference: 'preference',
+  rule: 'rule',
+  skill: 'skill',
+  error: 'error',
+  experience: 'experience',
+  general: 'general',
+  profile: 'profile'
+};
+
+const LAYER_ORDER: Record<string, number> = {
+  context: 0,
+  preference: 1,
+  experience: 2
+};
 
 async function parseResponse(response: Response) {
   const contentType = response.headers.get('content-type') || '';
@@ -56,21 +77,48 @@ async function readErrorMessage(response: Response, fallback: string) {
   return fallback;
 }
 
+function normalizeUsageLayer(value?: string | null): Exclude<UsageLayer, 'all'> {
+  const normalized = (value || 'context').trim().toLowerCase();
+  if (normalized === 'preference' || normalized === 'experience') return normalized;
+  return 'context';
+}
+
+function normalizeType(value?: string | null) {
+  return (value || 'fact').trim().toLowerCase() || 'fact';
+}
+
 function toViewItem(item: MemoryRecord): MemoryItemView {
   return {
     ...item,
+    usage_layer: normalizeUsageLayer(item.usage_layer),
+    type: normalizeType(item.type),
     _selected: false,
     _editing: false,
     _editBuffer: item.content || ''
   };
 }
 
-function formatMemoryTime(item: MemoryRecord) {
-  return item.timestamp || item.created_at || '无时间戳';
+function getTimestampValue(item: MemoryRecord) {
+  if (typeof item.timestamp === 'number') return item.timestamp;
+  if (typeof item.timestamp === 'string') {
+    const numeric = Number(item.timestamp);
+    if (!Number.isNaN(numeric) && Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(item.timestamp);
+    if (!Number.isNaN(parsed)) return parsed / 1000;
+  }
+  if (item.created_at) {
+    const parsed = Date.parse(item.created_at.replace(' ', 'T'));
+    if (!Number.isNaN(parsed)) return parsed / 1000;
+  }
+  return 0;
 }
 
-function normalizeType(value?: string | null) {
-  return (value || 'general').trim() || 'general';
+function formatMemoryTime(item: MemoryRecord) {
+  return typeof item.created_at === 'string' && item.created_at.trim()
+    ? item.created_at
+    : typeof item.timestamp === 'string' || typeof item.timestamp === 'number'
+      ? String(item.timestamp)
+      : '无时间戳';
 }
 
 export function MemoryPanel() {
@@ -78,7 +126,7 @@ export function MemoryPanel() {
   const [items, setItems] = useState<MemoryItemView[]>([]);
   const [loadState, setLoadState] = useState<LoadState>({ loading: true, errorText: '' });
   const [searchText, setSearchText] = useState('');
-  const [typeFilter, setTypeFilter] = useState<MemoryType>('all');
+  const [layerFilter, setLayerFilter] = useState<UsageLayer>('all');
   const [statusText, setStatusText] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -87,18 +135,44 @@ export function MemoryPanel() {
     void loadMemories();
   }, [snapshot.showSettings, snapshot.settingsTab]);
 
+  const layerCounts = useMemo(
+    () =>
+      items.reduce(
+        (accumulator, item) => {
+          accumulator.all += 1;
+          accumulator[normalizeUsageLayer(item.usage_layer)] += 1;
+          return accumulator;
+        },
+        { all: 0, context: 0, preference: 0, experience: 0 }
+      ),
+    [items]
+  );
+
   const filteredItems = useMemo(() => {
     const search = searchText.trim().toLowerCase();
-    return items.filter((item) => {
-      const matchesType = typeFilter === 'all' || normalizeType(item.type) === typeFilter;
-      if (!matchesType) return false;
+    const nextItems = items.filter((item) => {
+      const normalizedLayer = normalizeUsageLayer(item.usage_layer);
+      const matchesLayer = layerFilter === 'all' || normalizedLayer === layerFilter;
+      if (!matchesLayer) return false;
       if (!search) return true;
-      const haystack = [item.content || '', item.type || '', ...(Array.isArray(item.tags) ? item.tags : [])]
+      const haystack = [
+        item.content || '',
+        item.type || '',
+        normalizedLayer,
+        LAYER_LABELS[normalizedLayer] || '',
+        ...(Array.isArray(item.tags) ? item.tags : [])
+      ]
         .join(' ')
         .toLowerCase();
       return haystack.includes(search);
     });
-  }, [items, searchText, typeFilter]);
+
+    return [...nextItems].sort((left, right) => {
+      const layerDiff = LAYER_ORDER[normalizeUsageLayer(left.usage_layer)] - LAYER_ORDER[normalizeUsageLayer(right.usage_layer)];
+      if (layerDiff !== 0) return layerDiff;
+      return getTimestampValue(right) - getTimestampValue(left);
+    });
+  }, [items, layerFilter, searchText]);
 
   const selectedCount = useMemo(() => items.filter((item) => item._selected).length, [items]);
   const allFilteredSelected = filteredItems.length > 0 && filteredItems.every((item) => item._selected);
@@ -119,7 +193,9 @@ export function MemoryPanel() {
         throw new Error(await readErrorMessage(response, '加载记忆列表失败'));
       }
       const payload = await parseResponse(response);
-      const nextItems = Array.isArray(payload?.memories) ? payload.memories.map((item: MemoryRecord) => toViewItem(item)) : [];
+      const nextItems = Array.isArray(payload?.memories)
+        ? payload.memories.map((item: MemoryRecord) => toViewItem(item))
+        : [];
       setItems(nextItems);
       setLoadState({ loading: false, errorText: '' });
       emitShellUpdate();
@@ -253,23 +329,24 @@ export function MemoryPanel() {
             <input
               type="text"
               className="memory-react-panel__input"
-              placeholder="搜索记忆内容、标签或类型..."
+              placeholder="搜索内容、用途层、标签或类型..."
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
             />
           </label>
 
-          <select
-            className="memory-react-panel__select"
-            value={typeFilter}
-            onChange={(event) => setTypeFilter(event.target.value)}
-          >
-            {MEMORY_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
+          <div className="memory-react-panel__layer-switch" role="tablist" aria-label="记忆用途层筛选">
+            {LAYER_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`memory-react-panel__layer-btn${layerFilter === option.value ? ' is-active' : ''}`}
+                onClick={() => setLayerFilter(option.value)}
+              >
                 {option.label}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
         <div className="memory-react-panel__actions">
@@ -293,22 +370,39 @@ export function MemoryPanel() {
       </header>
 
       <div className="memory-react-panel__summary">
-        <div className="memory-react-panel__summary-text">
-          共 <strong>{filteredItems.length}</strong> 条可见记忆
+        <div className="memory-react-panel__summary-main">
+          <div className="memory-react-panel__summary-text">
+            当前可见 <strong>{filteredItems.length}</strong> 条记忆
+          </div>
+          <div className="memory-react-panel__summary-text">
+            已选 <strong>{selectedCount}</strong> 条
+          </div>
+          <button type="button" className="memory-react-panel__link-btn" onClick={toggleSelectAllFiltered}>
+            {allFilteredSelected ? '取消全选' : '全选当前结果'}
+          </button>
         </div>
-        <div className="memory-react-panel__summary-text">
-          已选 <strong>{selectedCount}</strong> 条
+
+        <div className="memory-react-panel__layer-stats">
+          <div className="memory-react-panel__layer-stat">
+            <span>上下文层</span>
+            <strong>{layerCounts.context}</strong>
+          </div>
+          <div className="memory-react-panel__layer-stat">
+            <span>偏好层</span>
+            <strong>{layerCounts.preference}</strong>
+          </div>
+          <div className="memory-react-panel__layer-stat">
+            <span>经验层</span>
+            <strong>{layerCounts.experience}</strong>
+          </div>
         </div>
-        <button type="button" className="memory-react-panel__link-btn" onClick={toggleSelectAllFiltered}>
-          {allFilteredSelected ? '取消全选' : '全选当前结果'}
-        </button>
       </div>
 
       {loadState.errorText ? <div className="memory-react-panel__notice memory-react-panel__notice--error">{loadState.errorText}</div> : null}
       {loadState.loading ? <div className="memory-react-panel__empty">正在加载记忆条目...</div> : null}
 
       {!loadState.loading && !loadState.errorText && filteredItems.length === 0 ? (
-        <div className="memory-react-panel__empty">当前没有匹配的记忆条目，可以尝试调整搜索词或类型筛选。</div>
+        <div className="memory-react-panel__empty">当前没有匹配的记忆条目，可以切换用途层或调整搜索词。</div>
       ) : null}
 
       {!loadState.loading && filteredItems.length > 0 ? (
@@ -316,6 +410,9 @@ export function MemoryPanel() {
           {filteredItems.map((item) => {
             const deleteBusy = busyKey === `delete:${item.id}`;
             const saveBusy = busyKey === `save:${item.id}`;
+            const normalizedLayer = normalizeUsageLayer(item.usage_layer);
+            const normalizedType = normalizeType(item.type);
+
             return (
               <article key={item.id} className="memory-react-panel__card">
                 <div className="memory-react-panel__card-main">
@@ -330,7 +427,12 @@ export function MemoryPanel() {
                   <div className="memory-react-panel__content-wrap">
                     <div className="memory-react-panel__card-top">
                       <div className="memory-react-panel__badges">
-                        <span className={`memory-react-panel__type-pill is-${normalizeType(item.type)}`}>{normalizeType(item.type)}</span>
+                        <span className={`memory-react-panel__layer-pill is-${normalizedLayer}`}>
+                          {LAYER_LABELS[normalizedLayer]}
+                        </span>
+                        <span className={`memory-react-panel__type-pill is-${normalizedType}`}>
+                          {TYPE_LABELS[normalizedType] || normalizedType}
+                        </span>
                         <span className="memory-react-panel__id">{item.id}</span>
                         {(item.tags || []).map((tag) => (
                           <span key={`${item.id}-${tag}`} className="memory-react-panel__tag-pill">

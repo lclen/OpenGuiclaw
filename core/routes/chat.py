@@ -65,6 +65,22 @@ def _stream_key(workspace_id: str, session_id: str) -> str:
     return f"{workspace_id}:{session_id}"
 
 
+def has_active_workspace_stream(workspace_id: str, session_id: str) -> bool:
+    stream_key = _stream_key(workspace_id, session_id)
+    with _streams_lock:
+        return stream_key in _active_streams
+
+
+def request_abort_workspace_stream(workspace_id: str, session_id: str) -> bool:
+    stream_key = _stream_key(workspace_id, session_id)
+    with _streams_lock:
+        event = _active_streams.get(stream_key)
+    if event:
+        event.set()
+        return True
+    return False
+
+
 def _get_workspace_context(workspace_id: str) -> dict:
     from core.workspace_manager import get_workspace_manager, WorkspaceNotFoundError
 
@@ -730,10 +746,6 @@ async def abort_workspace_stream(workspace_id: str, session_id: str):
     请求中止指定线程的进行中流式任务。
     前端在切换工作区前调用此接口，避免状态串写。
     """
-    stream_key = _stream_key(workspace_id, session_id)
-    with _streams_lock:
-        event = _active_streams.get(stream_key)
-    if event:
-        event.set()
+    if request_abort_workspace_stream(workspace_id, session_id):
         return {"status": "ok", "message": f"Abort requested for session {session_id}"}
     return {"status": "ok", "message": "No active stream for this session"}

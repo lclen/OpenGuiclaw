@@ -274,6 +274,7 @@ export type OpenGuiclawApp = {
   toggleThreadPin?: (wsId: string, sessionId: string, pinned: boolean) => Promise<void>;
   loadHome?: () => Promise<void>;
   loadWorkspaces?: () => Promise<void>;
+  loadWorkspaceThreads?: (wsId: string, force?: boolean) => Promise<void>;
   switchWorkspace?: (wsId: string, silent?: boolean) => Promise<void>;
   focusWorkspaceHome?: (wsId: string) => Promise<void>;
   toggleWorkspaceGroup?: (wsId: string) => Promise<void>;

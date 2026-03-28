@@ -1066,27 +1066,25 @@ class Agent:
             if self.interaction_habits.strip():
                 parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
 
-        # Dynamic Memory Injection (Top-K related memories based on user query)
-        if user_query and self.memory._vector_store:
-            # Instead of injecting the entire memory database, we only inject contextually relevant facts.
+        # Dynamic Memory Injection by usage layer
+        if user_query:
             try:
-                # If user_query is a list (multimodal), extract text parts for search
                 search_query_text = user_query
                 if isinstance(user_query, list):
-                    search_query_text = " ".join([item.get("text", "") for item in user_query if item.get("type") == "text"])
+                    search_query_text = " ".join(
+                        [item.get("text", "") for item in user_query if item.get("type") == "text"]
+                    )
 
-                related_mems = self.memory.search(search_query_text, top_k=3)
-                if related_mems:
-                    mem_lines = [f"- {m.content}" for m in related_mems]
-                    mem_ctx = "# 相关长期记忆 (Context)\n" + "\n".join(mem_lines)
-                    parts.append(mem_ctx)
-            except Exception as e:
+                memory_sections = self.memory.build_prompt_sections(
+                    search_query_text,
+                    top_k_by_layer={"preference": 2, "context": 3, "experience": 2},
+                )
+                for usage_layer in ("preference", "context", "experience"):
+                    section = memory_sections.get(usage_layer)
+                    if section:
+                        parts.append(section)
+            except Exception:
                 pass
-        elif user_query and not self.memory._vector_store:
-            # Fallback to standard context if no vector store (which just takes the last N memories)
-            mem_ctx = self.memory.build_context(user_query)
-            if mem_ctx:
-                parts.append(mem_ctx)
 
         # Omni-Context: Inject recent visual logs for real-time situational awareness
         try:

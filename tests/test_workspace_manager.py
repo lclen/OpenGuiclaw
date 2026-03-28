@@ -257,6 +257,23 @@ class TestSessionManagement:
         with pytest.raises(FileNotFoundError):
             wm.delete_session(ws.id, "sess_ghost")
 
+    def test_delete_archived_workspace(self, wm, ws_path):
+        ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
+        self._make_session(wm, ws.id, "sess_archived", archived=True)
+        wm.archive_workspace(ws.id)
+
+        wm.delete_workspace(ws.id)
+
+        with pytest.raises(WorkspaceNotFoundError):
+            wm.get_workspace(ws.id)
+        assert not wm._ws_dir(ws.id).exists()
+
+    def test_delete_non_archived_workspace_raises(self, wm, ws_path):
+        ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
+
+        with pytest.raises(ValueError, match="not archived"):
+            wm.delete_workspace(ws.id)
+
     def test_rename_session_updates_title(self, wm, ws_path):
         ws = wm.create_workspace(name="WS", workspace_path=str(ws_path))
         self._make_session(wm, ws.id, "sess_rename", archived=False)

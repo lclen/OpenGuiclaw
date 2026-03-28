@@ -7,6 +7,7 @@ Endpoints:
   GET    /api/workspaces/{workspace_id}               — 工作区详情
   PATCH  /api/workspaces/{workspace_id}               — 更新工作区
   DELETE /api/workspaces/{workspace_id}               — 归档工作区（软删除）
+  DELETE /api/workspaces/{workspace_id}/permanent     — 永久删除已归档工作区
   POST   /api/workspaces/{workspace_id}/unarchive     — 恢复工作区
   GET    /api/workspaces/{workspace_id}/sessions      — 线程列表
   POST   /api/workspaces/{workspace_id}/sessions/{session_id}/archive   — 归档线程
@@ -194,6 +195,19 @@ async def unarchive_workspace(workspace_id: str):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+@router.delete("/api/workspaces/{workspace_id}/permanent")
+async def delete_workspace(workspace_id: str):
+    """永久删除已归档工作区（物理删除目录）。未归档工作区不允许直接删除。"""
+    wm = _wm()
+    try:
+        wm.delete_workspace(workspace_id)
+        return {"status": "ok", "workspace_id": workspace_id}
+    except WorkspaceNotFoundError:
+        _not_found(workspace_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 # ── Session endpoints ─────────────────────────────────────────────────────────
 
 @router.get("/api/workspaces/{workspace_id}/sessions")
@@ -220,6 +234,9 @@ async def archive_session(workspace_id: str, session_id: str):
     """归档指定线程。"""
     wm = _wm()
     try:
+        from core.routes.chat import request_abort_workspace_stream
+
+        request_abort_workspace_stream(workspace_id, session_id)
         wm.archive_session(workspace_id, session_id)
         return {"status": "ok", "session_id": session_id}
     except WorkspaceNotFoundError:
@@ -289,6 +306,13 @@ async def delete_session(workspace_id: str, session_id: str):
     """永久删除已归档线程（物理删除文件）。未归档线程不允许直接删除。"""
     wm = _wm()
     try:
+        from core.routes.chat import has_active_workspace_stream
+
+        if has_active_workspace_stream(workspace_id, session_id):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete session while stream is active: {session_id}",
+            )
         wm.delete_session(workspace_id, session_id)
         return {"status": "ok", "session_id": session_id}
     except WorkspaceNotFoundError:

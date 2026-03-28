@@ -1,27 +1,74 @@
 """
-Memory Manager: JSONL-based persistent memory.
+Memory Manager: JSONL-based persistent memory with usage-layer routing.
 
-Inspired by Nanobot's two-layer memory, with MemU's structured records.
-- memory.jsonl: Structured long-term facts (searchable by keyword)
+- scene_memory.jsonl: structured long-term memories
+- usage_layer: context / preference / experience
 """
 
 import json
+import shutil
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 MEMORY_TYPES = {"fact", "skill", "error", "preference", "rule", "experience"}
+LEGACY_MEMORY_TYPES = {"general", "profile"}
+VALID_MEMORY_TYPES = MEMORY_TYPES | LEGACY_MEMORY_TYPES
+MEMORY_USAGE_LAYERS = {"context", "preference", "experience"}
+
+DEFAULT_MEMORY_TYPE = "fact"
+DEFAULT_USAGE_LAYER = "context"
+
+TYPE_TO_USAGE_LAYER = {
+    "fact": "context",
+    "general": "context",
+    "profile": "context",
+    "preference": "preference",
+    "rule": "preference",
+    "skill": "experience",
+    "error": "experience",
+    "experience": "experience",
+}
+
+USAGE_LAYER_TITLES = {
+    "context": "相关长期背景",
+    "preference": "用户偏好与行为约束",
+    "experience": "相关任务经验与避坑",
+}
+
+
+def normalize_memory_type(value: Optional[str]) -> str:
+    normalized = (value or DEFAULT_MEMORY_TYPE).strip().lower()
+    if normalized in VALID_MEMORY_TYPES:
+        return normalized
+    return DEFAULT_MEMORY_TYPE
+
+
+def normalize_usage_layer(value: Optional[str], memory_type: Optional[str] = None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in MEMORY_USAGE_LAYERS:
+        return normalized
+    return TYPE_TO_USAGE_LAYER.get(normalize_memory_type(memory_type), DEFAULT_USAGE_LAYER)
 
 
 class MemoryItem:
     """A single memory record."""
 
-    def __init__(self, content: str, tags: List[str] = None, type: str = "fact", source: str = "manual"):
+    def __init__(
+        self,
+        content: str,
+        tags: Optional[List[str]] = None,
+        type: str = DEFAULT_MEMORY_TYPE,
+        source: str = "manual",
+        usage_layer: Optional[str] = None,
+    ):
         import uuid
+
         self.id = f"mem_{uuid.uuid4().hex[:12]}"
         self.content = content
         self.tags = tags or []
-        self.type = type if type in MEMORY_TYPES else "fact"
+        self.type = normalize_memory_type(type)
+        self.usage_layer = normalize_usage_layer(usage_layer, self.type)
         self.source = source
         self.timestamp = time.time()
         self.created_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.timestamp))
@@ -31,6 +78,7 @@ class MemoryItem:
             "id": self.id,
             "content": self.content,
             "type": self.type,
+            "usage_layer": self.usage_layer,
             "tags": self.tags,
             "source": self.source,
             "timestamp": self.timestamp,
@@ -42,8 +90,9 @@ class MemoryItem:
         item = cls(
             data["content"],
             data.get("tags", []),
-            type=data.get("type", "fact"),
+            type=data.get("type", DEFAULT_MEMORY_TYPE),
             source=data.get("source", "manual"),
+            usage_layer=data.get("usage_layer"),
         )
         item.id = data.get("id", item.id)
         item.timestamp = data.get("timestamp", item.timestamp)
@@ -56,8 +105,7 @@ class MemoryManager:
     Manages long-term memory using a JSONL file.
 
     If `embedding_client` and `vector_store` are provided, enables
-    semantic (vector) search via Qwen text-embedding-v4.
-    Falls back to keyword search otherwise.
+    semantic (vector) search. Falls back to keyword search otherwise.
     """
 
     def __init__(
@@ -67,6 +115,7 @@ class MemoryManager:
         vector_store=None,
     ):
         import threading
+
         self._lock = threading.Lock()
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
@@ -74,7 +123,6 @@ class MemoryManager:
         memory_dir.mkdir(exist_ok=True)
         self.memory_file = memory_dir / "scene_memory.jsonl"
 
-        # Auto-migrate from legacy flat path
         legacy = self.data_dir / "scene_memory.jsonl"
         if legacy.exists() and not self.memory_file.exists():
             legacy.rename(self.memory_file)
@@ -86,176 +134,230 @@ class MemoryManager:
         self._load()
 
     def _load(self) -> None:
-        """Load all memories from JSONL file."""
+        """Load all memories from JSONL file and migrate usage layers if needed."""
         if not self.memory_file.exists():
             return
+
+        migration_required = False
         try:
-            with open(self.memory_file, "r", encoding="utf-8") as f:
-                for line in f:
+            with open(self.memory_file, "r", encoding="utf-8") as file_obj:
+                for line in file_obj:
                     line = line.strip()
-                    if line:
-                        data = json.loads(line)
-                        self._memories.append(MemoryItem.from_dict(data))
-        except Exception as e:
-            print(f"[Memory] Failed to load: {e}")
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    if "usage_layer" not in data or data.get("usage_layer") not in MEMORY_USAGE_LAYERS:
+                        migration_required = True
+                    self._memories.append(MemoryItem.from_dict(data))
+        except Exception as error:
+            print(f"[Memory] Failed to load: {error}")
+            return
+
+        if migration_required:
+            self._backup_before_migration()
+            self._rewrite_file()
+            print("[Memory] 已完成 usage_layer 迁移")
+
+    def _backup_before_migration(self) -> None:
+        if not self.memory_file.exists():
+            return
+        timestamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        backup_file = self.memory_file.parent / f"{self.memory_file.stem}.usage_layer_backup_{timestamp}.jsonl"
+        shutil.copy2(self.memory_file, backup_file)
 
     def _save_one(self, item: MemoryItem) -> None:
-        """Append a single memory to the JSONL file."""
-        with open(self.memory_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(item.to_dict(), ensure_ascii=False) + "\n")
+        with open(self.memory_file, "a", encoding="utf-8") as file_obj:
+            file_obj.write(json.dumps(item.to_dict(), ensure_ascii=False) + "\n")
 
-    def add(self, content: str, tags: List[str] = None,
-            type: str = "fact", source: str = "manual") -> MemoryItem:
+    def _filter_candidates(
+        self,
+        tag_filter: Optional[str] = None,
+        usage_layer: Optional[str] = None,
+    ) -> List[MemoryItem]:
+        normalized_layer = normalize_usage_layer(usage_layer) if usage_layer else None
+        return [
+            memory
+            for memory in self._memories
+            if (not tag_filter or tag_filter in memory.tags)
+            and (not normalized_layer or memory.usage_layer == normalized_layer)
+        ]
+
+    def add(
+        self,
+        content: str,
+        tags: Optional[List[str]] = None,
+        type: str = DEFAULT_MEMORY_TYPE,
+        source: str = "manual",
+        usage_layer: Optional[str] = None,
+    ) -> MemoryItem:
         """
-        Add a new memory. Skips if exact same content already exists.
-        Uses fuzzy deduplication: if content similarity > 80%, skip.
-        If vector search is available, generates and stores embedding.
+        Add a new memory.
+
+        Deduplicates within the same usage layer, allowing the same content
+        to exist in different layers for different purposes.
         """
         with self._lock:
-            # Increased content limit: 1200 chars as per user request
             content = content.strip()[:1200]
+            normalized_type = normalize_memory_type(type)
+            normalized_layer = normalize_usage_layer(usage_layer, normalized_type)
+            normalized_content = " ".join(content.lower().split())
 
-            normalized = " ".join(content.lower().split())
-            for mem in self._memories:
-                mem_normalized = " ".join(mem.content.lower().split())
-                # Exact match (same type)
-                if mem_normalized == normalized and mem.type == type:
-                    return mem
-                # Fuzzy dedup: if one string contains the other (>80% length ratio), skip
-                shorter, longer = sorted([normalized, mem_normalized], key=len)
+            for memory in self._memories:
+                if memory.usage_layer != normalized_layer:
+                    continue
+                memory_normalized = " ".join(memory.content.lower().split())
+                if memory_normalized == normalized_content:
+                    return memory
+                shorter, longer = sorted([normalized_content, memory_normalized], key=len)
                 if len(longer) > 0 and len(shorter) / len(longer) > 0.8 and shorter in longer:
-                    return mem
+                    return memory
 
-            item = MemoryItem(content, tags, type=type, source=source)
+            item = MemoryItem(
+                content=content,
+                tags=tags,
+                type=normalized_type,
+                source=source,
+                usage_layer=normalized_layer,
+            )
             self._memories.append(item)
             self._save_one(item)
 
-        # Generate and store vectors asynchronously (outside lock — I/O bound)
         if self._embedding_client and self._vector_store:
             try:
                 vectors = self._embedding_client.embed_text(content)
                 if vectors:
                     self._vector_store.add_vectors(item.id, vectors)
-            except Exception as e:
-                print(f"[Memory] Vector generation failed: {e}")
+            except Exception as error:
+                print(f"[Memory] Vector generation failed: {error}")
 
         return item
 
-    def search(self, query: str, top_k: int = 5, tag_filter: str = None) -> List[MemoryItem]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        tag_filter: Optional[str] = None,
+        usage_layer: Optional[str] = None,
+    ) -> List[MemoryItem]:
         """
-        Retrieve relevant memories.
-        - Uses semantic vector search if available (Qwen embedding).
-        - Falls back to keyword overlap search.
+        Retrieve relevant memories with optional usage-layer filtering.
         """
-        candidates = [
-            m for m in self._memories
-            if not tag_filter or tag_filter in m.tags
-        ]
+        candidates = self._filter_candidates(tag_filter=tag_filter, usage_layer=usage_layer)
         if not candidates:
             return []
 
-        # ── Semantic Search (preferred) ──────────────────────────────
         if self._embedding_client and self._vector_store:
             query_vec = self._embedding_client.embed(query)
             if query_vec:
-                candidate_ids = [m.id for m in candidates]
+                candidate_ids = [memory.id for memory in candidates]
                 scored_ids = self._vector_store.search(query_vec, top_k=top_k, candidate_ids=candidate_ids)
-                id_to_mem = {m.id: m for m in candidates}
-                results = [id_to_mem[mid] for mid, _ in scored_ids if mid in id_to_mem]
+                id_to_memory = {memory.id: memory for memory in candidates}
+                results = [id_to_memory[memory_id] for memory_id, _ in scored_ids if memory_id in id_to_memory]
                 if results:
                     return results
-                # Fall through to keyword if no vector results
 
-        # ── Keyword Search (fallback) ─────────────────────────────────
         return self._keyword_search(query, candidates, top_k)
 
-    def _keyword_search(
-        self, query: str, candidates: List[MemoryItem], top_k: int
-    ) -> List[MemoryItem]:
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        scored = []
+    def _keyword_search(self, query: str, candidates: List[MemoryItem], top_k: int) -> List[MemoryItem]:
+        query_words = set(query.lower().split())
+        scored: List[tuple[float, MemoryItem]] = []
 
-        for mem in candidates:
-            content_lower = mem.content.lower()
-            tag_text_lower = " ".join(mem.tags).lower()
-
-            content_words = set(content_lower.split())
-            tag_words = set(tag_text_lower.split())
-            # Word-overlap scoring only — char-level scoring is too noisy for CJK
+        for memory in candidates:
+            content_words = set(memory.content.lower().split())
+            tag_words = set(" ".join(memory.tags).lower().split())
             score = len(query_words & content_words) + 0.5 * len(query_words & tag_words)
-
             if score > 0:
-                scored.append((score, mem))
+                scored.append((score, memory))
 
-        scored.sort(key=lambda x: (x[0], x[1].timestamp), reverse=True)
-        return [mem for _, mem in scored[:top_k]]
+        scored.sort(key=lambda item: (item[0], item[1].timestamp), reverse=True)
+        return [memory for _, memory in scored[:top_k]]
 
-
-    def get_recent(self, n: int = 5) -> List[MemoryItem]:
-        """Return the n most recently added memories."""
-        return sorted(self._memories, key=lambda m: m.timestamp, reverse=True)[:n]
+    def get_recent(self, n: int = 5, usage_layer: Optional[str] = None) -> List[MemoryItem]:
+        memories = self._filter_candidates(usage_layer=usage_layer)
+        return sorted(memories, key=lambda memory: memory.timestamp, reverse=True)[:n]
 
     def build_context(self, query: str, top_k: int = 5) -> str:
-        """
-        Build a formatted memory context string to inject into the system prompt.
-        Returns empty string if no relevant memories.
-        """
-        results = self.search(query, top_k=top_k)
+        return self.build_layer_context(query, "context", top_k=top_k)
+
+    def build_layer_context(self, query: str, usage_layer: str, top_k: int = 3) -> str:
+        normalized_layer = normalize_usage_layer(usage_layer)
+        results = self.search(query, top_k=top_k, usage_layer=normalized_layer)
         if not results:
             return ""
-        lines = [f"  - [{m.created_at}] {m.content}" for m in results]
-        return "【相关记忆】\n" + "\n".join(lines)
+        title = USAGE_LAYER_TITLES.get(normalized_layer, "相关记忆")
+        lines = [f"- {memory.content}" for memory in results]
+        return f"# {title}\n" + "\n".join(lines)
+
+    def build_prompt_sections(
+        self,
+        query: str,
+        top_k_by_layer: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, str]:
+        top_k_map = {"preference": 2, "context": 3, "experience": 2}
+        if top_k_by_layer:
+            top_k_map.update(top_k_by_layer)
+
+        sections: Dict[str, str] = {}
+        for usage_layer in ("preference", "context", "experience"):
+            section = self.build_layer_context(query, usage_layer, top_k=top_k_map.get(usage_layer, 3))
+            if section:
+                sections[usage_layer] = section
+        return sections
 
     def list_all(self) -> List[MemoryItem]:
         return list(self._memories)
 
     def list_by_type(self, memory_type: str) -> List[MemoryItem]:
-        """Return all memories matching the given type."""
-        return [m for m in self._memories if m.type == memory_type]
+        normalized_type = normalize_memory_type(memory_type)
+        return [memory for memory in self._memories if memory.type == normalized_type]
+
+    def list_by_usage_layer(self, usage_layer: str) -> List[MemoryItem]:
+        normalized_layer = normalize_usage_layer(usage_layer)
+        return [memory for memory in self._memories if memory.usage_layer == normalized_layer]
 
     def delete(self, memory_id: str) -> bool:
-        """Delete a memory by id and rewrite the file."""
         before = len(self._memories)
-        self._memories = [m for m in self._memories if m.id != memory_id]
+        self._memories = [memory for memory in self._memories if memory.id != memory_id]
         if len(self._memories) < before:
             self._rewrite_file()
-            # Also remove from vector store if present
             if self._vector_store:
                 self._vector_store.remove(memory_id)
             return True
         return False
 
-    def update(self, memory_id: str, new_content: str = None,
-               new_tags: List[str] = None, new_type: str = None) -> bool:
-        """
-        Update an existing memory by ID.
-        Rewrites the file and regenerates the vector.
-        """
-        for mem in self._memories:
-            if mem.id == memory_id:
-                if new_content is not None:
-                    mem.content = new_content
-                if new_tags is not None:
-                    mem.tags = new_tags
-                if new_type is not None:
-                    mem.type = new_type if new_type in MEMORY_TYPES else "fact"
-                # Rewrite the whole file to reflect the edit
-                self._rewrite_file()
-                # Regenerate vector
-                if self._embedding_client and self._vector_store:
-                    try:
-                        self._vector_store.remove(memory_id)
-                        vectors = self._embedding_client.embed_text(mem.content)
-                        if vectors:
-                            self._vector_store.add_vectors(memory_id, vectors)
-                    except Exception as e:
-                        print(f"[Memory] Vector update failed: {e}")
-                return True
+    def update(
+        self,
+        memory_id: str,
+        new_content: Optional[str] = None,
+        new_tags: Optional[List[str]] = None,
+        new_type: Optional[str] = None,
+        new_usage_layer: Optional[str] = None,
+    ) -> bool:
+        for memory in self._memories:
+            if memory.id != memory_id:
+                continue
+            if new_content is not None:
+                memory.content = new_content.strip()[:1200]
+            if new_tags is not None:
+                memory.tags = new_tags
+            if new_type is not None:
+                memory.type = normalize_memory_type(new_type)
+            if new_usage_layer is not None or new_type is not None:
+                memory.usage_layer = normalize_usage_layer(new_usage_layer, memory.type)
+
+            self._rewrite_file()
+            if self._embedding_client and self._vector_store:
+                try:
+                    self._vector_store.remove(memory_id)
+                    vectors = self._embedding_client.embed_text(memory.content)
+                    if vectors:
+                        self._vector_store.add_vectors(memory_id, vectors)
+                except Exception as error:
+                    print(f"[Memory] Vector update failed: {error}")
+            return True
         return False
 
     def clear_all(self) -> None:
-        """Wipe all memories (use with caution)."""
         with self._lock:
             self._memories = []
             self._rewrite_file()
@@ -263,7 +365,6 @@ class MemoryManager:
                 self._vector_store.clear()
 
     def _rewrite_file(self) -> None:
-        """Rewrite the entire JSONL file (used after deletion or update)."""
-        with open(self.memory_file, "w", encoding="utf-8") as f:
-            for mem in self._memories:
-                f.write(json.dumps(mem.to_dict(), ensure_ascii=False) + "\n")
+        with open(self.memory_file, "w", encoding="utf-8") as file_obj:
+            for memory in self._memories:
+                file_obj.write(json.dumps(memory.to_dict(), ensure_ascii=False) + "\n")

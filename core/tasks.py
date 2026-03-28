@@ -527,68 +527,61 @@ def _render_status(status: str, label: str) -> str:
     return f"{_STATUS_EMOJI.get(status, '❔')} {label}"
 
 
-def _persist_selfcheck_artifacts(result: dict[str, Any], report: str) -> None:
+def _write_selfcheck_file(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+
+
+def _persist_selfcheck_artifacts(result: dict[str, Any], report: str) -> list[str]:
     reports_dir = _APP_BASE / "data" / "selfcheck"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
+    try:
+        reports_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        logger.warning("Failed to prepare selfcheck report directory %s: %s", reports_dir, exc)
+        return [f"{reports_dir}: {exc}"]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     latest_json = reports_dir / "latest.json"
     latest_md = reports_dir / "latest.md"
     dated_json = reports_dir / f"selfcheck_{timestamp}.json"
     dated_md = reports_dir / f"selfcheck_{timestamp}.md"
     payload = json.dumps(result, ensure_ascii=False, indent=2)
-    latest_json.write_text(payload, encoding="utf-8")
-    latest_md.write_text(report, encoding="utf-8")
-    dated_json.write_text(payload, encoding="utf-8")
-    dated_md.write_text(report, encoding="utf-8")
+    for path, content in (
+        (latest_json, payload),
+        (latest_md, report),
+        (dated_json, payload),
+        (dated_md, report),
+    ):
+        try:
+            _write_selfcheck_file(path, content)
+        except Exception as exc:
+            logger.warning("Failed to write selfcheck artifact %s: %s", path, exc)
+            failures.append(f"{path}: {exc}")
+    return failures
 
 
-def _build_selfcheck_report(result: dict[str, Any]) -> str:
-    generated_at = result["generated_at"]
-    service = result["runtime"]["service"]
-    process_runtime = result["runtime"]["process_runtime"]
+def _build_selfcheck_runtime_lines(result: dict[str, Any]) -> list[str]:
     endpoints = result["endpoints"]
     network_matrix = result["network_matrix"]
     im_channels = result["im_channels"]
-    scheduler = result["scheduler"]
-    logs = result["logs"]
-    fixes = result["fixes"]
+    process_runtime = result["runtime"]["process_runtime"]
+    endpoint_label = f"{len(endpoints['results'])} 个目标"
+    im_label = f"{len(im_channels['results'])} 个通道"
 
-    lines = [f"## 🔍 系统自检报告 — {generated_at}"]
-    lines.append(f"\n**总体状态**: {_render_status(result['overall_status'], result['overall_summary'])}")
-    lines.append(
-        f"**服务运行**: PID `{service['pid']}` · 版本 `{service['version']}` · 模式 `{service['restart_mode']}` · 运行 {service['uptime_seconds']}s"
-    )
-    lines.append(
-        f"**计划任务**: 共 {scheduler['total']} 个，启用 {scheduler['enabled']} 个，失败 {scheduler['failed']} 个"
-    )
-    lines.append(
-        f"**数据概况**: 会话 {result['environment']['session_count']} 个 · 记忆 {result['environment']['memory_count']} 条"
-    )
-
-    lines.append(f"\n### 运行时探测")
+    lines = ["\n### 运行时探测"]
     lines.append(
         f"- 服务: {_render_status('healthy', '在线')} · 重启模式 `{result['environment']['restart']['mode']}`"
     )
-    endpoint_label = f"{len(endpoints['results'])} 个目标"
-    im_label = f"{len(im_channels['results'])} 个通道"
-    lines.append(
-        f"- 端点: {_render_status(endpoints['status'], endpoint_label)}"
-    )
-    lines.append(
-        f"- 网络矩阵: {_render_status(network_matrix['status'], network_matrix['summary'])}"
-    )
-    lines.append(
-        f"- IM 通道: {_render_status(im_channels['status'], im_label)}"
-    )
+    lines.append(f"- 端点: {_render_status(endpoints['status'], endpoint_label)}")
+    lines.append(f"- 网络矩阵: {_render_status(network_matrix['status'], network_matrix['summary'])}")
+    lines.append(f"- IM 通道: {_render_status(im_channels['status'], im_label)}")
 
     conflicts = process_runtime.get("conflicts", [])
+    lines.append("\n### 进程残留 / 冲突")
     if conflicts:
-        lines.append("\n### 进程残留 / 冲突")
         for item in conflicts[:6]:
             pid_text = f"pid={item.get('pid')}" if item.get("pid") is not None else "pid=-"
             lines.append(f"- `{item.get('type')}` {pid_text}: {item.get('summary')}")
     else:
-        lines.append("\n### 进程残留 / 冲突")
         lines.append("- ✅ 未发现残留进程或 stale run record")
 
     if network_matrix["results"]:
@@ -600,6 +593,13 @@ def _build_selfcheck_report(result: dict[str, Any]) -> str:
                 detail = f"{detail} · {probe['error']}"
             lines.append(f"- {_render_status(probe['status'], str(label))}: {detail}")
 
+    return lines
+
+
+def _build_selfcheck_endpoint_lines(result: dict[str, Any]) -> list[str]:
+    endpoints = result["endpoints"]
+    im_channels = result["im_channels"]
+    lines: list[str] = []
     if endpoints["results"]:
         lines.append("\n### LLM Endpoints")
         for endpoint in endpoints["results"]:
@@ -620,11 +620,14 @@ def _build_selfcheck_report(result: dict[str, Any]) -> str:
             lines.append(f"- {_render_status(channel['status'], channel['display_name'])}: {detail}")
     else:
         lines.append("- ❔ 当前未配置 IM 通道")
+    return lines
 
-    lines.append("\n### 日志与轻修复")
-    lines.append(
-        f"- 日志错误模块: {len(logs['by_module'])} 个 · 错误行 {logs['total_errors']} 条"
-    )
+
+def _build_selfcheck_fix_lines(result: dict[str, Any]) -> list[str]:
+    logs = result["logs"]
+    fixes = result["fixes"]
+    lines = ["\n### 日志与轻修复"]
+    lines.append(f"- 日志错误模块: {len(logs['by_module'])} 个 · 错误行 {logs['total_errors']} 条")
     if logs["by_module"]:
         for module, count in sorted(logs["by_module"].items(), key=lambda item: -item[1])[:5]:
             lines.append(f"  - `{module}`: {count} 次")
@@ -639,14 +642,68 @@ def _build_selfcheck_report(result: dict[str, Any]) -> str:
                 lines.append(f"    👉 {item['fix_action']}")
             if item.get("verification_result"):
                 lines.append(f"    🔍 {item['verification_result']}")
-
     if fixes["stale_record_cleanup"]:
         lines.append("\n### 自动清理")
         for cleanup in fixes["stale_record_cleanup"]:
             target = cleanup.get("record_id") or cleanup.get("pid")
             lines.append(f"- `{target}`: {cleanup.get('status')} ({cleanup.get('action')})")
+    if fixes.get("artifact_write_failures"):
+        lines.append("\n### 报告落盘")
+        for item in fixes["artifact_write_failures"]:
+            lines.append(f"- ⚠️ {item}")
+    return lines
 
+
+def _build_selfcheck_report(result: dict[str, Any]) -> str:
+    generated_at = result["generated_at"]
+    service = result["runtime"]["service"]
+    scheduler = result["scheduler"]
+
+    lines = [f"## 🔍 系统自检报告 — {generated_at}"]
+    lines.append(f"\n**总体状态**: {_render_status(result['overall_status'], result['overall_summary'])}")
+    lines.append(
+        f"**服务运行**: PID `{service['pid']}` · 版本 `{service['version']}` · 模式 `{service['restart_mode']}` · 运行 {service['uptime_seconds']}s"
+    )
+    lines.append(
+        f"**计划任务**: 共 {scheduler['total']} 个，启用 {scheduler['enabled']} 个，失败 {scheduler['failed']} 个"
+    )
+    lines.append(
+        f"**数据概况**: 会话 {result['environment']['session_count']} 个 · 记忆 {result['environment']['memory_count']} 条"
+    )
+    lines.extend(_build_selfcheck_runtime_lines(result))
+    lines.extend(_build_selfcheck_endpoint_lines(result))
+    lines.extend(_build_selfcheck_fix_lines(result))
     return "\n".join(lines)
+
+
+def _collect_selfcheck_status_inputs(
+    *,
+    dir_failures: list[str],
+    process_conflicts: list[dict[str, Any]],
+    scheduler_summary: dict[str, int],
+    logs: dict[str, Any],
+    core_errs: int,
+    fix_records: list[dict[str, Any]],
+    runtime_snapshot: dict[str, Any],
+) -> list[str]:
+    status_inputs: list[str] = []
+    if dir_failures:
+        status_inputs.append("unhealthy")
+    if any(item.get("type") in {"running_conflict", "orphan_process"} for item in process_conflicts):
+        status_inputs.append("unhealthy")
+    if scheduler_summary["failed"] > 0:
+        status_inputs.append("degraded")
+    if logs["total_errors"] > 0 or core_errs > 0:
+        status_inputs.append("degraded")
+    if any(item.get("can_fix") and not item.get("success") for item in fix_records):
+        status_inputs.append("degraded")
+    if runtime_snapshot["endpoints"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append(runtime_snapshot["endpoints"]["status"])
+    if runtime_snapshot["network_matrix"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append(runtime_snapshot["network_matrix"]["status"])
+    if runtime_snapshot["im_channels"]["status"] in {"degraded", "unhealthy"}:
+        status_inputs.append("degraded")
+    return status_inputs
 
 
 def _build_selfcheck_im_summary(result: dict[str, Any]) -> str:
@@ -789,25 +846,15 @@ async def _system_daily_selfcheck(push_fn: Callable, task: Optional[Any] = None)
     }
 
     process_conflicts = runtime_snapshot["runtime"]["process_runtime"].get("conflicts", [])
-    status_inputs: list[str] = []
-    if dir_failures:
-        status_inputs.append("unhealthy")
-    elif created_dirs:
-        status_inputs.append("degraded")
-    if any(item.get("type") in {"running_conflict", "orphan_process"} for item in process_conflicts):
-        status_inputs.append("unhealthy")
-    if scheduler_summary["failed"] > 0:
-        status_inputs.append("degraded")
-    if logs["total_errors"] > 0 or core_errs > 0:
-        status_inputs.append("degraded")
-    if any(item.get("can_fix") and not item.get("success") for item in fix_records):
-        status_inputs.append("degraded")
-    if runtime_snapshot["endpoints"]["status"] in {"degraded", "unhealthy"}:
-        status_inputs.append(runtime_snapshot["endpoints"]["status"])
-    if runtime_snapshot["network_matrix"]["status"] in {"degraded", "unhealthy"}:
-        status_inputs.append(runtime_snapshot["network_matrix"]["status"])
-    if runtime_snapshot["im_channels"]["status"] in {"degraded", "unhealthy"}:
-        status_inputs.append("degraded")
+    status_inputs = _collect_selfcheck_status_inputs(
+        dir_failures=dir_failures,
+        process_conflicts=process_conflicts,
+        scheduler_summary=scheduler_summary,
+        logs=logs,
+        core_errs=core_errs,
+        fix_records=fix_records,
+        runtime_snapshot=runtime_snapshot,
+    )
     overall_status = _merge_overall_status(status_inputs) if status_inputs else "healthy"
 
     if overall_status == "healthy":
@@ -832,7 +879,11 @@ async def _system_daily_selfcheck(push_fn: Callable, task: Optional[Any] = None)
     }
     report = _build_selfcheck_report(result)
     im_summary = _build_selfcheck_im_summary(result)
-    _persist_selfcheck_artifacts(result, report)
+    artifact_write_failures = _persist_selfcheck_artifacts(result, report)
+    if artifact_write_failures:
+        result["fixes"]["artifact_write_failures"] = artifact_write_failures
+        report = _build_selfcheck_report(result)
+        im_summary = _build_selfcheck_im_summary(result)
     _deliver_selfcheck_reports(task, report, im_summary)
     push_fn({"type": "chat_event", "role": "assistant", "content": im_summary})
 
@@ -863,6 +914,11 @@ async def _system_memory_consolidate(push_fn: Callable, task: Optional[Any] = No
         cutoff = now - timedelta(days=7)
 
     logger.info(f"Memory consolidate scan starting (cutoff: {cutoff})")
+    # Forward-block guard:
+    # only scan legacy/global sessions under data/sessions/.
+    # Workspace-scoped chat files live under data/workspaces/*/sessions/ and
+    # must never be included here, especially after a workspace/session has
+    # been permanently deleted from the workspace tree.
     session_files = sorted(
         (_APP_BASE / "data" / "sessions").glob("*.json"),
         key=lambda p: p.stat().st_mtime,

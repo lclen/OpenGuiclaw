@@ -184,6 +184,17 @@
   color: rgba(148, 163, 184, 0.82);
 }
 
+.ui-action-tray {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(7, 10, 16, 0.46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
 .ui-section {
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.06);

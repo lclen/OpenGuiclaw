@@ -10,7 +10,7 @@ import logging
 import re
 from typing import List, Optional
 
-from core.memory import MemoryItem, MemoryManager
+from core.memory import MemoryItem, MemoryManager, normalize_usage_layer
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,11 @@ _PROMPT_EXTRACT_TURN = """\
 - 绝大多数对话轮次应输出 NONE
 - 不要提取临时性、上下文相关的信息
 
+【三层用途】
+- context: 给未来对话提供背景信息
+- preference: 塑造助手行为、语言风格、规则约束
+- experience: 沉淀可复用经验、成功模式、避坑教训
+
 【记忆类型】
 - fact: 客观事实（用户的职业、所在地等）
 - preference: 用户偏好（喜欢的工具、风格等）
@@ -37,7 +42,7 @@ _PROMPT_EXTRACT_TURN = """\
 助手: {assistant_message}
 
 如果有值得记录的信息，输出 JSON（单个对象），content 字段不超过 200 字：
-{{"type": "...", "subject": "...", "predicate": "...", "content": "...", "importance": 1-5}}
+{{"type": "...", "usage_layer": "context|preference|experience", "subject": "...", "predicate": "...", "content": "...", "importance": 1-5}}
 否则输出：NONE\
 """
 
@@ -49,6 +54,11 @@ _PROMPT_EXTRACT_CONVERSATION = """\
 
 【已有记忆（避免重复提取语义相近的内容）】
 {existing_memories}
+
+【三层用途】
+- context: 用户身份、长期背景、稳定事实
+- preference: 用户长期偏好、习惯、对 AI 的持久要求
+- experience: 可复用技能、经验、避坑教训
 
 【只提取以下类型的信息】
 - 用户身份、职业、所在地（fact）
@@ -65,7 +75,7 @@ _PROMPT_EXTRACT_CONVERSATION = """\
 - 与已有记忆语义重复的内容
 
 如果有值得记录的信息，输出 JSON 数组（最多 3 条），每条 content 不超过 200 字：
-[{{"type": "...", "content": "...", "importance": 1-5}}]
+[{{"type": "...", "usage_layer": "context|preference|experience", "content": "...", "importance": 1-5}}]
 否则输出：NONE\
 """
 
@@ -81,6 +91,9 @@ _PROMPT_EXTRACT_EXPERIENCE = """\
 【已有记忆（避免重复提取语义相近的内容）】
 {existing_memories}
 
+【三层用途】
+- experience: 沉淀可复用经验、成功模式、避坑教训
+
 【只提取以下类型】
 - skill: 用户擅长的技能或成功模式
 - error: 需要避免的错误
@@ -90,7 +103,7 @@ _PROMPT_EXTRACT_EXPERIENCE = """\
 【不要提取与已有记忆语义重复的内容】
 
 如果有值得记录的信息，输出 JSON 数组（最多 3 条），每条 content 不超过 200 字：
-[{{"type": "skill|error|experience", "content": "...", "importance": 1-5}}]
+[{{"type": "skill|error|experience", "usage_layer": "experience", "content": "...", "importance": 1-5}}]
 否则输出：NONE\
 """
 
@@ -259,6 +272,7 @@ class MemoryExtractor:
             item = self.memory.add(
                 content=parsed["content"],
                 type=parsed.get("type", "fact"),
+                usage_layer=parsed.get("usage_layer"),
                 source="auto_extracted",
             )
             return [item]
@@ -291,6 +305,7 @@ class MemoryExtractor:
                 item = self.memory.add(
                     content=data["content"],
                     type=data.get("type", "fact"),
+                    usage_layer=data.get("usage_layer"),
                     source="auto_extracted",
                 )
                 written.append(item)
@@ -330,6 +345,7 @@ class MemoryExtractor:
                 item = self.memory.add(
                     content=data["content"],
                     type=mem_type,
+                    usage_layer=data.get("usage_layer", "experience"),
                     source="auto_extracted",
                 )
                 written.append(item)
@@ -346,7 +362,10 @@ class MemoryExtractor:
         recent = sorted(all_mems, key=lambda m: m.timestamp, reverse=True)[:max_items]
         if not recent:
             return "（暂无已有记忆）"
-        return "\n".join(f"- [{m.type}] {m.content}" for m in recent)
+        return "\n".join(
+            f"- [{normalize_usage_layer(getattr(m, 'usage_layer', None), m.type)}/{m.type}] {m.content}"
+            for m in recent
+        )
     def audit_memories(self) -> dict:
         """Review and deduplicate all memories using AI. Returns a stats dict."""
         try:
@@ -360,7 +379,7 @@ class MemoryExtractor:
             for i in range(0, len(all_mems), batch_size):
                 batch = all_mems[i:i+batch_size]
                 mem_list_text = "\n".join([
-                    f"ID: {m.id} | 类型: {m.type} | 内容: {m.content}" 
+                    f"ID: {m.id} | 用途层: {m.usage_layer} | 类型: {m.type} | 内容: {m.content}" 
                     for m in batch
                 ])
                 
