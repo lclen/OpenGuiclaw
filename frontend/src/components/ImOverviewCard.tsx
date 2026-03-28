@@ -12,6 +12,19 @@ function parseResponse(response: Response) {
   return response.text();
 }
 
+async function readErrorMessage(response: Response, fallback: string) {
+  try {
+    const payload = await parseResponse(response);
+    if (payload && typeof payload === 'object' && 'detail' in payload && typeof payload.detail === 'string') {
+      return payload.detail;
+    }
+    if (typeof payload === 'string' && payload.trim()) return payload;
+  } catch {
+    // Ignore parse failures.
+  }
+  return fallback;
+}
+
 function parseDateLike(value?: string | Date | null) {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -40,6 +53,7 @@ export function ImOverviewCard() {
   const [channels, setChannels] = useState<IMChannelSummary[]>([]);
   const [sessions, setSessions] = useState<IMSessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [errorText, setErrorText] = useState('');
 
   useEffect(() => {
     if (snapshot.currentView !== 'home') return;
@@ -48,25 +62,39 @@ export function ImOverviewCard() {
 
     async function loadOverview() {
       setLoading(true);
+      setErrorText('');
       try {
         const [channelsResponse, sessionsResponse] = await Promise.all([
           fetch('/api/im/channels'),
           fetch('/api/im/sessions')
         ]);
 
-        if (!cancelled && channelsResponse.ok) {
+        if (cancelled) return;
+
+        let nextError = '';
+
+        if (channelsResponse.ok) {
           const payload = (await parseResponse(channelsResponse)) as { channels?: IMChannelSummary[] };
           setChannels(Array.isArray(payload.channels) ? payload.channels : []);
+        } else {
+          setChannels([]);
+          nextError = await readErrorMessage(channelsResponse, '读取 IM 通道失败');
         }
 
-        if (!cancelled && sessionsResponse.ok) {
+        if (sessionsResponse.ok) {
           const payload = (await parseResponse(sessionsResponse)) as { sessions?: IMSessionSummary[] };
           setSessions(Array.isArray(payload.sessions) ? payload.sessions : []);
+        } else {
+          setSessions([]);
+          nextError = nextError || (await readErrorMessage(sessionsResponse, '读取 IM 会话失败'));
         }
+
+        setErrorText(nextError);
       } catch {
         if (!cancelled) {
           setChannels([]);
           setSessions([]);
+          setErrorText('读取 IM 概览失败');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -81,11 +109,11 @@ export function ImOverviewCard() {
 
   const onlineCount = channels.filter((channel) => channel.status === 'online').length;
   const latestActivity = useMemo(() => {
-    return channels
-      .map((channel) => parseDateLike(channel.last_active))
+    return [...channels.map((channel) => channel.last_active), ...sessions.map((session) => session.updated_at)]
+      .map((value) => parseDateLike(value))
       .filter((date): date is Date => !!date)
       .sort((left, right) => right.getTime() - left.getTime())[0];
-  }, [channels]);
+  }, [channels, sessions]);
 
   return (
     <UiCard as="section" variant="subtle" className="home-im-card">
@@ -120,6 +148,8 @@ export function ImOverviewCard() {
           <strong>{latestActivity ? formatDateTime(latestActivity) : '暂无记录'}</strong>
         </div>
       </div>
+
+      {errorText ? <div className="home-im-card__notice">{errorText}</div> : null}
 
       <div className="home-im-card__channels">
         {channels.length > 0 ? (

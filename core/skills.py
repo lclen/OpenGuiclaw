@@ -255,7 +255,12 @@ class SkillManager:
         except Exception as e:
             return f"[SkillManager] Error executing '{name}': {e}"
 
-    def get_tool_definitions(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> List[Dict[str, Any]]:
+    def get_tool_definitions(
+        self,
+        allowed_skills: List[str] = None,
+        skills_mode: str = "inclusive",
+        preferred_skills: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Return tool definitions in OpenAI function-calling format, filtered by profile scope."""
         tools = []
         for skill in self.list_visible(allowed_skills=allowed_skills, skills_mode=skills_mode):
@@ -271,6 +276,18 @@ class SkillManager:
                     },
                 },
             })
+        if preferred_skills:
+            preferred_order = {
+                str(name or "").strip().lower(): index
+                for index, name in enumerate(preferred_skills)
+                if str(name or "").strip()
+            }
+            tools.sort(
+                key=lambda tool: (
+                    preferred_order.get(tool["function"]["name"].strip().lower(), len(preferred_order)),
+                    tool["function"]["name"],
+                )
+            )
         return tools
 
     def summary(self, allowed_skills: List[str] = None, skills_mode: str = "inclusive") -> str:

@@ -460,7 +460,7 @@ class _FakeCompletions:
 
 
 class _FakeSkills:
-    def get_tool_definitions(self, allowed_skills=None, skills_mode="inclusive"):
+    def get_tool_definitions(self, allowed_skills=None, skills_mode="inclusive", preferred_skills=None):
         return []
 
     async def execute(self, name, params):
@@ -476,6 +476,7 @@ class _FakeAgent:
         self.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
         self.skills = _FakeSkills()
         self.last_build_prompt = None
+        self.last_tool_routing = None
 
     def ensure_session_skills_current(self, session):
         return None
@@ -483,6 +484,10 @@ class _FakeAgent:
     def _build_system_prompt(self, *args, **kwargs):
         self.last_build_prompt = {"args": args, "kwargs": kwargs}
         return "workspace-aware-system-prompt"
+
+    def _build_tool_routing_plan(self, *args, **kwargs):
+        self.last_tool_routing = {"args": args, "kwargs": kwargs}
+        return {"preferred_skills": [], "note": ""}
 
     def _record_usage(self, usage, model):
         return None
@@ -551,6 +556,9 @@ class TestWorkspaceChatContext:
         assert workspace_context["workspace_id"] == ws["id"]
         assert workspace_context["workspace_name"] == "Workspace Prompt"
         assert workspace_context["workspace_path"] == str(ws_path.resolve())
+        assert fake_agent.last_tool_routing is not None
+        routing_workspace_context = fake_agent.last_tool_routing["kwargs"]["workspace_context"]
+        assert routing_workspace_context["workspace_id"] == ws["id"]
 
         session_file = wm._sessions_dir(ws["id"]) / f"{session['session_id']}.json"
         session_data = json.loads(session_file.read_text(encoding="utf-8"))

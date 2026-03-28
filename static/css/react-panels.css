@@ -423,6 +423,46 @@
   gap: 12px;
 }
 
+.im-view-filter-shell {
+  min-height: 44px;
+}
+
+.im-view-filter-shell .ui-input-shell__main {
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.im-view-filter-input {
+  width: 100%;
+  min-height: 42px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.im-view-filter-input::placeholder {
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.im-view-filter-clear {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.im-view-filter-clear:hover {
+  color: #f8fafc;
+  border-color: rgba(182, 240, 89, 0.22);
+  background: rgba(182, 240, 89, 0.08);
+}
+
 .im-view-panel__header {
   display: flex;
   align-items: flex-start;
@@ -999,9 +1039,17 @@
 }
 
 .react-scheduler-panel__actions {
-  display: flex;
   gap: 10px;
-  flex-wrap: wrap;
+}
+
+.react-scheduler-panel__action-btn {
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.react-scheduler-panel__action-btn--primary {
+  min-width: 104px;
 }
 
 .react-scheduler-panel__tabbar {
@@ -1039,42 +1087,6 @@
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.08);
   color: #f8fafc;
-}
-
-.react-scheduler-panel__primary,
-.react-scheduler-panel__secondary,
-.react-scheduler-card__toggle,
-.react-scheduler-card__icon-btn {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: all 0.18s ease;
-}
-
-.react-scheduler-panel__primary,
-.react-scheduler-panel__secondary {
-  min-height: 36px;
-  padding: 0 14px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.react-scheduler-panel__primary {
-  background: rgba(182, 240, 89, 0.14);
-  color: #d9f99d;
-}
-
-.react-scheduler-panel__secondary {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(226, 232, 240, 0.82);
-}
-
-.react-scheduler-panel__primary:disabled,
-.react-scheduler-panel__secondary:disabled,
-.react-scheduler-card__toggle:disabled,
-.react-scheduler-card__icon-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .react-scheduler-panel__error,
@@ -1182,36 +1194,28 @@
 }
 
 .react-scheduler-card__actions {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-.react-scheduler-card__toggle,
-.react-scheduler-card__icon-btn {
+.react-scheduler-card__action-btn {
   min-height: 32px;
+  min-width: 0;
   padding: 0 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(226, 232, 240, 0.82);
   font-size: 11px;
   font-weight: 700;
-  cursor: pointer;
 }
 
 .react-scheduler-card__toggle.is-on {
-  background: rgba(251, 113, 133, 0.12);
-  color: #fda4af;
+  min-width: 68px;
 }
 
 .react-scheduler-card__toggle.is-off {
-  background: rgba(182, 240, 89, 0.12);
-  color: #d9f99d;
+  min-width: 68px;
 }
 
-.react-scheduler-card__icon-btn.is-danger {
-  color: #fda4af;
+.react-scheduler-card__action-btn--danger {
+  min-width: 60px;
 }
 
 .react-scheduler-card__pill.is-danger {
@@ -2829,6 +2833,32 @@
   color: rgba(203, 213, 225, 0.72);
 }
 
+.diagnostics-panel__toolbar-tray {
+  gap: 10px;
+}
+
+.diagnostics-panel__action-btn {
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.diagnostics-panel__action-btn--primary {
+  min-width: 120px;
+}
+
+.diagnostics-panel__action-btn--small {
+  min-height: 30px;
+  min-width: 0;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.diagnostics-panel__action-btn--danger {
+  min-width: 84px;
+}
+
 .identity-panel__ghost-btn,
 .identity-panel__accent-btn,
 .diagnostics-panel__ghost-btn,
@@ -3974,70 +4004,23 @@
   flex: 1;
 }
 
-.models-panel__ghost-btn,
-.models-panel__accent-btn,
-.models-panel__soft-btn,
-.models-panel__danger-btn,
-.models-panel__tiny-btn,
-.models-panel__visibility-btn {
+.models-panel__action-btn {
   min-height: 36px;
-  padding: 0 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
   font-size: 12px;
   font-weight: 700;
-  cursor: pointer;
-  transition: all 0.16s ease;
 }
 
-.models-panel__ghost-btn,
-.models-panel__soft-btn,
-.models-panel__tiny-btn,
-.models-panel__visibility-btn {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(226, 232, 240, 0.84);
+.models-panel__action-btn--primary {
+  min-width: 112px;
 }
 
-.models-panel__accent-btn {
-  background: rgba(182, 240, 89, 0.14);
-  border-color: rgba(182, 240, 89, 0.24);
-  color: rgba(215, 255, 156, 0.98);
+.models-panel__action-btn--danger {
+  min-width: 84px;
 }
 
-.models-panel__danger-btn {
-  background: rgba(251, 113, 133, 0.1);
-  border-color: rgba(251, 113, 133, 0.18);
-  color: #fda4af;
-}
-
-.models-panel__ghost-btn:hover:not(:disabled),
-.models-panel__soft-btn:hover:not(:disabled),
-.models-panel__tiny-btn:hover:not(:disabled),
-.models-panel__visibility-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f8fafc;
-}
-
-.models-panel__accent-btn:hover:not(:disabled) {
-  background: rgba(182, 240, 89, 0.2);
-}
-
-.models-panel__danger-btn:hover:not(:disabled) {
-  background: rgba(251, 113, 133, 0.16);
-}
-
-.models-panel__ghost-btn:disabled,
-.models-panel__accent-btn:disabled,
-.models-panel__soft-btn:disabled,
-.models-panel__danger-btn:disabled,
-.models-panel__tiny-btn:disabled,
-.models-panel__visibility-btn:disabled {
-  opacity: 0.56;
-  cursor: default;
-}
-
-.models-panel__tiny-btn {
+.models-panel__action-btn--small {
   min-height: 28px;
+  min-width: 0;
   padding: 0 10px;
   border-radius: 10px;
   font-size: 11px;

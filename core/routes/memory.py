@@ -16,6 +16,8 @@ class MemoryCreateRequest(BaseModel):
     content: str
     type: Optional[str] = "fact"
     usage_layer: Optional[str] = None
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
     tags: Optional[list] = []
 
 
@@ -23,6 +25,8 @@ class MemoryUpdateRequest(BaseModel):
     content: Optional[str] = None
     type: Optional[str] = None
     usage_layer: Optional[str] = None
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
     tags: Optional[list] = None
 
 
@@ -42,17 +46,23 @@ def _require_memory():
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/api/memory")
-async def list_memory(type: Optional[str] = None, usage_layer: Optional[str] = None, q: Optional[str] = None):
+async def list_memory(
+    type: Optional[str] = None,
+    usage_layer: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    workspace_name: Optional[str] = None,
+    q: Optional[str] = None,
+):
     """Return memory items, optionally filtered by type or keyword."""
     agent = app_state.get("agent")
     if not agent or not agent.memory:
         return {"memories": []}
     if type:
-        items = agent.memory.list_by_type(type)
+        items = agent.memory.list_by_type(type, workspace_id=workspace_id, workspace_name=workspace_name)
     elif usage_layer:
-        items = agent.memory.list_by_usage_layer(usage_layer)
+        items = agent.memory.list_by_usage_layer(usage_layer, workspace_id=workspace_id, workspace_name=workspace_name)
     else:
-        items = agent.memory.list_all()
+        items = agent.memory.list_all(workspace_id=workspace_id, workspace_name=workspace_name)
     if q:
         q_lower = q.lower()
         items = [
@@ -73,7 +83,14 @@ async def list_memory(type: Optional[str] = None, usage_layer: Optional[str] = N
 async def create_memory(req: MemoryCreateRequest):
     """Create a new memory item."""
     agent = _require_memory()
-    item = agent.memory.add(req.content, tags=req.tags, type=req.type, usage_layer=req.usage_layer)
+    item = agent.memory.add(
+        req.content,
+        tags=req.tags,
+        type=req.type,
+        usage_layer=req.usage_layer,
+        workspace_id=req.workspace_id,
+        workspace_name=req.workspace_name,
+    )
     return {"memory": item.to_dict()}
 
 
@@ -96,6 +113,8 @@ async def update_memory(memory_id: str, req: MemoryUpdateRequest):
         new_tags=req.tags,
         new_type=req.type,
         new_usage_layer=req.usage_layer,
+        new_workspace_id=req.workspace_id,
+        new_workspace_name=req.workspace_name,
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found")

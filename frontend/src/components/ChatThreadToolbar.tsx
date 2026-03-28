@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { type OpenGuiclawApp } from '../bridge/openGuiclaw';
+import { dispatchShellAction, type OpenGuiclawApp } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 
 type ToolbarSnapshot = {
@@ -123,6 +123,10 @@ export function ChatThreadToolbar() {
     app.newSession?.();
   }
 
+  function handleOpenIntegrations() {
+    dispatchShellAction({ type: 'openSettings', tab: 'integrations' });
+  }
+
   function handleToggleVrm() {
     const app = appRef.current;
     if (!app || !state.vrmSystemEnabled) return;
@@ -199,11 +203,17 @@ export function ChatThreadToolbar() {
       ) : null}
 
       <div className="react-topbar-right">
-        {state.wsName ? <div className="topbar-chip">{state.wsName}</div> : null}
+        {state.currentView !== 'im' && state.wsName ? <div className="topbar-chip">{state.wsName}</div> : null}
 
-        <button type="button" className="btn-primary" disabled={state.isReceiving} onClick={handleNewThread}>
-          新线程
-        </button>
+        {state.currentView === 'im' ? (
+          <button type="button" className="btn-secondary" onClick={handleOpenIntegrations}>
+            集成配置
+          </button>
+        ) : (
+          <button type="button" className="btn-primary" disabled={state.isReceiving} onClick={handleNewThread}>
+            新线程
+          </button>
+        )}
 
         <div className="topbar-status">
           <span className={`topbar-status-dot${state.isReceiving ? ' busy' : ''}`} />

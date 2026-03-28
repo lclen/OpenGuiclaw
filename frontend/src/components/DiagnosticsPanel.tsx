@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type DiagnosticsPayload = {
   system?: {
@@ -318,6 +321,12 @@ function runtimeStatusClass(status: 'healthy' | 'unhealthy' | 'unknown') {
   if (status === 'healthy') return 'is-healthy';
   if (status === 'unhealthy') return 'is-error';
   return 'is-neutral';
+}
+
+function runtimeStatusTone(status: 'healthy' | 'unhealthy' | 'unknown'): 'success' | 'danger' | 'disabled' {
+  if (status === 'healthy') return 'success';
+  if (status === 'unhealthy') return 'danger';
+  return 'disabled';
 }
 
 async function copyText(value: string) {
@@ -689,30 +698,32 @@ export function DiagnosticsPanel() {
           <p className="diagnostics-panel__meta">区分环境诊断与运行时测活，帮助快速定位服务、模型端点和 IM 通道问题。</p>
         </div>
 
-        <div className="diagnostics-panel__toolbar">
-          <button type="button" className="diagnostics-panel__ghost-btn" onClick={runDiagnostics} disabled={running}>
+        <UiActionTray className="diagnostics-panel__toolbar diagnostics-panel__toolbar-tray">
+          <UiButton type="button" variant="secondary" className="diagnostics-panel__action-btn" onClick={runDiagnostics} disabled={running}>
             {running ? '诊断中...' : '运行环境诊断'}
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
-            className="diagnostics-panel__ghost-btn"
+            variant="secondary"
+            className="diagnostics-panel__action-btn"
             onClick={() => {
               void loadRuntimeOverview();
             }}
           >
             刷新运行概览
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
-            className="diagnostics-panel__ghost-btn"
+            variant="secondary"
+            className="diagnostics-panel__action-btn"
             onClick={() => {
               window.location.href = '/api/diagnostics/export';
             }}
             disabled={!result}
           >
             导出报告
-          </button>
-        </div>
+          </UiButton>
+        </UiActionTray>
       </header>
 
       {errorText ? <div className="diagnostics-panel__notice diagnostics-panel__notice--error">{errorText}</div> : null}
@@ -753,9 +764,9 @@ export function DiagnosticsPanel() {
               <strong>后端服务</strong>
               <span>{serviceStatus === 'online' ? '接口可访问' : serviceStatus === 'offline' ? '接口不可访问' : '尚未检测'}</span>
             </div>
-            <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(serviceStatus === 'online' ? 'healthy' : serviceStatus === 'offline' ? 'unhealthy' : 'unknown')}`}>
+            <UiStatusPill tone={runtimeStatusTone(serviceStatus === 'online' ? 'healthy' : serviceStatus === 'offline' ? 'unhealthy' : 'unknown')} className={`diagnostics-panel__status-pill ${runtimeStatusClass(serviceStatus === 'online' ? 'healthy' : serviceStatus === 'offline' ? 'unhealthy' : 'unknown')}`}>
               {serviceSummaryLabel}
-            </span>
+            </UiStatusPill>
           </article>
           <article className="diagnostics-panel__runtime-item">
             <div className="diagnostics-panel__runtime-main">
@@ -764,20 +775,21 @@ export function DiagnosticsPanel() {
                 PID {serviceInfo?.pid || result?.system?.pid || '未知'} · v{serviceInfo?.version || 'unknown'}
               </span>
             </div>
-            <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(result ? 'healthy' : 'unknown')}`}>
+            <UiStatusPill tone={runtimeStatusTone(result ? 'healthy' : 'unknown')} className={`diagnostics-panel__status-pill ${runtimeStatusClass(result ? 'healthy' : 'unknown')}`}>
               {serviceInfo?.uptime_seconds ? formatDuration(serviceInfo.uptime_seconds) : result ? '已加载' : '未加载'}
-            </span>
+            </UiStatusPill>
           </article>
           <article className="diagnostics-panel__runtime-item">
             <div className="diagnostics-panel__runtime-main">
               <strong>重启能力</strong>
               <span>{result?.restart?.reason || `模式：${serviceInfo?.restart_mode || restartModeLabel}`}</span>
             </div>
-            <span
+            <UiStatusPill
+              tone={runtimeStatusTone(result?.restart?.supported ? 'healthy' : 'unhealthy')}
               className={`diagnostics-panel__status-pill ${runtimeStatusClass(result?.restart?.supported ? 'healthy' : 'unhealthy')}`}
             >
               {result?.restart?.supported ? '支持' : '受限'}
-            </span>
+            </UiStatusPill>
           </article>
         </div>
       </section>
@@ -795,16 +807,17 @@ export function DiagnosticsPanel() {
               <span>冲突：{processStats.conflicts}</span>
             </div>
           </div>
-          <button
+          <UiButton
             type="button"
-            className="diagnostics-panel__ghost-btn"
+            variant="secondary"
+            className="diagnostics-panel__action-btn"
             onClick={() => {
               void refreshProcessRuntime();
             }}
             disabled={processRefreshing}
           >
             {processRefreshing ? '刷新中...' : '刷新进程状态'}
-          </button>
+          </UiButton>
         </div>
 
         <div className="diagnostics-panel__runtime-grid">
@@ -813,27 +826,27 @@ export function DiagnosticsPanel() {
               <strong>当前服务 PID</strong>
               <span>{processRuntime?.current_pid || serviceInfo?.pid || '未知'}</span>
             </div>
-            <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(serviceStatus === 'online' ? 'healthy' : 'unknown')}`}>
+            <UiStatusPill tone={runtimeStatusTone(serviceStatus === 'online' ? 'healthy' : 'unknown')} className={`diagnostics-panel__status-pill ${runtimeStatusClass(serviceStatus === 'online' ? 'healthy' : 'unknown')}`}>
               {serviceSummaryLabel}
-            </span>
+            </UiStatusPill>
           </article>
           <article className="diagnostics-panel__runtime-item">
             <div className="diagnostics-panel__runtime-main">
               <strong>当前记录模式</strong>
               <span>{processRuntime?.current_record?.mode || serviceInfo?.restart_mode || restartModeLabel}</span>
             </div>
-            <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(processStats.conflicts > 0 ? 'unhealthy' : 'healthy')}`}>
+            <UiStatusPill tone={runtimeStatusTone(processStats.conflicts > 0 ? 'unhealthy' : 'healthy')} className={`diagnostics-panel__status-pill ${runtimeStatusClass(processStats.conflicts > 0 ? 'unhealthy' : 'healthy')}`}>
               {processStats.conflicts > 0 ? '需处理' : '正常'}
-            </span>
+            </UiStatusPill>
           </article>
           <article className="diagnostics-panel__runtime-item">
             <div className="diagnostics-panel__runtime-main">
               <strong>当前记录时间</strong>
               <span>{formatIsoTime(processRuntime?.current_record?.started_at || serviceInfo?.started_at)}</span>
             </div>
-            <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(processRuntime?.cleanup_supported ? 'healthy' : 'unknown')}`}>
+            <UiStatusPill tone={runtimeStatusTone(processRuntime?.cleanup_supported ? 'healthy' : 'unknown')} className={`diagnostics-panel__status-pill ${runtimeStatusClass(processRuntime?.cleanup_supported ? 'healthy' : 'unknown')}`}>
               {processRuntime?.cleanup_supported ? '可清理' : '只读'}
-            </span>
+            </UiStatusPill>
           </article>
         </div>
 
@@ -868,7 +881,7 @@ export function DiagnosticsPanel() {
                   </div>
                 </div>
                 <div className="diagnostics-panel__list-actions">
-                  <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</span>
+                  <UiStatusPill tone={runtimeStatusTone(statusInfo.tone)} className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</UiStatusPill>
                 </div>
               </article>
             );
@@ -899,18 +912,19 @@ export function DiagnosticsPanel() {
                     </div>
                   </div>
                   <div className="diagnostics-panel__list-actions">
-                    <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</span>
+                    <UiStatusPill tone={runtimeStatusTone(statusInfo.tone)} className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</UiStatusPill>
                     {conflict.cleanup_allowed ? (
-                      <button
+                      <UiButton
                         type="button"
-                        className="diagnostics-panel__tiny-btn diagnostics-panel__tiny-btn--danger"
+                        variant="danger"
+                        className="diagnostics-panel__action-btn diagnostics-panel__action-btn--small diagnostics-panel__action-btn--danger"
                         onClick={() => {
                           void cleanupProcessConflict(conflict);
                         }}
                         disabled={processCleanupKey !== null}
                       >
                         {processCleanupKey === cleanupKey ? '清理中...' : 'Cleanup'}
-                      </button>
+                      </UiButton>
                     ) : null}
                   </div>
                 </article>
@@ -944,7 +958,7 @@ export function DiagnosticsPanel() {
                     </div>
                 </div>
                 <div className="diagnostics-panel__list-actions">
-                  <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</span>
+                  <UiStatusPill tone={runtimeStatusTone(statusInfo.tone)} className={`diagnostics-panel__status-pill ${runtimeStatusClass(statusInfo.tone)}`}>{statusInfo.label}</UiStatusPill>
                 </div>
               </article>
             );
@@ -968,16 +982,17 @@ export function DiagnosticsPanel() {
               <span>未知：{endpointStats.unknown}</span>
             </div>
           </div>
-          <button
+          <UiButton
             type="button"
-            className="diagnostics-panel__ghost-btn"
+            variant="secondary"
+            className="diagnostics-panel__action-btn"
             onClick={() => {
               void runEndpointHealthCheck();
             }}
             disabled={endpointChecking !== null}
           >
             {endpointChecking === 'all' ? '检测中...' : 'Check All'}
-          </button>
+          </UiButton>
         </div>
 
         {endpointSummaries.length === 0 ? (
@@ -1023,31 +1038,33 @@ export function DiagnosticsPanel() {
                     {errorSummary ? (
                       <div className="diagnostics-panel__error-row">
                         <span>{errorSummary}</span>
-                        <button
+                        <UiButton
                           type="button"
-                          className="diagnostics-panel__tiny-btn"
+                          variant="secondary"
+                          className="diagnostics-panel__action-btn diagnostics-panel__action-btn--small"
                           onClick={async () => {
                             const ok = await copyText(resultItem?.error || '');
                             pushRuntimeNotice(ok ? '已复制错误详情' : '复制失败，请检查系统剪贴板权限');
                           }}
                         >
                           复制详情
-                        </button>
+                        </UiButton>
                       </div>
                     ) : null}
                   </div>
                   <div className="diagnostics-panel__list-actions">
-                    <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(runtime.status)}`}>{runtime.label}</span>
-                    <button
+                    <UiStatusPill tone={runtimeStatusTone(runtime.status)} className={`diagnostics-panel__status-pill ${runtimeStatusClass(runtime.status)}`}>{runtime.label}</UiStatusPill>
+                    <UiButton
                       type="button"
-                      className="diagnostics-panel__ghost-btn diagnostics-panel__ghost-btn--small"
+                      variant="secondary"
+                      className="diagnostics-panel__action-btn diagnostics-panel__action-btn--small"
                       onClick={() => {
                         void runEndpointHealthCheck(endpoint.name);
                       }}
                       disabled={endpointChecking !== null}
                     >
                       {endpointChecking === endpoint.name ? '检测中...' : 'Check'}
-                    </button>
+                    </UiButton>
                   </div>
                 </article>
               );
@@ -1073,16 +1090,17 @@ export function DiagnosticsPanel() {
               <span>未检测：{imStats.unknown}</span>
             </div>
           </div>
-          <button
+          <UiButton
             type="button"
-            className="diagnostics-panel__ghost-btn"
+            variant="secondary"
+            className="diagnostics-panel__action-btn"
             onClick={() => {
               void refreshIMRuntimeStatus();
             }}
             disabled={imChecking}
           >
             {imChecking ? '刷新中...' : '检查通道状态'}
-          </button>
+          </UiButton>
         </div>
 
         {imBots.length === 0 ? (
@@ -1149,21 +1167,22 @@ export function DiagnosticsPanel() {
                     {runtime?.last_error ? (
                       <div className="diagnostics-panel__error-row">
                         <span>{truncateText(runtime.last_error, 72)}</span>
-                        <button
+                        <UiButton
                           type="button"
-                          className="diagnostics-panel__tiny-btn"
+                          variant="secondary"
+                          className="diagnostics-panel__action-btn diagnostics-panel__action-btn--small"
                           onClick={async () => {
                             const ok = await copyText(runtime.last_error || '');
                             pushRuntimeNotice(ok ? '已复制通道错误详情' : '复制失败，请检查系统剪贴板权限');
                           }}
                         >
                           复制详情
-                        </button>
+                        </UiButton>
                       </div>
                     ) : null}
                   </div>
                   <div className="diagnostics-panel__list-actions">
-                    <span className={`diagnostics-panel__status-pill ${runtimeStatusClass(derivedStatus)}`}>{statusLabel}</span>
+                    <UiStatusPill tone={runtimeStatusTone(derivedStatus)} className={`diagnostics-panel__status-pill ${runtimeStatusClass(derivedStatus)}`}>{statusLabel}</UiStatusPill>
                   </div>
                 </article>
               );
@@ -1229,9 +1248,9 @@ export function DiagnosticsPanel() {
         </>
       ) : null}
 
-      <button type="button" className="diagnostics-panel__accent-btn" onClick={wakeModel}>
+      <UiButton type="button" variant="primary" className="diagnostics-panel__action-btn diagnostics-panel__action-btn--primary" onClick={wakeModel}>
         手动唤醒模型推理
-      </button>
+      </UiButton>
 
       {pokeStatus ? <div className="diagnostics-panel__notice diagnostics-panel__notice--status">{pokeStatus}</div> : null}
     </div>

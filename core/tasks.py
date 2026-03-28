@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from core.automation_context import get_automation_source_context
+from core.im_selfcheck_subscriptions import list_active_selfcheck_subscriptions, record_selfcheck_delivery_status
 from core.im_bots import make_im_session_id, parse_im_session_id
 from core.process_runtime import cleanup_process_runtime_targets, detect_runtime_mode
 from core.runtime_diagnostics import collect_runtime_selfcheck_snapshot
@@ -721,13 +722,80 @@ def _build_selfcheck_im_summary(result: dict[str, Any]) -> str:
         lines.append(f"- 进程冲突: {len(conflicts)} 项，建议在 Diagnostics 中人工处理")
     if result["fixes"]["stale_record_cleanup"]:
         lines.append(f"- 已自动清理 stale record: {len(result['fixes']['stale_record_cleanup'])} 项")
+    advice = _build_selfcheck_im_advice(result)
+    if advice:
+        lines.append("")
+        lines.append("建议：")
+        lines.extend(f"- {item}" for item in advice)
     return "\n".join(lines)
+
+
+def _build_selfcheck_im_advice(result: dict[str, Any]) -> list[str]:
+    advice: list[str] = []
+    process_runtime = result["runtime"]["process_runtime"]
+    endpoint_status = str(result["endpoints"]["status"])
+    network_status = str(result["network_matrix"]["status"])
+    im_status = str(result["im_channels"]["status"])
+
+    if process_runtime.get("conflicts"):
+        advice.append("请打开 Diagnostics 查看冲突进程或残留运行记录")
+    if endpoint_status == "unhealthy":
+        advice.append("主模型端点异常，请检查 API Key、Base URL 和模型名称")
+    elif endpoint_status == "unknown":
+        advice.append("当前未配置可测活端点，可在 Diagnostics 中补充并手动 Check")
+    if network_status == "unhealthy":
+        advice.append("网络矩阵异常，请检查代理、IPv4/IPv6 路由和外网连通性")
+    if im_status == "unhealthy":
+        advice.append("IM 通道离线，请检查对应 Bot 配置并确认重启后已上线")
+    if result["logs"]["total_errors"] > 0:
+        advice.append("存在日志错误，请优先查看最新错误模块并结合 Diagnostics 排查")
+    return advice
+
+
+def _deliver_selfcheck_subscription_fanout(im_summary: str) -> None:
+    subscriptions = list_active_selfcheck_subscriptions()
+    delivered: set[str] = set()
+
+    for item in subscriptions:
+        session_id = str(item.get("session_id") or "")
+        channel_name = str(item.get("channel_name") or "")
+        chat_id = str(item.get("chat_id") or "")
+        if not session_id or not channel_name or not chat_id or session_id in delivered:
+            continue
+        delivered.add(session_id)
+
+        gateway = app_state.get("gateway")
+        adapter = gateway.adapters.get(channel_name) if gateway else None
+        if not adapter or not getattr(adapter, "_running", False):
+            logger.warning("[SelfCheck] Skip subscribed IM selfcheck delivery for offline channel=%s chat=%s", channel_name, chat_id)
+            record_selfcheck_delivery_status(session_id, status="skipped", error="channel offline")
+            continue
+
+        try:
+            deliver_automation_event(
+                "assistant",
+                im_summary,
+                target_kind="im_session",
+                target_session_id=session_id,
+                target_channel=channel_name,
+                target_chat_id=chat_id,
+            )
+            record_selfcheck_delivery_status(session_id, status="sent")
+        except Exception as exc:
+            logger.warning(
+                "[SelfCheck] Failed to fanout subscribed IM selfcheck channel=%s chat=%s: %s",
+                channel_name,
+                chat_id,
+                exc,
+            )
+            record_selfcheck_delivery_status(session_id, status="failed", error=str(exc))
 
 
 def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str) -> None:
     targets = _resolve_task_delivery_target(task) if task else []
     if not targets:
         deliver_automation_event("assistant", report)
+        _deliver_selfcheck_subscription_fanout(im_summary)
         return
 
     non_im_targets = [item for item in targets if item.get("target_kind") != "im_session"]
@@ -743,6 +811,8 @@ def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str
             target_channel=target["target_channel"],
             target_chat_id=target["target_chat_id"],
         )
+
+    _deliver_selfcheck_subscription_fanout(im_summary)
 
     if im_targets and not non_im_targets:
         deliver_automation_event("assistant", report, target_kind="workspace_inbox")

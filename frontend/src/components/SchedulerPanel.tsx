@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 import { type OpenGuiclawApp, type SchedulerExecution, type SchedulerTask } from '../bridge/openGuiclaw';
 import { useHostCollection } from '../hooks/useHostCollection';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiCard } from './ui/UiCard';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 function snapshotTasks(app: OpenGuiclawApp): SchedulerTask[] {
   return Array.isArray(app.schedulerTasks) ? app.schedulerTasks.map((task) => ({ ...task })) : [];
@@ -32,6 +36,17 @@ function formatExecutionStatusClass(status?: string) {
   if (status === 'success') return 'react-scheduler-card__pill is-on';
   if (status === 'failed') return 'react-scheduler-card__pill is-danger';
   return 'react-scheduler-card__pill';
+}
+
+function taskEnabledTone(enabled: boolean): 'success' | 'disabled' {
+  return enabled ? 'success' : 'disabled';
+}
+
+function executionTone(status?: string): 'success' | 'warning' | 'danger' | 'disabled' {
+  if (status === 'running') return 'warning';
+  if (status === 'success') return 'success';
+  if (status === 'failed') return 'danger';
+  return 'disabled';
 }
 
 function getDeliveryTargets(item: SchedulerTask | SchedulerExecution) {
@@ -131,24 +146,26 @@ export function SchedulerPanel() {
           </p>
         </div>
 
-        <div className="react-scheduler-panel__actions">
-          <button
+        <UiActionTray className="react-scheduler-panel__actions">
+          <UiButton
             type="button"
-            className="react-scheduler-panel__secondary"
+            variant="secondary"
+            className="react-scheduler-panel__action-btn"
             onClick={handleRefresh}
             disabled={!hostApp || reloadBusy}
           >
             {reloadBusy ? '刷新中...' : '刷新'}
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
-            className="react-scheduler-panel__primary"
+            variant="primary"
+            className="react-scheduler-panel__action-btn react-scheduler-panel__action-btn--primary"
             onClick={() => hostApp?.openSchedulerForm()}
             disabled={!hostApp}
           >
             新建计划
-          </button>
-        </div>
+          </UiButton>
+        </UiActionTray>
       </header>
 
       <div className="react-scheduler-panel__tabbar">
@@ -185,62 +202,66 @@ export function SchedulerPanel() {
           {tasks.map((task) => {
             const isBusy = busyTaskId === task.id;
             return (
-              <article className="react-scheduler-card" key={task.id}>
+              <UiCard as="article" variant="subtle" className="react-scheduler-card" key={task.id}>
                 <div className="react-scheduler-card__row">
                   <div className="react-scheduler-card__main">
                     <div className="react-scheduler-card__heading">
                       <h4 className="react-scheduler-card__name">{task.name}</h4>
-                      <span className={`react-scheduler-card__pill ${task.enabled ? 'is-on' : 'is-off'}`}>
+                      <UiStatusPill tone={taskEnabledTone(task.enabled)} className={`react-scheduler-card__pill ${task.enabled ? 'is-on' : 'is-off'}`}>
                         {task.enabled ? '已启用' : '已暂停'}
-                      </span>
+                      </UiStatusPill>
                       {task.status === 'running' ? (
-                        <span className="react-scheduler-card__pill is-running">运行中</span>
+                        <UiStatusPill tone="warning" className="react-scheduler-card__pill is-running">运行中</UiStatusPill>
                       ) : null}
-                      <span className="react-scheduler-card__type">{formatTaskType(task.task_type)}</span>
+                      <UiStatusPill tone="brand" className="react-scheduler-card__type">{formatTaskType(task.task_type)}</UiStatusPill>
                     </div>
                     <p className="react-scheduler-card__description">
                       {task.description || '暂无描述。'}
                     </p>
                   </div>
 
-                  <div className="react-scheduler-card__actions">
-                    <button
+                  <UiActionTray className="react-scheduler-card__actions">
+                    <UiButton
                       type="button"
-                      className={`react-scheduler-card__toggle ${task.enabled ? 'is-on' : 'is-off'}`}
+                      variant={task.enabled ? 'secondary' : 'primary'}
+                      className={`react-scheduler-card__action-btn react-scheduler-card__toggle ${task.enabled ? 'is-on' : 'is-off'}`}
                       onClick={() => runTaskAction(task.id, () => hostApp!.toggleSchedulerTask(task.id, !task.enabled))}
                       disabled={!hostApp || isBusy}
                     >
                       {isBusy ? '...' : task.enabled ? '暂停' : '恢复'}
-                    </button>
-                    <button
+                    </UiButton>
+                    <UiButton
                       type="button"
-                      className="react-scheduler-card__icon-btn"
+                      variant="secondary"
+                      className="react-scheduler-card__action-btn"
                       onClick={() => runTaskAction(task.id, () => hostApp!.triggerSchedulerTask(task.id), 'executions')}
                       disabled={!hostApp || isBusy}
                     >
                       运行
-                    </button>
+                    </UiButton>
                     {task.deletable !== false && task.task_type !== 'system' ? (
-                      <button
+                      <UiButton
                         type="button"
-                        className="react-scheduler-card__icon-btn"
+                        variant="secondary"
+                        className="react-scheduler-card__action-btn"
                         onClick={() => hostApp?.editSchedulerTask(task)}
                         disabled={!hostApp || isBusy}
                       >
                         编辑
-                      </button>
+                      </UiButton>
                     ) : null}
                     {task.deletable !== false && task.task_type !== 'system' ? (
-                      <button
+                      <UiButton
                         type="button"
-                        className="react-scheduler-card__icon-btn is-danger"
+                        variant="danger"
+                        className="react-scheduler-card__action-btn react-scheduler-card__action-btn--danger"
                         onClick={() => runTaskAction(task.id, () => hostApp!.deleteSchedulerTask(task.id))}
                         disabled={!hostApp || isBusy}
                       >
                         删除
-                      </button>
+                      </UiButton>
                     ) : null}
-                  </div>
+                  </UiActionTray>
                 </div>
 
                 <div className="react-scheduler-card__meta">
@@ -260,7 +281,7 @@ export function SchedulerPanel() {
                     <span className="react-scheduler-card__meta-value">{formatTargetSummary(task)}</span>
                   </div>
                 </div>
-              </article>
+              </UiCard>
             );
           })}
         </div>
@@ -269,24 +290,24 @@ export function SchedulerPanel() {
       {!loading && viewTab === 'executions' && executions.length > 0 ? (
         <div className="react-scheduler-panel__content">
           {executions.map((execution) => (
-            <article className="react-scheduler-card" key={execution.id}>
+            <UiCard as="article" variant="subtle" className="react-scheduler-card" key={execution.id}>
               <div className="react-scheduler-card__row">
                 <div className="react-scheduler-card__main">
                   <div className="react-scheduler-card__heading">
                     <h4 className="react-scheduler-card__name">{taskNameMap.get(execution.task_id) || execution.task_id}</h4>
-                    <span className={formatExecutionStatusClass(execution.status)}>
+                    <UiStatusPill tone={executionTone(execution.status)} className={formatExecutionStatusClass(execution.status)}>
                       {formatExecutionStatus(execution.status)}
-                    </span>
-                    <span className="react-scheduler-card__type">{execution.trigger_source || 'scheduler'}</span>
+                    </UiStatusPill>
+                    <UiStatusPill tone="brand" className="react-scheduler-card__type">{execution.trigger_source || 'scheduler'}</UiStatusPill>
                   </div>
                   <p className="react-scheduler-card__description">
                     {execution.result_summary || execution.error || '暂无摘要。'}
                   </p>
                 </div>
-                <div className="react-scheduler-card__actions">
+                <UiActionTray className="react-scheduler-card__actions">
                   <span className="react-scheduler-card__meta-label">ID</span>
                   <span className="react-scheduler-card__meta-value">{execution.id}</span>
-                </div>
+                </UiActionTray>
               </div>
 
               <div className="react-scheduler-card__meta">
@@ -306,7 +327,7 @@ export function SchedulerPanel() {
                   <span className="react-scheduler-card__meta-value">{formatTargetSummary(execution)}</span>
                 </div>
               </div>
-            </article>
+            </UiCard>
           ))}
         </div>
       ) : null}

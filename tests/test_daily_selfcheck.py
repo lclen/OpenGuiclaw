@@ -227,3 +227,69 @@ async def test_daily_selfcheck_survives_artifact_write_failure(tmp_path, monkeyp
     assert status.startswith("✅")
     assert "报告落盘" in deliveries[0][1]
     assert "disk full" in deliveries[0][1]
+
+
+@pytest.mark.asyncio
+async def test_daily_selfcheck_fanouts_to_subscribed_im_sessions(tmp_path, monkeypatch):
+    from core import tasks
+    from core.im_bots import make_channel_name, make_im_session_id
+    from core.im_selfcheck_subscriptions import upsert_selfcheck_subscription
+
+    _ensure_required_dirs(tmp_path)
+    monkeypatch.setattr(tasks, "_APP_BASE", tmp_path)
+    monkeypatch.setattr("core.im_selfcheck_subscriptions._APP_BASE", tmp_path)
+    monkeypatch.setitem(tasks.app_state, "server_version", "test-version")
+    monkeypatch.setitem(tasks.app_state, "server_started_at", 1_711_000_000.0)
+    monkeypatch.setitem(tasks.app_state, "agent", None)
+    monkeypatch.setitem(tasks.app_state, "task_scheduler", None)
+    (tmp_path / "config.json").write_text(
+        __import__("json").dumps(
+            {
+                "im_bots": [
+                    {
+                        "id": "ding-main",
+                        "name": "Ding Main",
+                        "platform": "dingtalk",
+                        "enabled": True,
+                        "credentials": {"client_id": "cid", "client_secret": "secret", "agent_id": "123"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    channel_name = make_channel_name("dingtalk", "ding-main")
+    session_id = make_im_session_id(channel_name, "chat-001")
+    upsert_selfcheck_subscription(session_id=session_id, channel_name=channel_name, chat_id="chat-001")
+    monkeypatch.setitem(
+        tasks.app_state,
+        "gateway",
+        SimpleNamespace(adapters={channel_name: SimpleNamespace(_running=True)}),
+    )
+
+    async def fake_collect_runtime(*args, **kwargs):
+        return _runtime_snapshot(endpoints=[], im_channels=[], network_status="unknown")
+
+    deliveries = []
+    monkeypatch.setattr(tasks, "collect_runtime_selfcheck_snapshot", fake_collect_runtime)
+    monkeypatch.setattr(tasks, "_scan_log_error_summary", lambda: {})
+    monkeypatch.setattr(tasks, "deliver_automation_event", lambda role, content, **kwargs: deliveries.append((role, content, kwargs)) or ([], None))
+
+    task = SimpleNamespace(
+        get_delivery_targets=lambda: [
+            {"kind": "workspace_inbox", "workspace_id": "default", "session_id": None, "channel": None, "chat_id": None}
+        ]
+    )
+
+    success, status = await tasks._system_daily_selfcheck(lambda event: None, task)
+
+    assert success is True
+    assert status.startswith("✅")
+    workspace_deliveries = [item for item in deliveries if item[2].get("target_kind") == "workspace_inbox"]
+    subscription_deliveries = [item for item in deliveries if item[2].get("target_session_id") == session_id]
+    assert len(workspace_deliveries) == 1
+    assert len(subscription_deliveries) == 1
+    assert subscription_deliveries[0][1].startswith("🔍 系统自检摘要")

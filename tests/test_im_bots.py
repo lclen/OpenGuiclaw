@@ -346,6 +346,81 @@ async def test_im_runtime_routes_and_channel_fields(
     del app_state["gateway"]
 
 
+@pytest.mark.asyncio
+async def test_im_selfcheck_subscription_routes(im_client: httpx.AsyncClient, im_base: Path):
+    write_config(
+        im_base,
+        {
+            "im_bots": [
+                {
+                    "id": "ding-main",
+                    "name": "Ding Main",
+                    "platform": "dingtalk",
+                    "enabled": True,
+                    "credentials": {
+                        "client_id": "ding-client",
+                        "client_secret": "ding-secret",
+                        "agent_id": "123",
+                    },
+                }
+            ]
+        },
+    )
+
+    channel_name = make_channel_name("dingtalk", "ding-main")
+    session_id = make_im_session_id(channel_name, "chat-001")
+    (im_base / "data" / "sessions" / f"{session_id}.json").write_text(
+        json.dumps(
+            {
+                "session_id": session_id,
+                "updated_at": "2026-03-29 09:30:00",
+                "metadata": {
+                    "platform": "dingtalk",
+                    "bot_id": "ding-main",
+                    "channel_name": channel_name,
+                    "chat_type": "group",
+                    "chat_name": "研发群",
+                    "display_name": "张三",
+                },
+                "messages": [{"role": "user", "content": "hello ding"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    create_resp = await im_client.post(
+        "/api/im/selfcheck-subscriptions",
+        json={
+            "session_id": session_id,
+            "channel_name": channel_name,
+            "chat_id": "chat-001",
+            "chat_name": "研发群",
+            "label": "南京研发群",
+        },
+    )
+    assert create_resp.status_code == 200
+    assert create_resp.json()["subscriptions"][0]["session_id"] == session_id
+
+    list_resp = await im_client.get("/api/im/selfcheck-subscriptions")
+    assert list_resp.status_code == 200
+    subscription = list_resp.json()["subscriptions"][0]
+    assert subscription["display_name"] == "张三"
+    assert subscription["valid"] is True
+
+    sessions_resp = await im_client.get("/api/im/sessions", params={"channel_name": channel_name})
+    assert sessions_resp.status_code == 200
+    assert sessions_resp.json()["sessions"][0]["selfcheck_subscribed"] is True
+
+    delete_resp = await im_client.delete(
+        "/api/im/selfcheck-subscriptions",
+        params={"session_id": session_id},
+    )
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] is True
+    assert delete_resp.json()["subscriptions"] == []
+
+
 def test_register_im_adapters_supports_multiple_instances(monkeypatch: pytest.MonkeyPatch):
     created: list[tuple[str, dict]] = []
 
@@ -583,3 +658,76 @@ async def test_gateway_accepts_delta_protocol_and_finalizes_stream():
     assert ("token", "南京今天") in adapter.events
     assert ("token", "晴朗") in adapter.events
     assert ("finalize", "南京今天晴朗") in adapter.events
+
+
+@pytest.mark.asyncio
+async def test_gateway_handles_selfcheck_subscription_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from core.channels.types import MessageContent
+    from core.im_selfcheck_subscriptions import list_selfcheck_subscriptions
+
+    monkeypatch.setattr("core.im_selfcheck_subscriptions._APP_BASE", tmp_path)
+    (tmp_path / "data" / "sessions").mkdir(parents=True, exist_ok=True)
+    write_config(
+        tmp_path,
+        {
+            "im_bots": [
+                {
+                    "id": "ops-bot",
+                    "name": "Ops Bot",
+                    "platform": "dingtalk",
+                    "enabled": True,
+                    "credentials": {
+                        "client_id": "ding-client",
+                        "client_secret": "ding-secret",
+                        "agent_id": "123",
+                    },
+                }
+            ]
+        },
+    )
+
+    adapter = _FakeAdapter()
+    gateway = ChannelGateway(agent=_FakeAgent())
+    gateway.register_adapter(adapter)
+
+    subscribe = UnifiedMessage.create(
+        channel="dingtalk@@ops-bot",
+        channel_message_id="msg-010",
+        user_id="dd_user_10",
+        channel_user_id="user_10",
+        chat_id="chat-010",
+        content=MessageContent(text="订阅每日自检"),
+        chat_type="group",
+        metadata={"chat_name": "运维群", "sender_name": "王五"},
+    )
+    await gateway._process_message_task(subscribe)
+
+    status = UnifiedMessage.create(
+        channel="dingtalk@@ops-bot",
+        channel_message_id="msg-011",
+        user_id="dd_user_10",
+        channel_user_id="user_10",
+        chat_id="chat-010",
+        content=MessageContent(text="查看自检订阅"),
+        chat_type="group",
+        metadata={"chat_name": "运维群", "sender_name": "王五"},
+    )
+    await gateway._process_message_task(status)
+
+    unsubscribe = UnifiedMessage.create(
+        channel="dingtalk@@ops-bot",
+        channel_message_id="msg-012",
+        user_id="dd_user_10",
+        channel_user_id="user_10",
+        chat_id="chat-010",
+        content=MessageContent(text="取消订阅每日自检"),
+        chat_type="group",
+        metadata={"chat_name": "运维群", "sender_name": "王五"},
+    )
+    await gateway._process_message_task(unsubscribe)
+
+    sent = "\n".join(adapter.sent_messages)
+    assert "已订阅每日自检" in sent
+    assert "当前自检订阅状态：已订阅" in sent
+    assert "已取消每日自检订阅" in sent
+    assert list_selfcheck_subscriptions() == []

@@ -2,6 +2,9 @@ import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { emitShellUpdate } from '../bridge/openGuiclaw';
 import { CaretDownIcon } from './icons/ShellIcons';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type ProviderPreset = {
   slug: string;
@@ -567,14 +570,15 @@ export function ModelsPanel() {
       <div className="models-panel__field models-panel__field--full">
         <div className="models-panel__field-head">
           <span className="models-panel__field-label">Model ID</span>
-          <button
+          <UiButton
             type="button"
-            className="models-panel__tiny-btn"
+            variant="secondary"
+            className="models-panel__action-btn models-panel__action-btn--small"
             onClick={() => fetchModels(scope, roleKey, endpoint.clientKey)}
             disabled={!!fetchingModels[fetchKey]}
           >
             {fetchingModels[fetchKey] ? '获取中...' : '获取模型列表'}
-          </button>
+          </UiButton>
         </div>
         <input
           type="text"
@@ -649,14 +653,14 @@ export function ModelsPanel() {
           <h4 className="models-panel__title">模型与角色端点</h4>
           <p className="models-panel__meta">统一管理聊天端点、角色覆写端点、模型拉取与网络连通测试。</p>
         </div>
-        <div className="models-panel__header-actions">
-          <button type="button" className="models-panel__ghost-btn" onClick={loadAll} disabled={loadState.loading}>
+        <UiActionTray className="models-panel__header-actions">
+          <UiButton type="button" variant="secondary" className="models-panel__action-btn" onClick={loadAll} disabled={loadState.loading}>
             刷新
-          </button>
-          <button type="button" className="models-panel__accent-btn" onClick={addChatEndpoint} disabled={loadState.loading}>
+          </UiButton>
+          <UiButton type="button" variant="primary" className="models-panel__action-btn models-panel__action-btn--primary" onClick={addChatEndpoint} disabled={loadState.loading}>
             新增聊天端点
-          </button>
-        </div>
+          </UiButton>
+        </UiActionTray>
       </header>
 
       {loadState.errorText ? <div className="models-panel__notice models-panel__notice--error">{loadState.errorText}</div> : null}
@@ -670,9 +674,9 @@ export function ModelsPanel() {
                 <div className="models-panel__section-title">聊天模型端点</div>
                 <div className="models-panel__section-desc">管理主聊天模型池，支持一键切换当前激活端点。</div>
               </div>
-              <button type="button" className="models-panel__accent-btn" onClick={saveChatEndpoints} disabled={savingChat}>
+              <UiButton type="button" variant="primary" className="models-panel__action-btn models-panel__action-btn--primary" onClick={saveChatEndpoints} disabled={savingChat}>
                 {savingChat ? '保存中...' : '保存聊天端点'}
-              </button>
+              </UiButton>
             </div>
 
             <div className="models-panel__stack">
@@ -699,7 +703,7 @@ export function ModelsPanel() {
                       <div className="models-panel__card-main">
                         <div className="models-panel__card-title-row">
                           <span className="models-panel__card-title">{endpointLabel(endpoint)}</span>
-                          {active ? <span className="models-panel__pill is-accent">Active</span> : null}
+                          {active ? <UiStatusPill tone="brand" className="models-panel__pill is-accent">Active</UiStatusPill> : null}
                         </div>
                         <div className="models-panel__card-subtitle">
                           <span>{endpoint.provider || 'custom'}</span>
@@ -707,11 +711,12 @@ export function ModelsPanel() {
                           <span>{endpoint.model || '未选择模型'}</span>
                         </div>
                       </div>
-                      <div className="models-panel__card-actions">
+                      <UiActionTray className="models-panel__card-actions">
                         {endpoint.id && !active ? (
-                          <button
+                          <UiButton
                             type="button"
-                            className="models-panel__soft-btn"
+                            variant="secondary"
+                            className="models-panel__action-btn"
                             onClick={(event) => {
                               event.stopPropagation();
                               void switchChatEndpoint(endpoint.id!);
@@ -719,10 +724,10 @@ export function ModelsPanel() {
                             disabled={switchingId === endpoint.id}
                           >
                             {switchingId === endpoint.id ? '切换中...' : '激活'}
-                          </button>
+                          </UiButton>
                         ) : null}
                         <CaretDownIcon className={`models-panel__chevron ${expanded ? 'is-open' : ''}`} />
-                      </div>
+                      </UiActionTray>
                     </div>
 
                     {expanded ? (
@@ -765,13 +770,14 @@ export function ModelsPanel() {
                                 value={endpoint.api_key}
                                 onChange={(event) => updateChatEndpoint(endpoint.clientKey, { api_key: event.target.value })}
                               />
-                              <button
+                              <UiButton
                                 type="button"
-                                className="models-panel__visibility-btn"
+                                variant="secondary"
+                                className="models-panel__action-btn models-panel__action-btn--small"
                                 onClick={() => setShowSecrets((current) => ({ ...current, [endpoint.clientKey]: !current[endpoint.clientKey] }))}
                               >
                                 {secretVisible ? '隐藏' : '显示'}
-                              </button>
+                              </UiButton>
                             </span>
                           </label>
 
@@ -812,20 +818,21 @@ export function ModelsPanel() {
 
                         {renderTestResult('chat', 'api', endpoint.clientKey)}
 
-                        <div className="models-panel__toolbar">
-                          <button type="button" className="models-panel__danger-btn" onClick={() => deleteChatEndpoint(endpoint.clientKey)}>
+                        <UiActionTray className="models-panel__toolbar">
+                          <UiButton type="button" variant="danger" className="models-panel__action-btn models-panel__action-btn--danger" onClick={() => deleteChatEndpoint(endpoint.clientKey)}>
                             移除端点
-                          </button>
+                          </UiButton>
                           <div className="models-panel__spacer" />
-                          <button
+                          <UiButton
                             type="button"
-                            className="models-panel__soft-btn"
+                            variant="secondary"
+                            className="models-panel__action-btn"
                             onClick={() => void testEndpoint('chat', 'api', endpoint.clientKey)}
                             disabled={!!testingKeys[testKey]}
                           >
                             {testingKeys[testKey] ? '连接中...' : '网络测试'}
-                          </button>
-                        </div>
+                          </UiButton>
+                        </UiActionTray>
                       </div>
                     ) : null}
                   </article>
@@ -851,19 +858,20 @@ export function ModelsPanel() {
                         <div className="models-panel__role-title">{role.label}</div>
                         <div className="models-panel__role-desc">{role.desc}</div>
                       </div>
-                      <div className="models-panel__role-actions">
-                        <button type="button" className="models-panel__ghost-btn" onClick={() => addRoleEndpoint(role.key)}>
+                      <UiActionTray className="models-panel__role-actions">
+                        <UiButton type="button" variant="secondary" className="models-panel__action-btn" onClick={() => addRoleEndpoint(role.key)}>
                           新增扩展
-                        </button>
-                        <button
+                        </UiButton>
+                        <UiButton
                           type="button"
-                          className="models-panel__accent-btn"
+                          variant="primary"
+                          className="models-panel__action-btn models-panel__action-btn--primary"
                           onClick={() => void saveRoleEndpoints(role.key)}
                           disabled={!!savingRoles[role.key]}
                         >
                           {savingRoles[role.key] ? '保存中...' : '保存'}
-                        </button>
-                      </div>
+                        </UiButton>
+                      </UiActionTray>
                     </div>
 
                     <div className="models-panel__stack">
@@ -895,7 +903,7 @@ export function ModelsPanel() {
                               <div className="models-panel__card-main">
                                 <div className="models-panel__card-title-row">
                                   <span className="models-panel__card-title">{endpointLabel(endpoint)}</span>
-                                  {endpoint._primary ? <span className="models-panel__pill">Primary</span> : null}
+                                  {endpoint._primary ? <UiStatusPill tone="neutral" className="models-panel__pill">Primary</UiStatusPill> : null}
                                 </div>
                                 <div className="models-panel__card-subtitle">
                                   <span>{endpoint.provider || 'custom'}</span>
@@ -946,13 +954,14 @@ export function ModelsPanel() {
                                         value={endpoint.api_key}
                                         onChange={(event) => updateRoleEndpoint(role.key, endpoint.clientKey, { api_key: event.target.value })}
                                       />
-                                      <button
+                                      <UiButton
                                         type="button"
-                                        className="models-panel__visibility-btn"
+                                        variant="secondary"
+                                        className="models-panel__action-btn models-panel__action-btn--small"
                                         onClick={() => setShowSecrets((current) => ({ ...current, [endpoint.clientKey]: !current[endpoint.clientKey] }))}
                                       >
                                         {secretVisible ? '隐藏' : '显示'}
-                                      </button>
+                                      </UiButton>
                                     </span>
                                   </label>
 
@@ -963,28 +972,30 @@ export function ModelsPanel() {
 
                                 {renderTestResult('role', role.key, endpoint.clientKey)}
 
-                                <div className="models-panel__toolbar">
+                                <UiActionTray className="models-panel__toolbar">
                                   {!endpoint._primary ? (
-                                    <button
+                                    <UiButton
                                       type="button"
-                                      className="models-panel__danger-btn"
+                                      variant="danger"
+                                      className="models-panel__action-btn models-panel__action-btn--danger"
                                       onClick={() => deleteRoleEndpoint(role.key, endpoint.clientKey)}
                                     >
                                       删除扩展
-                                    </button>
+                                    </UiButton>
                                   ) : (
                                     <div className="models-panel__hint">Primary 端点会写入 config.json 的顶层角色配置。</div>
                                   )}
                                   <div className="models-panel__spacer" />
-                                  <button
+                                  <UiButton
                                     type="button"
-                                    className="models-panel__soft-btn"
+                                    variant="secondary"
+                                    className="models-panel__action-btn"
                                     onClick={() => void testEndpoint('role', role.key, endpoint.clientKey)}
                                     disabled={!!testingKeys[testKey]}
                                   >
                                     {testingKeys[testKey] ? '连接中...' : '网络测试'}
-                                  </button>
-                                </div>
+                                  </UiButton>
+                                </UiActionTray>
                               </div>
                             ) : null}
                           </div>

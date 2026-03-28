@@ -9,6 +9,11 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from core.im_selfcheck_subscriptions import (
+    list_selfcheck_subscriptions,
+    remove_selfcheck_subscription,
+    upsert_selfcheck_subscription,
+)
 from core.im_bots import (
     COMING_SOON_IM_PLATFORMS,
     PLATFORM_LABELS,
@@ -301,6 +306,16 @@ class IMGroupPolicyRequest(BaseModel):
     response_mode: Optional[str] = None
 
 
+class IMSelfcheckSubscriptionRequest(BaseModel):
+    session_id: Optional[str] = None
+    channel_name: Optional[str] = None
+    platform: Optional[str] = None
+    bot_id: Optional[str] = None
+    chat_id: Optional[str] = None
+    label: Optional[str] = None
+    chat_name: Optional[str] = None
+
+
 @router.get("/api/im/bots")
 async def list_im_bots():
     full, _ = _load_config_json()
@@ -478,12 +493,79 @@ async def list_im_sessions(
     channel_name: Optional[str] = None,
 ):
     """Return IM sessions, optionally filtered by platform, bot instance or channel name."""
+    sessions = _collect_session_entries(
+        platform=platform,
+        bot_id=bot_id,
+        channel_name=channel_name,
+    )
+    subscribed_ids = {
+        item["session_id"]
+        for item in list_selfcheck_subscriptions(session_entries=sessions)
+    }
     return {
-        "sessions": _collect_session_entries(
-            platform=platform,
-            bot_id=bot_id,
-            channel_name=channel_name,
+        "sessions": [
+            {
+                **item,
+                "selfcheck_subscribed": item["session_id"] in subscribed_ids,
+            }
+            for item in sessions
+        ]
+    }
+
+
+@router.get("/api/im/selfcheck-subscriptions")
+async def list_im_selfcheck_subscriptions():
+    sessions = _collect_session_entries()
+    return {"subscriptions": list_selfcheck_subscriptions(session_entries=sessions)}
+
+
+@router.post("/api/im/selfcheck-subscriptions")
+async def create_im_selfcheck_subscription(body: IMSelfcheckSubscriptionRequest):
+    sessions = _collect_session_entries()
+    resolved_channel_name = body.channel_name
+    if not resolved_channel_name and (body.platform and body.bot_id):
+        resolved_channel_name = _resolve_channel_name(platform=body.platform, bot_id=body.bot_id)
+    try:
+        subscriptions = upsert_selfcheck_subscription(
+            session_id=body.session_id,
+            channel_name=resolved_channel_name,
+            chat_id=body.chat_id,
+            label=body.label,
+            chat_name=body.chat_name,
+            bot_id=body.bot_id,
+            platform=body.platform,
+            session_entries=sessions,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "subscriptions": subscriptions}
+
+
+@router.delete("/api/im/selfcheck-subscriptions")
+async def delete_im_selfcheck_subscription(
+    session_id: Optional[str] = None,
+    channel_name: Optional[str] = None,
+    platform: Optional[str] = None,
+    bot_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
+):
+    sessions = _collect_session_entries()
+    resolved_channel_name = channel_name
+    if not resolved_channel_name and (platform and bot_id):
+        resolved_channel_name = _resolve_channel_name(platform=platform, bot_id=bot_id)
+    try:
+        deleted = remove_selfcheck_subscription(
+            session_id=session_id,
+            channel_name=resolved_channel_name,
+            chat_id=chat_id,
+            session_entries=sessions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "deleted": deleted,
+        "subscriptions": list_selfcheck_subscriptions(session_entries=sessions),
     }
 
 

@@ -61,6 +61,8 @@
   "content": "用户偏好先给结论，再补充实现细节",
   "type": "rule",
   "usage_layer": "preference",
+  "workspace_id": "ws_demo",
+  "workspace_name": "Demo Workspace",
   "tags": ["reply", "style"],
   "source": "auto_extracted",
   "timestamp": 1774740000.0,
@@ -76,6 +78,8 @@ class MemoryItem:
     content: str
     type: str
     usage_layer: str
+    workspace_id: Optional[str]
+    workspace_name: Optional[str]
     tags: List[str]
     source: str
     timestamp: float
@@ -119,6 +123,20 @@ class MemoryItem:
 - 再补“用户相关背景”
 - 最后补“类似任务的经验和避坑”
 
+### 4. 工作区作用域
+
+当前版本还加入了 **工作区作用域记忆**：
+
+- 写入记忆时，如果当前聊天来自某个工作区，会自动补上：
+  - `workspace_id`
+  - `workspace_name`
+- 检索时遵循：
+  - 先召回当前工作区记忆
+  - 不足时再回填全局记忆
+  - 默认不把其它工作区的记忆混入当前结果
+
+这让记忆更像 OpenAkita 的“项目内经验”模型，而不是所有经验全都混在一个池子里。
+
 ---
 
 ## 核心接口
@@ -130,13 +148,15 @@ memory.add(
     content="用户喜欢中文界面",
     type="preference",
     usage_layer="preference",
+    workspace_id="ws_demo",
+    workspace_name="Demo Workspace",
     tags=["ui", "lang"],
     source="manual",
 )
 
-memory.search("中文界面", top_k=5, usage_layer="preference")
-memory.list_by_usage_layer("experience")
-memory.build_prompt_sections("如何优化首页输入框")
+memory.search("中文界面", top_k=5, usage_layer="preference", workspace_id="ws_demo")
+memory.list_by_usage_layer("experience", workspace_id="ws_demo")
+memory.build_prompt_sections("如何优化首页输入框", workspace_id="ws_demo")
 ```
 
 ### REST API
@@ -155,12 +175,14 @@ POST   /api/memory/batch_delete
 
 - `type`
 - `usage_layer`
+- `workspace_id`
+- `workspace_name`
 - `q`
 
 示例：
 
 ```bash
-curl "http://localhost:8080/api/memory?usage_layer=preference"
+curl "http://localhost:8080/api/memory?usage_layer=preference&workspace_id=ws_demo"
 ```
 
 #### `POST /api/memory`
@@ -170,6 +192,8 @@ curl "http://localhost:8080/api/memory?usage_layer=preference"
   "content": "用户希望首页文案全部中文",
   "type": "rule",
   "usage_layer": "preference",
+  "workspace_id": "ws_demo",
+  "workspace_name": "Demo Workspace",
   "tags": ["frontend", "copy"]
 }
 ```

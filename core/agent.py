@@ -26,6 +26,11 @@ from core.knowledge_graph import KnowledgeGraph
 from core.user_profile import UserProfileManager
 from core.identity_manager import IdentityManager
 from core.daily_consolidator import DailyConsolidator
+from core.automation_context import (
+    get_automation_source_context,
+    reset_automation_source_context,
+    set_automation_source_context,
+)
 from core.state import _APP_BASE
 from core.skill_runtime import (
     ensure_skills_dir,
@@ -608,11 +613,257 @@ class Agent:
                 hits.append(name)
         return hits
 
+    def _normalize_query_text(self, user_query: Any) -> str:
+        if isinstance(user_query, list):
+            return " ".join(
+                item.get("text", "") for item in user_query
+                if isinstance(item, dict) and item.get("type") == "text"
+            ).strip()
+        return str(user_query or "").strip()
+
+    def _build_tool_routing_plan(
+        self,
+        user_query: Any,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        workspace_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        query_text = self._normalize_query_text(user_query)
+        visible_skills = self.skills.list_visible(allowed_skills=allowed_skills, skills_mode=skills_mode)
+        if not query_text or not visible_skills:
+            return {"preferred_skills": [], "note": ""}
+        resolved_workspace_context = self._resolve_workspace_context(workspace_context)
+
+        normalized_query = query_text.lower()
+        scores: dict[str, int] = {}
+        reasons: dict[str, list[str]] = {}
+
+        def _add_score(skill_name: str, score: int, reason: str) -> None:
+            scores[skill_name] = scores.get(skill_name, 0) + score
+            reasons.setdefault(skill_name, []).append(reason)
+
+        local_skill_hits = set(self._find_relevant_skills(query_text))
+        for skill in visible_skills:
+            skill_name = str(skill.name or "")
+            keys = {
+                skill_name.lower(),
+                str(skill.category or "").lower(),
+                str(skill.plugin_name or "").lower(),
+            }
+            keys = {key for key in keys if len(key) >= 3}
+            if skill_name in local_skill_hits:
+                _add_score(skill_name, 3, "命中本地技能目录")
+            for key in keys:
+                if key and key in normalized_query:
+                    _add_score(skill_name, 2, f"查询文本命中 {key}")
+
+        memory_layer_weights = {"preference": 3, "experience": 4}
+        for usage_layer, layer_weight in memory_layer_weights.items():
+            for memory in self.memory.search(
+                query_text,
+                top_k=4,
+                usage_layer=usage_layer,
+                workspace_id=(resolved_workspace_context or {}).get("workspace_id"),
+                workspace_name=(resolved_workspace_context or {}).get("workspace_name"),
+            ):
+                memory_text = f"{memory.content} {' '.join(memory.tags or [])}".lower()
+                for skill in visible_skills:
+                    skill_name = str(skill.name or "")
+                    candidate_tokens = {
+                        skill_name.lower(),
+                        str(skill.category or "").lower(),
+                        str(skill.plugin_name or "").lower(),
+                    }
+                    candidate_tokens = {token for token in candidate_tokens if len(token) >= 3}
+                    if any(token in memory_text for token in candidate_tokens):
+                        _add_score(skill_name, layer_weight, f"{usage_layer} 记忆推荐")
+
+        preferred_skills = [
+            skill_name
+            for skill_name, _score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+            if _score > 0
+        ]
+        if not preferred_skills:
+            return {"preferred_skills": [], "note": ""}
+
+        summary_lines = []
+        for skill_name in preferred_skills[:3]:
+            skill_reasons = "、".join(dict.fromkeys(reasons.get(skill_name, []))[:2])
+            summary_lines.append(f"- `{skill_name}`：{skill_reasons}")
+
+        return {
+            "preferred_skills": preferred_skills,
+            "note": "# 工具路由提示\n以下工具更适合作为本轮首选：\n" + "\n".join(summary_lines),
+        }
+
+    def _get_tool_definitions(
+        self,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        preferred_skills: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            return self.skills.get_tool_definitions(
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+                preferred_skills=preferred_skills,
+            )
+        except TypeError:
+            return self.skills.get_tool_definitions(
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+            )
+
     def _load_persona(self, path: str) -> str:
         p = Path(path)
         if p.exists():
             return p.read_text(encoding="utf-8")
         return "你是一个有帮助的 AI 助理。"
+
+    def _resolve_workspace_context(
+        self,
+        workspace_context: dict[str, Any] | None = None,
+        session=None,
+    ) -> dict[str, Any] | None:
+        if workspace_context:
+            return workspace_context
+
+        source_context = get_automation_source_context()
+        if source_context:
+            resolved = {
+                "workspace_id": getattr(source_context, "workspace_id", None),
+                "workspace_name": getattr(source_context, "workspace_name", None),
+                "workspace_path": getattr(source_context, "workspace_path", None),
+            }
+            if any(resolved.values()):
+                return resolved
+
+        current_session = session or getattr(getattr(self, "sessions", None), "current", None)
+        session_metadata = getattr(current_session, "metadata", None)
+        if isinstance(session_metadata, dict):
+            workspace_id = session_metadata.get("workspace_id")
+            workspace_name = session_metadata.get("workspace_name")
+            workspace_path = session_metadata.get("workspace_path")
+            if workspace_id or workspace_name or workspace_path:
+                return {
+                    "workspace_id": workspace_id,
+                    "workspace_name": workspace_name,
+                    "workspace_path": workspace_path,
+                }
+        return None
+
+    def _build_recent_visual_context(self, session, limit: int = 3) -> str:
+        try:
+            visual_logs = [m["content"] for m in session.messages if m.get("role") == "visual_log" and m.get("content")]
+        except Exception:
+            return ""
+        if not visual_logs:
+            return ""
+        recent_logs = visual_logs[-limit:]
+        return (
+            "# 最近视觉感知背景 (Recent Visual Awareness)\n"
+            + "\n".join(recent_logs)
+            + "\n(注：以上是你通过'眼睛'观察到的用户实时状态，请根据这些信息进行更自然的回复。)"
+        )
+
+    def _build_recent_tool_context(self, session, limit: int = 6, preview_chars: int = 180) -> str:
+        pending_calls: dict[str, dict[str, Any]] = {}
+        tool_events: list[str] = []
+
+        for message in getattr(session, "messages", []):
+            role = message.get("role")
+            if role == "assistant" and message.get("tool_calls"):
+                for tool_call in message.get("tool_calls") or []:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_id = str(tool_call.get("id") or "")
+                    function = tool_call.get("function") or {}
+                    raw_args = function.get("arguments") or "{}"
+                    try:
+                        parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    except Exception:
+                        parsed_args = raw_args
+                    pending_calls[tool_id] = {
+                        "name": function.get("name") or "unknown",
+                        "args": parsed_args,
+                    }
+            elif role == "tool":
+                tool_call_id = str(message.get("tool_call_id") or "")
+                pending = pending_calls.pop(tool_call_id, None)
+                if not pending:
+                    continue
+                result_text = str(message.get("content") or "").strip()
+                if not result_text:
+                    continue
+                compact_result = result_text[:preview_chars].rstrip()
+                if len(result_text) > preview_chars:
+                    compact_result += "..."
+                status = "失败" if result_text.startswith("❌") or "Traceback (most recent call last):" in result_text else "成功"
+                args_text = pending["args"]
+                if not isinstance(args_text, str):
+                    try:
+                        args_text = json.dumps(args_text, ensure_ascii=False)
+                    except Exception:
+                        args_text = str(args_text)
+                if len(args_text) > 96:
+                    args_text = args_text[:96].rstrip() + "..."
+                tool_events.append(
+                    f"- `{pending['name']}`（{status}）｜参数: {args_text or '{}'}｜结果: {compact_result}"
+                )
+
+        if not tool_events:
+            return ""
+        return "# 最近工具调用脉络\n" + "\n".join(tool_events[-limit:])
+
+    def _assemble_runtime_context(
+        self,
+        user_query: Any,
+        *,
+        session,
+        system_prompt_override: str = None,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        workspace_context: dict[str, Any] | None = None,
+        history_limit: int = 40,
+    ) -> dict[str, Any]:
+        resolved_workspace_context = self._resolve_workspace_context(workspace_context, session=session)
+        query_text = self._normalize_query_text(user_query)
+
+        memory_sections: dict[str, str] = {}
+        if query_text:
+            try:
+                memory_sections = self.memory.build_prompt_sections(
+                    query_text,
+                    top_k_by_layer={"preference": 2, "context": 3, "experience": 2},
+                    workspace_id=(resolved_workspace_context or {}).get("workspace_id"),
+                    workspace_name=(resolved_workspace_context or {}).get("workspace_name"),
+                )
+            except Exception:
+                memory_sections = {}
+
+        tool_routing_plan = self._build_tool_routing_plan(
+            user_query,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            workspace_context=resolved_workspace_context,
+        )
+
+        history_messages = session.get_history(max_messages=history_limit, include_summary=False)
+        runtime_context = {
+            "query_text": query_text,
+            "session": session,
+            "session_summary": getattr(session, "summary", "") or "",
+            "history_messages": history_messages,
+            "resolved_workspace_context": resolved_workspace_context,
+            "memory_sections": memory_sections,
+            "recent_visual_context": self._build_recent_visual_context(session),
+            "recent_tool_context": self._build_recent_tool_context(session),
+            "tool_routing_plan": tool_routing_plan,
+            "system_prompt_override": system_prompt_override,
+            "allowed_skills": allowed_skills,
+            "skills_mode": skills_mode,
+        }
+        return runtime_context
     
     def _load_habits(self) -> None:
         # 优先从 IdentityManager 读取（新架构）
@@ -1008,6 +1259,7 @@ class Agent:
         allowed_skills: list[str] = None,
         skills_mode: str = "inclusive",
         workspace_context: dict | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> str:
         """Build the full system prompt: Persona + User Profile + Dynamic Memory + Skill Summary."""
         import time
@@ -1016,20 +1268,11 @@ class Agent:
         time_awareness = f"# 当前系统时间\n现在是 {current_time_str}，星期{weekday_str}。请在理解用户的“今天”、“昨天”等相对时间概念时，以此时间为基准。"
 
         parts = [time_awareness]
-        resolved_workspace_context = workspace_context
-        if resolved_workspace_context is None:
-            current_session = getattr(getattr(self, "sessions", None), "current", None)
-            session_metadata = getattr(current_session, "metadata", None)
-            if isinstance(session_metadata, dict):
-                workspace_id = session_metadata.get("workspace_id")
-                workspace_name = session_metadata.get("workspace_name")
-                workspace_path = session_metadata.get("workspace_path")
-                if workspace_id or workspace_name or workspace_path:
-                    resolved_workspace_context = {
-                        "workspace_id": workspace_id,
-                        "workspace_name": workspace_name,
-                        "workspace_path": workspace_path,
-                    }
+        resolved_workspace_context = (
+            (runtime_context or {}).get("resolved_workspace_context")
+            if runtime_context is not None
+            else self._resolve_workspace_context(workspace_context)
+        )
 
         if resolved_workspace_context:
             workspace_name = resolved_workspace_context.get("workspace_name") or "当前工作区"
@@ -1066,37 +1309,35 @@ class Agent:
             if self.interaction_habits.strip():
                 parts.append(f"# 全局交往习惯与规则 (Interaction Habits)\n{self.interaction_habits}")
 
-        # Dynamic Memory Injection by usage layer
-        if user_query:
+        session_summary = ((runtime_context or {}).get("session_summary") or "").strip()
+        if session_summary:
+            parts.append(f"# 当前会话前情提要\n{session_summary}")
+
+        memory_sections = (runtime_context or {}).get("memory_sections") or {}
+        if not memory_sections and user_query:
             try:
-                search_query_text = user_query
-                if isinstance(user_query, list):
-                    search_query_text = " ".join(
-                        [item.get("text", "") for item in user_query if item.get("type") == "text"]
+                search_query_text = self._normalize_query_text(user_query)
+                if search_query_text:
+                    memory_sections = self.memory.build_prompt_sections(
+                        search_query_text,
+                        top_k_by_layer={"preference": 2, "context": 3, "experience": 2},
+                        workspace_id=(resolved_workspace_context or {}).get("workspace_id"),
+                        workspace_name=(resolved_workspace_context or {}).get("workspace_name"),
                     )
-
-                memory_sections = self.memory.build_prompt_sections(
-                    search_query_text,
-                    top_k_by_layer={"preference": 2, "context": 3, "experience": 2},
-                )
-                for usage_layer in ("preference", "context", "experience"):
-                    section = memory_sections.get(usage_layer)
-                    if section:
-                        parts.append(section)
             except Exception:
-                pass
+                memory_sections = {}
+        for usage_layer in ("preference", "context", "experience"):
+            section = memory_sections.get(usage_layer)
+            if section:
+                parts.append(section)
 
-        # Omni-Context: Inject recent visual logs for real-time situational awareness
-        try:
-            # Extract visual logs directly from the active session instead of the daily journal
-            v_logs = [m["content"] for m in self.sessions.current.messages if m["role"] == "visual_log"]
-            if v_logs:
-                recent_v = v_logs[-3:]
-                v_ctx = "# 最近视觉感知背景 (Recent Visual Awareness)\n" + "\n".join(recent_v)
-                v_ctx += "\n(注：以上是你通过'眼睛'观察到的用户实时状态，请根据这些信息进行更自然的回复。)"
-                parts.append(v_ctx)
-        except Exception:
-            pass
+        recent_tool_context = (runtime_context or {}).get("recent_tool_context") or ""
+        if recent_tool_context:
+            parts.append(recent_tool_context)
+
+        visual_context = (runtime_context or {}).get("recent_visual_context") or ""
+        if visual_context:
+            parts.append(visual_context)
 
         # Inject active plan status (if any) — ensures agent never forgets its roadmap
         try:
@@ -1118,6 +1359,18 @@ class Agent:
         if "[✨优先核心技能]" in skill_summary:
             skill_prompt = f"> 💡 **重要说明**：当前你拥有以上全部工具的访问权限，但在你的智能体设定中，带有 `[✨优先核心技能]` 标记的工具是你最擅长、也最应该被首选的核心能力，请在解决问题时优先向它们倾斜。\n\n" + skill_prompt
         parts.append(skill_prompt)
+
+        tool_routing_plan = (
+            (runtime_context or {}).get("tool_routing_plan")
+            or self._build_tool_routing_plan(
+                user_query,
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+                workspace_context=resolved_workspace_context,
+            )
+        )
+        if tool_routing_plan.get("note"):
+            parts.append(tool_routing_plan["note"])
 
         # Inject local SKILL.md catalog so the model can self-navigate to detailed docs
         if self._local_skills_catalog:
@@ -1149,377 +1402,90 @@ class Agent:
         parts.append(_build_builtin_suffix())
         return "\n\n---\n\n".join(parts)
 
-    def chat(self, user_input: str, system_prompt_override: str = None, allowed_skills: list[str] = None, skills_mode: str = "inclusive") -> str:
+    async def _collect_chat_stream_response(
+        self,
+        user_input: str,
+        system_prompt_override: str = None,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        session_override=None,
+        workspace_context: dict[str, Any] | None = None,
+    ) -> str:
+        import json
+
+        chunks: list[str] = []
+        waiting_for_user = False
+        async for raw_event in self.chat_stream(
+            user_input,
+            system_prompt_override=system_prompt_override,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            session_override=session_override,
+            workspace_context=workspace_context,
+        ):
+            event = json.loads(raw_event) if isinstance(raw_event, str) else raw_event
+            event_type = event.get("type")
+            if event_type in {"text_delta", "message_chunk"}:
+                chunks.append(str(event.get("content", "")))
+            elif event_type == "message":
+                chunks.append(str(event.get("content", "")))
+            elif event_type == "ask_user_interrupt":
+                waiting_for_user = True
+            elif event_type == "error":
+                raise RuntimeError(str(event.get("content", "Unknown stream error")))
+
+        response = "".join(chunks).strip()
+        if waiting_for_user and not response:
+            return "（正在等待您做出选择...）"
+        return response or "（已完成工具操作，无额外回复。）"
+
+    def _run_chat_stream_sync(self, coroutine) -> str:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        result_box: dict[str, str] = {}
+        error_box: dict[str, Exception] = {}
+
+        def _runner() -> None:
+            try:
+                result_box["value"] = asyncio.run(coroutine)
+            except Exception as error:
+                error_box["error"] = error
+
+        thread = threading.Thread(target=_runner, name="ChatStreamSyncBridge", daemon=True)
+        thread.start()
+        thread.join()
+        if "error" in error_box:
+            raise error_box["error"]
+        return result_box.get("value", "（已完成工具操作，无额外回复。）")
+
+    def chat(
+        self,
+        user_input: str,
+        system_prompt_override: str = None,
+        allowed_skills: list[str] = None,
+        skills_mode: str = "inclusive",
+        session_override=None,
+        workspace_context: dict[str, Any] | None = None,
+    ) -> str:
         """
         Process a single user turn.
-        Supports multi-step tool calling.
+        Sync chat now reuses the streaming runtime to keep execution consistent.
         """
-        session = self.sessions.current
-        self.ensure_session_skills_current(session)
-        system_prompt = self._build_system_prompt(
-            user_input, 
-            system_prompt_override=system_prompt_override,
-            allowed_skills=allowed_skills, 
-            skills_mode=skills_mode
-        )
-
-        # Notify context manager that user replied (resets cooldown)
-        if self.context is not None:
-            self.context.notify_user_replied()
-
-        # Build full message list for LLM
-        messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": system_prompt}
-        ]
-        messages.extend(session.get_history())
-        messages.append({"role": "user", "content": user_input})
-
-        tools = self.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
-        
-        max_tool_rounds = 15
-        # 如果有活跃的计划，放宽工具调用轮次上限，让自驾模式能一口气跑完
-        try:
-            import plugins.plan_handler as _ph
-            if _ph._manager.active_plan:
-                max_tool_rounds = 40
-        except Exception:
-            pass
-            
-        final_response = None
-        consecutive_errors = 0
-        
-        # --- Isolated Vision Proxy Analysis ---
-        # If the input contains an image and we have a dedicated image analyzer (different from main client),
-        # we decouple the process: First, the image analyzer interprets the image to text.
-        # Then, we replace the image payload with this text description, so the main model
-        # can process it normally with its full suite of tools.
-        current_model = self.model
-        if isinstance(user_input, list):
-            has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
-            
-            if has_image:
-                if self.image_analyzer_client is not self.client:
-                    # Vision Proxy Mode: Use the dedicated analyzer to "read" the image
-                    print(f"  👁️ [Vision Proxy] 正在请求专属视觉模型 {self.image_analyzer_model} 分析图像...")
-                    try:
-                        # Construct a temporary payload for the vision model
-                        proxy_messages = [{"role": "user", "content": user_input}]
-                        
-                        proxy_resp = self.image_analyzer_client.chat.completions.create(
-                            model=self.image_analyzer_model,
-                            messages=proxy_messages,
-                            max_tokens=2000,
-                            temperature=0.3
-                        )
-                        
-                        image_description = proxy_resp.choices[0].message.content or "未能识别图片内容。"
-                        print(f"  👁️ [Vision Proxy] 图像解析完成，长度: {len(image_description)} 字符。正在交由主中枢处理...")
-                        
-                        # Extract the original text prompt from the user
-                        original_prompt = "阅读这张图片"
-                        for item in user_input:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                original_prompt = item.get("text", original_prompt)
-                                
-                        # Replace the list payload with a text equivalent for the main model
-                        new_user_input = f"【视觉感知代理的图像分析报告】\n{image_description}\n\n【用户的原始请求】\n{original_prompt}"
-                        
-                        # Update the messages array to remove the base64 payload and replace with text
-                        messages[-1] = {"role": "user", "content": new_user_input}
-                        
-                    except Exception as e:
-                        print(f"  ❌ [Vision Proxy] 图像解析失败: {e}")
-                        # Fallback to passing the array directly to the main model if the proxy fails
-                        pass
-                        
-                else:
-                    # Unified Model Mode: The main model is omni-modal, handle it directly
-                    print(f"  👁️ [Omni-Modal] 主模型将直接吞入多模态数据并保持 Tool 权限...")
-
-        # --- Ask User Intercept ---
-        # Find if the last assistant message has an un-responded ask_user tool call
-        history = session.get_history()
-        pending_ask_user_id = None
-        
-        # Scan backward to find the last assistant message
-        last_assistant_idx = -1
-        for i in range(len(history) - 1, -1, -1):
-            if history[i].get("role") == "assistant":
-                last_assistant_idx = i
-                break
-                
-        if last_assistant_idx != -1:
-            last_msg = history[last_assistant_idx]
-            tcs = last_msg.get("tool_calls", [])
-            # Collect all answered tool_call_ids after this assistant message
-            answered_ids = set()
-            for msg in history[last_assistant_idx + 1:]:
-                if msg.get("role") == "tool" and "tool_call_id" in msg:
-                    answered_ids.add(msg["tool_call_id"])
-                    
-            unanswered_tcs = [tc for tc in tcs if tc.get("id") not in answered_ids]
-            
-            for tc in unanswered_tcs:
-                if tc.get("function", {}).get("name") == "ask_user":
-                    pending_ask_user_id = tc.get("id")
-                    break
-                    
-        if pending_ask_user_id and unanswered_tcs:
-            # Treat user input as the answer to ask_user, and cancel others
-            messages.extend(history)
-            for tc in unanswered_tcs:
-                tc_id = tc.get("id")
-                tc_name = tc.get("function", {}).get("name", "unknown")
-                if tc_id == pending_ask_user_id:
-                    content = f"User selected/replied: {user_input}"
-                else:
-                    content = "Cancelled due to ask_user interrupt."
-                    
-                tool_msg = {
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "name": tc_name,
-                    "content": content,
-                }
-                messages.append(tool_msg)
-                session.add_message(**tool_msg)
-            self.sessions.save()
-        else:
-            # Normal chat flow
-            messages.extend(history)
-            messages.append({"role": "user", "content": user_input})
-            # Persist user message — strip embedded file contents to keep session compact.
-            if isinstance(user_input, list):
-                text_parts = [item.get("text", "") for item in user_input if isinstance(item, dict) and item.get("type") == "text"]
-                has_image = any(isinstance(item, dict) and item.get("type") == "image_url" for item in user_input)
-                user_text = "".join(text_parts).strip()
-                summary = (f"[图片] {user_text}" if user_text else "[图片]") if has_image else (user_text or "（非文本内容）")
-                session.add_message("user", summary)
-            elif isinstance(user_input, str):
-                import re as _re
-                cleaned = _re.sub(r'【文件内容：[^】]+】\n```[^\n]*\n.*?```\n*', '', user_input, flags=_re.DOTALL)
-                cleaned = _re.sub(r'【附件：[^】]+】\n*', '', cleaned).strip()
-                session.add_message("user", cleaned or user_input)
-            else:
-                session.add_message("user", user_input)
-            self.sessions.save()
-
-        # --- Checkpoint/Rollback state ---
-        import copy
-        _checkpoints: list = []          # list of (messages_snapshot, tool_names, round_idx)
-        _tool_fail_counter: dict = {}    # tool_name -> consecutive failure count
-        _rollback_count = 0
-        _MAX_CHECKPOINTS = 5
-        _MAX_ROLLBACKS = 2
-        _CONSEC_FAIL_THRESHOLD = 3
-
-        def _save_checkpoint(msgs: list, tool_names: list, ridx: int) -> None:
-            _checkpoints.append((copy.deepcopy(msgs), list(tool_names), ridx))
-            if len(_checkpoints) > _MAX_CHECKPOINTS:
-                _checkpoints.pop(0)
-
-        def _try_rollback(reason: str) -> list | None:
-            """回滚到上一个检查点，附加失败经验提示。返回恢复的 messages 或 None。"""
-            nonlocal _rollback_count
-            if not _checkpoints or _rollback_count >= _MAX_ROLLBACKS:
-                return None
-            snap, tool_names, _ = _checkpoints.pop()
-            _rollback_count += 1
-            _tool_fail_counter.clear()
-            restored = copy.deepcopy(snap)
-            restored.append({
-                "role": "user",
-                "content": (
-                    f"[系统提示] 上一次方案失败了（原因: {reason}）。"
-                    f"失败的工具: {tool_names}。"
-                    "请尝试完全不同的方法来完成任务，避免重复使用相同的工具参数组合。"
-                ),
-            })
-            print(f"  [Rollback] 回滚到检查点，原因: {reason}，已回滚 {_rollback_count}/{_MAX_ROLLBACKS} 次")
-            return restored
-
-        for _ in range(max_tool_rounds):
-            response = self.client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-                tools=tools if tools else None,
-                tool_choice="auto" if tools else None,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                **({"extra_body": {"enable_search": True}} if self._qwen_search_enabled else {}),
+        return self._run_chat_stream_sync(
+            self._collect_chat_stream_response(
+                user_input,
+                system_prompt_override=system_prompt_override,
+                allowed_skills=allowed_skills,
+                skills_mode=skills_mode,
+                session_override=session_override,
+                workspace_context=workspace_context,
             )
-            self._record_usage(getattr(response, "usage", None), current_model)
-
-            msg = response.choices[0].message
-
-            if msg.tool_calls:
-                # --- Fix: sanitize tool_call arguments before appending ---
-                # Some models may return non-JSON arguments; patch them to "{}"
-                # so the API doesn't reject the subsequent request with 400.
-                assistant_dict = msg.model_dump(exclude_unset=True)
-                for tc_dict in assistant_dict.get("tool_calls") or []:
-                    raw_args = tc_dict.get("function", {}).get("arguments", "{}")
-                    try:
-                        json.loads(raw_args)
-                    except (json.JSONDecodeError, TypeError):
-                        tc_dict["function"]["arguments"] = "{}"
-
-                # Save checkpoint BEFORE appending assistant message (clean snapshot)
-                tool_names_this_round = [
-                    tc.get("function", {}).get("name", "unknown")
-                    for tc in (assistant_dict.get("tool_calls") or [])
-                ]
-                _save_checkpoint(messages, tool_names_this_round, _)
-
-                messages.append(assistant_dict)
-                # Persist intermediate assistant message (with tool_calls) to session
-                session.add_message(
-                    role="assistant",
-                    content=msg.content or "",
-                    tool_calls=assistant_dict.get("tool_calls"),
-                    thinking=getattr(msg, "reasoning_content", "") or ""
-                )
-                self.sessions.save()
-
-                # Execute each tool call
-                round_had_error = False
-                batch_results: list[bool] = []  # True=success, False=error per tool
-                for tc in msg.tool_calls:
-                    name = tc.function.name
-                    try:
-                        params = json.loads(tc.function.arguments)
-                        if not isinstance(params, dict):
-                            params = {}
-                    except Exception:
-                        params = {}
-
-                    print(f"  [Tool] {name}({params})")
-
-                    import asyncio
-                    try:
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                # Already inside an event loop (e.g. some test runners) — use a new thread
-                                import concurrent.futures
-                                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                                    result = pool.submit(asyncio.run, self.skills.execute(name, params)).result()
-                            else:
-                                result = loop.run_until_complete(self.skills.execute(name, params))
-                        except RuntimeError:
-                            result = asyncio.run(self.skills.execute(name, params))
-                    except Exception as e:
-                        result = f"❌ 执行出错: {e}"
-
-                    # Ensure result is a plain string and not excessively long
-                    if not isinstance(result, str):
-                        result = str(result)
-
-                    # Guard: truncate oversized tool results to avoid context overflow
-                    _MAX_TOOL_RESULT = 12000
-                    if len(result) > _MAX_TOOL_RESULT:
-                        result = result[:_MAX_TOOL_RESULT] + f"\n\n[输出已截断，共 {len(result)} 字符，仅显示前 {_MAX_TOOL_RESULT} 字符]"
-                    
-                    # Check for ask_user interrupt AFTER ensuring result is a string
-                    is_ask_user_interrupt = (result == "__ASK_USER_INTERRUPT__")
-                    
-                    if is_ask_user_interrupt:
-                        # For ask_user, we still need to append a tool response to satisfy API requirements
-                        result = "Waiting for user response..."
-                        final_response = "（正在等待您做出选择...）"
-                    
-                    print(f"  [Result] {result[:120]}")
-
-                    is_error = result.strip().startswith("❌") or "Traceback (most recent call last):" in result
-                    if is_error:
-                        round_had_error = True
-                        batch_results.append(False)
-                        _tool_fail_counter[name] = _tool_fail_counter.get(name, 0) + 1
-                    else:
-                        batch_results.append(True)
-                        _tool_fail_counter[name] = 0
-
-                    tool_msg = {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": name,
-                        "content": result,
-                    }
-                    messages.append(tool_msg)
-                    # Persist tool result to session
-                    session.add_message(**tool_msg)
-                    self.sessions.save()
-                    
-                    # Break AFTER appending the tool response for ask_user
-                    if is_ask_user_interrupt:
-                        break # Break from tool calls loop
-                
-                if final_response == "（正在等待您做出选择...）":
-                    break # Break from max_tool_rounds loop if ask_user was called
-
-                # --- Checkpoint/Rollback check ---
-                all_failed = bool(batch_results) and all(not s for s in batch_results)
-                consec_fail_tool = next(
-                    (t for t, c in _tool_fail_counter.items() if c >= _CONSEC_FAIL_THRESHOLD), None
-                )
-                rollback_reason = None
-                if all_failed:
-                    rollback_reason = "本轮所有工具调用均失败"
-                elif consec_fail_tool:
-                    rollback_reason = f"工具 '{consec_fail_tool}' 连续失败 {_tool_fail_counter[consec_fail_tool]} 次"
-
-                if rollback_reason:
-                    restored = _try_rollback(rollback_reason)
-                    if restored is not None:
-                        messages = restored
-                        consecutive_errors = 0
-                        continue
-                    else:
-                        # 回滚次数耗尽，硬中止
-                        print(f"  [System] ⚠️ 回滚次数耗尽，强行中止。原因: {rollback_reason}")
-                        final_response = f"⚠️ **执行中止**：{rollback_reason}，且已达到最大回滚次数。建议检查工具配置后重试。"
-                        break
-
-                if round_had_error:
-                    consecutive_errors += 1
-                else:
-                    consecutive_errors = 0
-
-                # Continue loop so LLM sees tool results
-                continue
-
-            # No tool calls — final text response
-            final_response = msg.content or ""
-            break
-
-        if final_response is None:
-            final_response = "（已完成工具操作，无额外回复。）"
-
-        # ask_user interrupt: don't persist the placeholder or extract memory
-        _is_ask_user_wait = (final_response == "（正在等待您做出选择...）")
-
-        if not _is_ask_user_wait:
-            # Only persist and extract for real final responses
-            session.add_message("assistant", final_response)
-
-        self.sessions.save()
-
-        if not _is_ask_user_wait:
-            # Async memory extraction (non-blocking)
-            _user_msg = user_input if isinstance(user_input, str) else str(user_input)
-            _asst_msg = final_response or ""
-            self._last_message_time = time.time()
-            threading.Thread(
-                target=self.memory_extractor.extract_from_turn,
-                args=(_user_msg, _asst_msg),
-                daemon=True,
-                name="MemExtractTurn"
-            ).start()
-
-        # Check triggers
-        self._check_all_triggers()
-
-        return final_response
+        )
 
     def _extract_stream_text(self, content: Any) -> str:
         if content is None:
@@ -1760,13 +1726,32 @@ class Agent:
         session = session_override or self.sessions.current
         persist_session = self.sessions.save if session_override is None else (lambda: None)
         self.ensure_session_skills_current(session)
+        runtime_context = self._assemble_runtime_context(
+            user_input,
+            session=session,
+            system_prompt_override=system_prompt_override,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            workspace_context=workspace_context,
+        )
+        resolved_workspace_context = runtime_context.get("resolved_workspace_context")
         system_prompt = self._build_system_prompt(
             user_input, 
             system_prompt_override=system_prompt_override,
             allowed_skills=allowed_skills, 
             skills_mode=skills_mode,
-            workspace_context=workspace_context,
+            workspace_context=resolved_workspace_context,
+            runtime_context=runtime_context,
         )
+        injected_source_token = None
+        if resolved_workspace_context and get_automation_source_context() is None:
+            injected_source_token = set_automation_source_context(
+                source_kind="desktop",
+                source_session_id=getattr(session, "session_id", None),
+                workspace_id=resolved_workspace_context.get("workspace_id"),
+                workspace_name=resolved_workspace_context.get("workspace_name"),
+                workspace_path=resolved_workspace_context.get("workspace_path"),
+            )
 
         if self.context is not None:
             self.context.notify_user_replied()
@@ -1777,7 +1762,7 @@ class Agent:
         # --- Ask User Intercept ---
         # Limit history to recent turns to control token usage.
         # Tool-call chains grow fast; 40 messages covers ~10 rounds of tool use.
-        history = session.get_history(max_messages=40)
+        history = runtime_context.get("history_messages") or []
         pending_ask_user_id = None
         
         # Scan backward to find the last assistant message
@@ -1855,7 +1840,12 @@ class Agent:
                 session.add_message("user", user_input)
             persist_session()
 
-        tools = self.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
+        tool_routing_plan = runtime_context.get("tool_routing_plan") or {}
+        tools = self._get_tool_definitions(
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            preferred_skills=tool_routing_plan.get("preferred_skills"),
+        )
         
         max_tool_rounds = 15
         try:
@@ -1932,6 +1922,8 @@ class Agent:
                         yield _yield_event({"type": "status", "content": "视觉分析完成，交由主模型处理..."})
                     except Exception as e:
                         yield _yield_event({"type": "error", "content": f"图像解析失败: {e}"})
+                        if injected_source_token is not None:
+                            reset_automation_source_context(injected_source_token)
                         return  # abort — don't send raw base64 to main model on proxy failure
                 else:
                     # Same model handles both vision and reasoning (e.g. Qwen-VL-Max):
@@ -2265,6 +2257,8 @@ class Agent:
                         persist_session()
                         # Update timestamp so idle extraction timer resets correctly
                         self._last_message_time = time.time()
+                        if injected_source_token is not None:
+                            reset_automation_source_context(injected_source_token)
                         return  # Exit stream immediately
 
                 # --- Checkpoint/Rollback check ---
@@ -2293,6 +2287,8 @@ class Agent:
                         for chunk in self._chunk_text_for_streaming(final_response):
                             yield _yield_event({"type": "text_delta", "content": chunk})
                         yield _yield_event({"type": "done"})
+                        if injected_source_token is not None:
+                            reset_automation_source_context(injected_source_token)
                         return
 
                 if round_had_error:
@@ -2334,6 +2330,8 @@ class Agent:
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._check_all_triggers)
+        if injected_source_token is not None:
+            reset_automation_source_context(injected_source_token)
 
     def _extract_conversation_and_mark(self, messages: list, session_id: str) -> None:
         """Run batch memory extraction and mark the session as processed regardless of outcome."""

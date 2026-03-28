@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+from core.automation_context import reset_automation_source_context, set_automation_source_context
 from core.memory import MemoryManager
 from core.memory_extractor import MemoryExtractor
 from core.routes.memory import router as memory_router
@@ -74,6 +75,38 @@ def test_memory_manager_search_and_prompt_sections_by_usage_layer(tmp_path: Path
     assert "# 相关任务经验与避坑" in sections["experience"]
 
 
+def test_memory_manager_prefers_workspace_scope_and_backfills_global(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    manager.add("全局缓存修复经验", type="experience")
+    manager.add("alpha 工作区缓存修复经验", type="experience", workspace_id="ws_alpha", workspace_name="Alpha")
+    manager.add("beta 工作区缓存修复经验", type="experience", workspace_id="ws_beta", workspace_name="Beta")
+
+    results = manager.search("缓存 修复", usage_layer="experience", workspace_id="ws_alpha", top_k=3)
+
+    assert [item.content for item in results] == [
+        "alpha 工作区缓存修复经验",
+        "全局缓存修复经验",
+    ]
+
+
+def test_memory_manager_uses_automation_workspace_scope_on_write(tmp_path: Path):
+    manager = MemoryManager(data_dir=str(tmp_path))
+    token = set_automation_source_context(
+        source_kind="desktop",
+        source_session_id="sess_mem_scope",
+        workspace_id="ws_scope",
+        workspace_name="Scoped Workspace",
+    )
+    try:
+        item = manager.add("当前项目偏好用 pnpm", type="rule")
+    finally:
+        reset_automation_source_context(token)
+
+    assert item.workspace_id == "ws_scope"
+    assert item.workspace_name == "Scoped Workspace"
+    assert manager.search("pnpm", usage_layer="preference", workspace_id="ws_scope")[0].id == item.id
+
+
 class _FakeCompletions:
     def __init__(self, content: str):
         self._content = content
@@ -119,13 +152,19 @@ async def test_memory_api_supports_usage_layer_filter_and_mapping(memory_client)
     client, memory = memory_client
     memory.add("windows environment", type="fact")
     memory.add("prefer concise reply", type="rule")
+    memory.add("workspace concise reply", type="rule", workspace_id="ws_filter", workspace_name="Filter WS")
 
     response = await client.get("/api/memory", params={"usage_layer": "preference"})
+    workspace_response = await client.get("/api/memory", params={"usage_layer": "preference", "workspace_id": "ws_filter"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["memories"]) == 1
-    assert payload["memories"][0]["usage_layer"] == "preference"
+    assert len(payload["memories"]) == 2
+    assert all(item["usage_layer"] == "preference" for item in payload["memories"])
+    assert workspace_response.status_code == 200
+    workspace_payload = workspace_response.json()
+    assert len(workspace_payload["memories"]) == 1
+    assert workspace_payload["memories"][0]["workspace_id"] == "ws_filter"
 
 
 @pytest.mark.asyncio
@@ -134,19 +173,27 @@ async def test_memory_api_create_and_update_derives_usage_layer(memory_client):
 
     create_response = await client.post(
         "/api/memory",
-        json={"content": "prefer chinese copy", "type": "rule", "tags": ["copy"]},
+        json={
+            "content": "prefer chinese copy",
+            "type": "rule",
+            "tags": ["copy"],
+            "workspace_id": "ws_api",
+            "workspace_name": "API Workspace",
+        },
     )
 
     assert create_response.status_code == 200
     created = create_response.json()["memory"]
     assert created["usage_layer"] == "preference"
+    assert created["workspace_id"] == "ws_api"
 
     update_response = await client.put(
         f"/api/memory/{created['id']}",
-        json={"type": "error"},
+        json={"type": "error", "workspace_name": "API Workspace Renamed"},
     )
 
     assert update_response.status_code == 200
     updated = next(item for item in memory.list_all() if item.id == created["id"])
     assert updated.type == "error"
     assert updated.usage_layer == "experience"
+    assert updated.workspace_name == "API Workspace Renamed"

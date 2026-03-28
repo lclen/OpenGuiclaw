@@ -6,7 +6,9 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+from core.agent import Agent
 from core.routes.chat import router as chat_router
+from core.session import Session
 from core.skills import SkillDefinition, SkillManager
 from core.state import app_state
 
@@ -119,3 +121,111 @@ def test_skill_manager_filters_tools_by_profile_scope(tmp_path):
 
     assert "run_python" in summary
     assert "exec_shell" not in summary
+
+
+def test_skill_manager_orders_preferred_skills_first(tmp_path):
+    manager = SkillManager(config_path=str(tmp_path / "skills.json"))
+    manager.register(
+        SkillDefinition(
+            name="beta_tool",
+            description="beta",
+            parameters={"properties": {}, "required": []},
+            handler=lambda: "ok",
+            category="beta",
+        )
+    )
+    manager.register(
+        SkillDefinition(
+            name="alpha_tool",
+            description="alpha",
+            parameters={"properties": {}, "required": []},
+            handler=lambda: "ok",
+            category="alpha",
+        )
+    )
+
+    tools = manager.get_tool_definitions(preferred_skills=["alpha_tool"])
+    names = [tool["function"]["name"] for tool in tools]
+
+    assert names[0] == "alpha_tool"
+
+
+def test_session_history_can_skip_rolling_summary():
+    session = Session("sess_summary")
+    session.summary = "已经完成初始化"
+    session.add_message("user", "继续处理")
+
+    with_summary = session.get_history(max_messages=10)
+    without_summary = session.get_history(max_messages=10, include_summary=False)
+
+    assert with_summary[0]["role"] == "user"
+    assert "前情提要请求" in with_summary[0]["content"]
+    assert without_summary == [{"role": "user", "content": "继续处理"}]
+
+
+def test_agent_runtime_context_assembles_summary_tools_and_memory():
+    agent = object.__new__(Agent)
+    agent.identity = None
+    agent.user_profile = SimpleNamespace(build_prompt=lambda: "")
+    agent.skills = SimpleNamespace(summary=lambda **kwargs: "- `write_file`: 写入文件")
+    agent.memory = SimpleNamespace(
+        build_prompt_sections=lambda *args, **kwargs: {
+            "preference": "# 用户偏好与行为约束\n- 默认使用中文",
+            "experience": "# 相关任务经验与避坑\n- 写文件后记得校验",
+        }
+    )
+    agent._local_skills_catalog = {}
+    agent._catalog_dirty = False
+    agent.interaction_habits = ""
+    agent._load_habits = lambda: None
+    agent._find_relevant_skills = lambda user_query: []
+    agent._build_tool_routing_plan = lambda *args, **kwargs: {
+        "preferred_skills": ["write_file"],
+        "note": "# 工具路由提示\n- `write_file`：经验层推荐",
+    }
+
+    session = Session("sess_runtime")
+    session.summary = "用户已经确认要在当前项目中写入摘要文件。"
+    session.add_message(
+        "assistant",
+        "",
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": "{\"path\":\"summary.txt\"}",
+                },
+            }
+        ],
+    )
+    session.add_message("tool", "写入完成，文件已保存。", tool_call_id="call_1", name="write_file")
+    session.add_message("visual_log", "用户当前打开了项目终端。")
+
+    runtime_context = agent._assemble_runtime_context(
+        "请继续整理 summary.txt",
+        session=session,
+        workspace_context={
+            "workspace_id": "ws_demo",
+            "workspace_name": "Demo",
+            "workspace_path": "D:/demo",
+        },
+    )
+
+    assert runtime_context["session_summary"] == "用户已经确认要在当前项目中写入摘要文件。"
+    assert runtime_context["history_messages"][0]["role"] == "assistant"
+    assert "write_file" in runtime_context["recent_tool_context"]
+    assert "用户当前打开了项目终端" in runtime_context["recent_visual_context"]
+    assert runtime_context["memory_sections"]["preference"].startswith("# 用户偏好与行为约束")
+
+    prompt = agent._build_system_prompt(
+        "请继续整理 summary.txt",
+        workspace_context=runtime_context["resolved_workspace_context"],
+        runtime_context=runtime_context,
+    )
+
+    assert "# 当前会话前情提要" in prompt
+    assert "# 最近工具调用脉络" in prompt
+    assert "# 用户偏好与行为约束" in prompt
+    assert "# 工具路由提示" in prompt

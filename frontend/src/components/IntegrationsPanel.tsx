@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { IMSelfcheckSubscription, IMSessionSummary } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
 import { PlatformLogo } from './icons/PlatformLogos';
 import { UiActionTray } from './ui/UiActionTray';
@@ -44,6 +45,11 @@ type WizardStep = 'platform' | 'basic' | 'credentials' | 'extra' | 'test' | 'don
 type LoadState = {
   loading: boolean;
   errorText: string;
+};
+
+type SelfcheckSubscriptionState = {
+  loading: boolean;
+  togglingSessionId: string | null;
 };
 
 const PLATFORM_OPTIONS: PlatformOption[] = [
@@ -165,6 +171,14 @@ function healthPillTone(result?: HealthStatus | null): 'neutral' | 'success' | '
   if (result.status === 'healthy') return 'success';
   if (result.status === 'unhealthy') return 'danger';
   return 'neutral';
+}
+
+function formatSessionLabel(session: IMSessionSummary) {
+  return session.alias || session.display_name || session.chat_name || session.chat_id || session.session_id;
+}
+
+function formatSubscriptionLabel(subscription: IMSelfcheckSubscription) {
+  return subscription.alias || subscription.display_name || subscription.chat_name || subscription.label || subscription.chat_id || subscription.session_id;
 }
 
 function boolCredential(value: string | boolean | undefined, fallback = false) {
@@ -641,10 +655,142 @@ function BotWizardModal({
   );
 }
 
+function SelfcheckSubscriptionsSection({
+  sessions,
+  subscriptions,
+  loading,
+  togglingSessionId,
+  onRefresh,
+  onToggle
+}: {
+  sessions: IMSessionSummary[];
+  subscriptions: IMSelfcheckSubscription[];
+  loading: boolean;
+  togglingSessionId: string | null;
+  onRefresh: () => Promise<void>;
+  onToggle: (session: IMSessionSummary, subscribed: boolean) => Promise<void>;
+}) {
+  const subscriptionMap = useMemo(() => {
+    return new Map(subscriptions.map((item) => [item.session_id, item]));
+  }, [subscriptions]);
+
+  const orphanSubscriptions = useMemo(() => {
+    const sessionIds = new Set(sessions.map((item) => item.session_id));
+    return subscriptions.filter((item) => !sessionIds.has(item.session_id));
+  }, [sessions, subscriptions]);
+
+  return (
+    <section className="integrations-section">
+      <div className="integrations-section__head">
+        <div>
+          <div className="integrations-section__eyebrow">Daily Selfcheck</div>
+          <h5 className="integrations-section__title">每日自检订阅</h5>
+          <p className="integrations-section__desc">仅显式订阅的 IM 会话会收到每日自检摘要。也可在 IM 中发送“订阅每日自检 / 取消订阅每日自检 / 查看自检订阅”管理。</p>
+        </div>
+        <UiActionTray className="integrations-panel__toolbar integrations-panel__toolbar-tray">
+          <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void onRefresh()} disabled={loading}>
+            刷新订阅
+          </UiButton>
+        </UiActionTray>
+      </div>
+
+      {sessions.length === 0 && orphanSubscriptions.length === 0 ? (
+        <div className="integrations-empty-state">
+          <div className="integrations-empty-state__icon">◎</div>
+          <div className="integrations-empty-state__title">还没有可订阅的 IM 会话</div>
+          <div className="integrations-empty-state__desc">先让目标群聊或私聊与 Bot 对话一次，建立会话后即可开启每日自检推送。</div>
+        </div>
+      ) : (
+        <div className="integrations-registry">
+          <div className="integrations-registry__group">
+            <div className="integrations-registry__group-head">
+              <div>
+                <h6>活跃会话</h6>
+                <p>按 Chat 显式订阅，默认仅发送摘要和建议。</p>
+              </div>
+            </div>
+            <div className="integrations-bot-grid">
+              {sessions.map((session) => {
+                const subscription = subscriptionMap.get(session.session_id);
+                const subscribed = Boolean(subscription?.enabled || session.selfcheck_subscribed);
+                return (
+                  <article key={session.session_id} className={`integrations-bot-card ${subscribed ? '' : 'is-disabled'}`}>
+                    <div className="integrations-bot-card__top">
+                      <div>
+                        <div className="integrations-bot-card__name">{formatSessionLabel(session)}</div>
+                        <div className="integrations-bot-card__meta">{session.channel_name} · {session.chat_id}</div>
+                      </div>
+                      <UiStatusPill tone={subscribed ? 'success' : 'neutral'} className="integrations-status-pill">
+                        {subscribed ? '已订阅' : '未订阅'}
+                      </UiStatusPill>
+                    </div>
+                    <div className="integrations-bot-card__meta">
+                      类型：{session.chat_type || 'private'} · 最后活跃：{formatCheckTime(session.updated_at)}
+                    </div>
+                    {subscription?.last_status ? (
+                      <div className="integrations-bot-card__meta">
+                        最近投递：{subscription.last_status} · {formatCheckTime(subscription.last_sent_at)}
+                      </div>
+                    ) : null}
+                    {session.last_message ? <div className="integrations-bot-card__meta">最近消息：{session.last_message}</div> : null}
+                    <UiActionTray className="integrations-bot-card__actions">
+                      <UiButton
+                        type="button"
+                        variant={subscribed ? 'secondary' : 'primary'}
+                        className={`integrations-panel__action-btn${subscribed ? '' : ' integrations-panel__action-btn--primary'}`}
+                        onClick={() => void onToggle(session, subscribed)}
+                        disabled={togglingSessionId === session.session_id}
+                      >
+                        {togglingSessionId === session.session_id ? '处理中...' : subscribed ? '取消订阅' : '订阅每日自检'}
+                      </UiButton>
+                    </UiActionTray>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+
+          {orphanSubscriptions.length > 0 ? (
+            <div className="integrations-registry__group">
+              <div className="integrations-registry__group-head">
+                <div>
+                  <h6>异常订阅</h6>
+                  <p>这些订阅当前没有匹配到活跃会话，通常表示 Bot 已删除、会话尚未恢复或目标长期未活跃。</p>
+                </div>
+              </div>
+              <div className="integrations-bot-grid">
+                {orphanSubscriptions.map((subscription) => (
+                  <article key={subscription.session_id} className="integrations-bot-card is-disabled">
+                    <div className="integrations-bot-card__top">
+                      <div>
+                        <div className="integrations-bot-card__name">{formatSubscriptionLabel(subscription)}</div>
+                        <div className="integrations-bot-card__meta">{subscription.channel_name} · {subscription.chat_id}</div>
+                      </div>
+                      <UiStatusPill tone={subscription.valid === false ? 'danger' : 'neutral'} className="integrations-status-pill">
+                        {subscription.invalid_reason || '待恢复'}
+                      </UiStatusPill>
+                    </div>
+                    <div className="integrations-bot-card__meta">
+                      最近投递：{subscription.last_status || '暂无'} · {formatCheckTime(subscription.last_sent_at)}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function IntegrationsPanel() {
   const { snapshot } = useWorkspaceShellBridge();
   const [bots, setBots] = useState<IMBot[]>([]);
+  const [sessions, setSessions] = useState<IMSessionSummary[]>([]);
+  const [subscriptions, setSubscriptions] = useState<IMSelfcheckSubscription[]>([]);
   const [loadState, setLoadState] = useState<LoadState>({ loading: true, errorText: '' });
+  const [subscriptionState, setSubscriptionState] = useState<SelfcheckSubscriptionState>({ loading: false, togglingSessionId: null });
   const [statusText, setStatusText] = useState('');
   const [showRestartNotice, setShowRestartNotice] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -659,7 +805,7 @@ export function IntegrationsPanel() {
 
   useEffect(() => {
     if (!snapshot.showSettings || snapshot.settingsTab !== 'integrations') return;
-    void loadBots();
+    void loadPanelData();
   }, [snapshot.showSettings, snapshot.settingsTab]);
 
   function pushStatus(message: string) {
@@ -670,21 +816,41 @@ export function IntegrationsPanel() {
     }, 3600);
   }
 
-  async function loadBots() {
+  async function loadPanelData() {
     setLoadState({ loading: true, errorText: '' });
     try {
-      const response = await fetch('/api/im/bots');
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, '加载 IM Bot 列表失败'));
+      const [botsResponse, sessionsResponse, subscriptionsResponse] = await Promise.all([
+        fetch('/api/im/bots'),
+        fetch('/api/im/sessions'),
+        fetch('/api/im/selfcheck-subscriptions')
+      ]);
+      if (!botsResponse.ok) {
+        throw new Error(await readErrorMessage(botsResponse, '加载 IM Bot 列表失败'));
       }
-      const payload = await parseResponse(response);
-      const nextBots = Array.isArray(payload?.bots) ? (payload.bots as IMBot[]) : [];
+      if (!sessionsResponse.ok) {
+        throw new Error(await readErrorMessage(sessionsResponse, '加载 IM 会话列表失败'));
+      }
+      if (!subscriptionsResponse.ok) {
+        throw new Error(await readErrorMessage(subscriptionsResponse, '加载自检订阅失败'));
+      }
+      const [botsPayload, sessionsPayload, subscriptionsPayload] = await Promise.all([
+        parseResponse(botsResponse),
+        parseResponse(sessionsResponse),
+        parseResponse(subscriptionsResponse)
+      ]);
+      const nextBots = Array.isArray(botsPayload?.bots) ? (botsPayload.bots as IMBot[]) : [];
+      const nextSessions = Array.isArray(sessionsPayload?.sessions) ? (sessionsPayload.sessions as IMSessionSummary[]) : [];
+      const nextSubscriptions = Array.isArray(subscriptionsPayload?.subscriptions)
+        ? (subscriptionsPayload.subscriptions as IMSelfcheckSubscription[])
+        : [];
       setBots(nextBots.map((bot) => ({ ...bot, last_health: normalizeHealth(bot.last_health) })));
+      setSessions(nextSessions);
+      setSubscriptions(nextSubscriptions);
       setLoadState({ loading: false, errorText: '' });
     } catch (error) {
       setLoadState({
         loading: false,
-        errorText: error instanceof Error ? error.message : '加载 IM Bot 列表失败'
+        errorText: error instanceof Error ? error.message : '加载 IM 集成信息失败'
       });
     }
   }
@@ -738,7 +904,7 @@ export function IntegrationsPanel() {
       setWizardOpen(false);
       setShowRestartNotice(true);
       pushStatus(wizardMode === 'create' ? 'IM Bot 已创建，重启后生效' : 'IM Bot 已更新，重启后生效');
-      await loadBots();
+      await loadPanelData();
     } catch (error) {
       pushStatus(error instanceof Error ? error.message : '保存 IM Bot 失败');
     } finally {
@@ -784,7 +950,7 @@ export function IntegrationsPanel() {
         throw new Error(await readErrorMessage(response, 'Bot 测活失败'));
       }
       pushStatus(`${bot.name} 已完成测活`);
-      await loadBots();
+      await loadPanelData();
     } catch (error) {
       pushStatus(error instanceof Error ? error.message : 'Bot 测活失败');
     }
@@ -802,7 +968,7 @@ export function IntegrationsPanel() {
       }
       setShowRestartNotice(true);
       pushStatus(`${bot.name} 已${bot.enabled ? '停用' : '启用'}，重启后生效`);
-      await loadBots();
+      await loadPanelData();
     } catch (error) {
       pushStatus(error instanceof Error ? error.message : '切换 Bot 状态失败');
     }
@@ -817,9 +983,48 @@ export function IntegrationsPanel() {
       }
       setShowRestartNotice(true);
       pushStatus(`${bot.name} 已删除，重启后生效`);
-      await loadBots();
+      await loadPanelData();
     } catch (error) {
       pushStatus(error instanceof Error ? error.message : '删除 IM Bot 失败');
+    }
+  }
+
+  async function toggleSelfcheckSubscription(session: IMSessionSummary, subscribed: boolean) {
+    setSubscriptionState((current) => ({ ...current, togglingSessionId: session.session_id }));
+    try {
+      if (subscribed) {
+        const response = await fetch(
+          `/api/im/selfcheck-subscriptions?session_id=${encodeURIComponent(session.session_id)}`,
+          { method: 'DELETE' }
+        );
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, '取消自检订阅失败'));
+        }
+        pushStatus(`${formatSessionLabel(session)} 已取消每日自检订阅`);
+      } else {
+        const response = await fetch('/api/im/selfcheck-subscriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: session.session_id,
+            channel_name: session.channel_name,
+            chat_id: session.chat_id,
+            bot_id: session.bot_id,
+            platform: session.platform,
+            chat_name: session.chat_name,
+            label: formatSessionLabel(session)
+          })
+        });
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, '开启自检订阅失败'));
+        }
+        pushStatus(`${formatSessionLabel(session)} 已订阅每日自检`);
+      }
+      await loadPanelData();
+    } catch (error) {
+      pushStatus(error instanceof Error ? error.message : '切换自检订阅失败');
+    } finally {
+      setSubscriptionState((current) => ({ ...current, togglingSessionId: null }));
     }
   }
 
@@ -848,7 +1053,7 @@ export function IntegrationsPanel() {
           <p className="integrations-panel__meta">从“固定三张表单”升级为“平台概览 + Bot 注册表 + 引导创建 + 高级模式”，并支持同平台多实例。</p>
         </div>
         <UiActionTray className="integrations-panel__toolbar integrations-panel__toolbar-tray">
-          <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void loadBots()} disabled={loadState.loading}>
+          <UiButton type="button" variant="secondary" className="integrations-panel__action-btn" onClick={() => void loadPanelData()} disabled={loadState.loading}>
             刷新
           </UiButton>
           <UiButton type="button" variant="primary" className="integrations-panel__action-btn integrations-panel__action-btn--primary" onClick={() => openCreate('telegram')}>
@@ -865,6 +1070,14 @@ export function IntegrationsPanel() {
 
       {!loadState.loading ? (
         <>
+          <SelfcheckSubscriptionsSection
+            sessions={sessions}
+            subscriptions={subscriptions}
+            loading={subscriptionState.loading || loadState.loading}
+            togglingSessionId={subscriptionState.togglingSessionId}
+            onRefresh={loadPanelData}
+            onToggle={toggleSelfcheckSubscription}
+          />
           <PlatformGallery onCreate={openCreate} />
           <BotRegistry bots={bots} onCreate={openCreate} onEdit={openEdit} onDelete={deleteBot} onToggle={toggleBot} onTest={testSavedBot} />
         </>

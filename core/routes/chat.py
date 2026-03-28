@@ -103,6 +103,22 @@ def _apply_workspace_metadata(session, workspace_context: dict) -> None:
     session.metadata = metadata
 
 
+def _get_session_workspace_context(session) -> Optional[dict]:
+    metadata = getattr(session, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    workspace_id = metadata.get("workspace_id")
+    workspace_name = metadata.get("workspace_name")
+    workspace_path = metadata.get("workspace_path")
+    if not (workspace_id or workspace_name or workspace_path):
+        return None
+    return {
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "workspace_path": workspace_path,
+    }
+
+
 # ── Chat endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/api/chat/sync")
@@ -114,9 +130,13 @@ async def chat_sync(request: ChatRequest):
 
     system_prompt_override, allowed_skills, skills_mode, orig_model = _resolve_agent_overrides(request)
     current_session_id = getattr(getattr(agent, "sessions", None), "current", None)
+    workspace_context = _get_session_workspace_context(getattr(getattr(agent, "sessions", None), "current", None))
     source_token = set_automation_source_context(
         source_kind="desktop",
         source_session_id=getattr(current_session_id, "session_id", None),
+        workspace_id=(workspace_context or {}).get("workspace_id"),
+        workspace_name=(workspace_context or {}).get("workspace_name"),
+        workspace_path=(workspace_context or {}).get("workspace_path"),
     )
     try:
         response = ""
@@ -128,6 +148,7 @@ async def chat_sync(request: ChatRequest):
                 system_prompt_override=system_prompt_override,
                 allowed_skills=allowed_skills,
                 skills_mode=skills_mode,
+                workspace_context=workspace_context,
             ):
                 event = json.loads(raw_event)
                 event_type = event.get("type")
@@ -147,6 +168,7 @@ async def chat_sync(request: ChatRequest):
                 system_prompt_override=system_prompt_override,
                 allowed_skills=allowed_skills,
                 skills_mode=skills_mode,
+                workspace_context=workspace_context,
             )
         return {"response": response}
     except Exception as e:
@@ -630,6 +652,20 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
                         "Workspace stream fallback to legacy path because agent.chat_stream signature is incompatible"
                     )
 
+            runtime_context = None
+            if hasattr(agent, "_assemble_runtime_context"):
+                try:
+                    runtime_context = agent._assemble_runtime_context(
+                        request.message,
+                        session=session,
+                        system_prompt_override=system_prompt_override,
+                        allowed_skills=allowed_skills,
+                        skills_mode=skills_mode,
+                        workspace_context=workspace_context,
+                    )
+                except TypeError:
+                    runtime_context = None
+
             # Build system prompt using agent's method (reads persona, memory, etc.)
             system_prompt = agent._build_system_prompt(
                 request.message,
@@ -637,6 +673,7 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
                 allowed_skills=allowed_skills,
                 skills_mode=skills_mode,
                 workspace_context=workspace_context,
+                runtime_context=runtime_context,
             )
 
             # Persist user message to local session copy
@@ -646,9 +683,35 @@ async def stream_workspace_chat(workspace_id: str, session_id: str, request: Wor
             session.add_message("user", cleaned or request.message)
 
             messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(session.get_history(max_messages=40))
+            if runtime_context and runtime_context.get("history_messages") is not None:
+                messages.extend(runtime_context.get("history_messages") or [])
+            else:
+                messages.extend(session.get_history(max_messages=40))
 
-            tools = agent.skills.get_tool_definitions(allowed_skills=allowed_skills, skills_mode=skills_mode)
+            tool_routing_plan = (
+                (runtime_context or {}).get("tool_routing_plan")
+                or (
+                    agent._build_tool_routing_plan(
+                        request.message,
+                        allowed_skills=allowed_skills,
+                        skills_mode=skills_mode,
+                        workspace_context=workspace_context,
+                    )
+                    if hasattr(agent, "_build_tool_routing_plan")
+                    else {"preferred_skills": []}
+                )
+            )
+            try:
+                tools = agent.skills.get_tool_definitions(
+                    allowed_skills=allowed_skills,
+                    skills_mode=skills_mode,
+                    preferred_skills=tool_routing_plan.get("preferred_skills"),
+                )
+            except TypeError:
+                tools = agent.skills.get_tool_definitions(
+                    allowed_skills=allowed_skills,
+                    skills_mode=skills_mode,
+                )
 
             import copy
             max_rounds = 15

@@ -19,10 +19,19 @@ from core.automation_context import (
     reset_automation_source_context,
     set_automation_source_context,
 )
+from core.im_selfcheck_subscriptions import (
+    list_selfcheck_subscriptions,
+    remove_selfcheck_subscription,
+    upsert_selfcheck_subscription,
+)
 from core.im_bots import is_im_session_id, make_im_session_id, parse_channel_name
 from core.session import Session
 
 logger = logging.getLogger(__name__)
+
+_SELFCHECK_SUBSCRIBE_COMMAND = "订阅每日自检"
+_SELFCHECK_UNSUBSCRIBE_COMMAND = "取消订阅每日自检"
+_SELFCHECK_STATUS_COMMAND = "查看自检订阅"
 
 
 def _safe_json_dumps(payload: Any, limit: int = 500) -> str:
@@ -91,6 +100,18 @@ class ChannelGateway:
         if not adapter:
             logger.error(f"[Gateway] Unknown channel: {message.channel}")
             return
+
+        command_text = (message.content.text or "").strip()
+        if command_text in {
+            _SELFCHECK_SUBSCRIBE_COMMAND,
+            _SELFCHECK_UNSUBSCRIBE_COMMAND,
+            _SELFCHECK_STATUS_COMMAND,
+        } and not (
+            message.content.images or message.content.voices or message.content.files or message.content.videos
+        ):
+            handled = await self._handle_selfcheck_subscription_command(adapter, message, command_text)
+            if handled:
+                return
 
         # ==========================================
         # 1. 预处理媒体文件
@@ -386,4 +407,95 @@ class ChannelGateway:
                 if gui_session is not None:
                     self.agent.sessions._current = gui_session
                     logger.debug(f"[Gateway] Restored GUI session: {gui_session.session_id}")
+
+    async def _handle_selfcheck_subscription_command(
+        self,
+        adapter: ChannelAdapter,
+        message: UnifiedMessage,
+        command_text: str,
+    ) -> bool:
+        session_id = make_im_session_id(message.channel, message.chat_id)
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        label = str(
+            metadata.get("sender_name")
+            or metadata.get("chat_name")
+            or message.channel_user_id
+            or message.chat_id
+        )
+        chat_name = str(metadata.get("chat_name") or "")
+
+        try:
+            if command_text == _SELFCHECK_SUBSCRIBE_COMMAND:
+                upsert_selfcheck_subscription(
+                    session_id=session_id,
+                    channel_name=message.channel,
+                    chat_id=message.chat_id,
+                    label=label,
+                    chat_name=chat_name,
+                )
+                reply = (
+                    "✅ 已订阅每日自检\n"
+                    "- 后续系统每日自检会向当前会话推送摘要\n"
+                    "- 完整报告仍保留在桌面会话 / 自动化收件箱"
+                )
+            elif command_text == _SELFCHECK_UNSUBSCRIBE_COMMAND:
+                deleted = remove_selfcheck_subscription(
+                    session_id=session_id,
+                    channel_name=message.channel,
+                    chat_id=message.chat_id,
+                )
+                reply = "✅ 已取消每日自检订阅" if deleted else "ℹ️ 当前会话尚未订阅每日自检"
+            else:
+                current = next(
+                    (item for item in list_selfcheck_subscriptions() if item.get("session_id") == session_id),
+                    None,
+                )
+                if current and current.get("enabled"):
+                    last_status = current.get("last_status") or "尚未发送"
+                    last_sent_at = current.get("last_sent_at") or "暂无记录"
+                    reply = (
+                        "📋 当前自检订阅状态：已订阅\n"
+                        f"- 通道：{message.channel}\n"
+                        f"- Chat：{chat_name or label or message.chat_id}\n"
+                        f"- 最近投递：{last_status} / {last_sent_at}"
+                    )
+                else:
+                    reply = (
+                        "📋 当前自检订阅状态：未订阅\n"
+                        f"- 通道：{message.channel}\n"
+                        f"- Chat：{chat_name or label or message.chat_id}\n"
+                        "- 发送“订阅每日自检”即可开启每日摘要推送"
+                    )
+
+            rendered_text = normalize_markdown_for_channel(reply, adapter.channel_name)
+            out_msg = OutgoingMessage.text(
+                chat_id=message.chat_id,
+                text=rendered_text,
+                thread_id=message.thread_id,
+                parse_mode="markdown" if contains_markdown(reply) else None,
+                metadata={
+                    "session_webhook": metadata.get("session_webhook", ""),
+                    "is_group": message.is_group,
+                    "chat_name": metadata.get("chat_name", ""),
+                    "display_name": metadata.get("sender_name", ""),
+                },
+            )
+            await adapter.send_message(out_msg)
+            logger.info(
+                "[Gateway] handled selfcheck subscription command channel=%s chat=%s command=%s",
+                message.channel,
+                message.chat_id,
+                command_text,
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "[Gateway] failed to handle selfcheck subscription command channel=%s chat=%s command=%s error=%s",
+                message.channel,
+                message.chat_id,
+                command_text,
+                exc,
+                exc_info=True,
+            )
+            return False
 

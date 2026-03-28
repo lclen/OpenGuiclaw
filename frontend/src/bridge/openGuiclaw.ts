@@ -202,6 +202,31 @@ export type IMSessionSummary = {
   last_message?: string | null;
   message_count?: number;
   updated_at?: string | null;
+  selfcheck_subscribed?: boolean;
+};
+
+export type IMSelfcheckSubscription = {
+  session_id: string;
+  channel_name: string;
+  chat_id: string;
+  enabled: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  label?: string | null;
+  chat_name?: string | null;
+  display_name?: string | null;
+  alias?: string | null;
+  chat_type?: string | null;
+  bot_id?: string | null;
+  platform?: string | null;
+  valid?: boolean;
+  invalid_reason?: string | null;
+  bot_enabled?: boolean;
+  last_active?: string | null;
+  last_message?: string | null;
+  last_sent_at?: string | null;
+  last_status?: string | null;
+  last_error?: string | null;
 };
 
 export type SessionToolCall = {

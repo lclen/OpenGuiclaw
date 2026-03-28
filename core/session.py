@@ -37,12 +37,12 @@ class Session:
         self.messages.append(msg)
         self.updated_at = msg["timestamp"]
 
-    def get_history(self, max_messages: int = 200) -> List[Dict[str, Any]]:
+    def get_history(self, max_messages: int = 200, include_summary: bool = True) -> List[Dict[str, Any]]:
         """Return recent messages in LLM format (role + content + tool spec)."""
         result = []
         # Prepend rolling summary as a user/assistant exchange so it's compatible
         # with APIs that only allow a single system message at index 0.
-        if self.summary:
+        if include_summary and self.summary:
             result.append({"role": "user",     "content": "[前情提要请求] 请确认你已了解之前的对话摘要。"})
             result.append({"role": "assistant", "content": f"[前情提要]\n{self.summary}\n\n已了解，我会基于以上摘要继续对话。"})
 
