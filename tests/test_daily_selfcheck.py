@@ -48,10 +48,27 @@ def _runtime_snapshot(*, conflicts=None, endpoints=None, network_status="healthy
     }
 
 
+def _ensure_required_dirs(base_dir):
+    for rel_path in [
+        "data",
+        "data/sessions",
+        "data/memory",
+        "data/scheduler",
+        "data/diary",
+        "data/journals",
+        "data/identities",
+        "data/identity",
+        "data/plans",
+        "data/consolidation",
+    ]:
+        (base_dir / rel_path).mkdir(parents=True, exist_ok=True)
+
+
 @pytest.mark.asyncio
 async def test_daily_selfcheck_cleans_stale_records_and_sends_im_summary(tmp_path, monkeypatch):
     from core import tasks
 
+    _ensure_required_dirs(tmp_path)
     monkeypatch.setattr(tasks, "_APP_BASE", tmp_path)
     monkeypatch.setitem(tasks.app_state, "server_version", "test-version")
     monkeypatch.setitem(tasks.app_state, "server_started_at", 1_711_000_000.0)
@@ -105,7 +122,7 @@ async def test_daily_selfcheck_cleans_stale_records_and_sends_im_summary(tmp_pat
     success, status = await tasks._system_daily_selfcheck(lambda event: pushed.append(event), task)
 
     assert success is True
-    assert "可恢复问题" not in status
+    assert status.startswith("✅")
     assert len(deliveries) == 2
     assert deliveries[0][1].startswith("## 🔍 系统自检报告")
     assert deliveries[1][1].startswith("🔍 系统自检摘要")
@@ -117,6 +134,7 @@ async def test_daily_selfcheck_cleans_stale_records_and_sends_im_summary(tmp_pat
 async def test_daily_selfcheck_handles_empty_runtime_without_failing(tmp_path, monkeypatch):
     from core import tasks
 
+    _ensure_required_dirs(tmp_path)
     monkeypatch.setattr(tasks, "_APP_BASE", tmp_path)
     monkeypatch.setitem(tasks.app_state, "server_version", "test-version")
     monkeypatch.setitem(tasks.app_state, "server_started_at", 1_711_000_000.0)
@@ -143,4 +161,3 @@ async def test_daily_selfcheck_handles_empty_runtime_without_failing(tmp_path, m
     assert status.startswith("✅")
     assert len(deliveries) == 1
     assert "当前未配置可测活端点" in deliveries[0][1]
-

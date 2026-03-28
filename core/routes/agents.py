@@ -1,5 +1,6 @@
 """Agent profiles, models, diagnostics, scheduler, and token-stats routes."""
 
+import asyncio
 import sys
 import json
 import os
