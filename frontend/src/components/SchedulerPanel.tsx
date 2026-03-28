@@ -139,11 +139,12 @@ export function SchedulerPanel() {
         <div>
           <div className="react-scheduler-panel__eyebrow">自动化</div>
           <h3 className="react-scheduler-panel__title">计划任务</h3>
-          <p className="react-scheduler-panel__meta">
-            <span>{tasks.length} 个任务</span>
-            <span className="react-scheduler-panel__meta-divider">/</span>
-            <span>{runningCount} 运行中</span>
-          </p>
+          <div className="react-scheduler-panel__meta">
+            <UiStatusPill tone="brand" className="react-scheduler-panel__meta-pill">{tasks.length} 个任务</UiStatusPill>
+            <UiStatusPill tone={runningCount > 0 ? 'warning' : 'disabled'} className="react-scheduler-panel__meta-pill">
+              {runningCount} 运行中
+            </UiStatusPill>
+          </div>
         </div>
 
         <UiActionTray className="react-scheduler-panel__actions">

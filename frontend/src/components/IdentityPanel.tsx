@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { emitShellUpdate } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type IdentityFile = {
   name: string;
@@ -143,9 +146,9 @@ export function IdentityPanel() {
           <p className="identity-panel__meta">维护角色设定、记忆摘要和只读快照。</p>
         </div>
 
-        <button type="button" className="identity-panel__ghost-btn" onClick={() => loadFiles(activeFile)} disabled={loadState.loading}>
+        <UiButton type="button" variant="secondary" className="identity-panel__action-btn" onClick={() => loadFiles(activeFile)} disabled={loadState.loading}>
           刷新列表
-        </button>
+        </UiButton>
 
         {loadState.errorText ? <div className="identity-panel__notice identity-panel__notice--error">{loadState.errorText}</div> : null}
         {loadState.loading ? <div className="identity-panel__empty">正在加载身份文件...</div> : null}
@@ -160,7 +163,7 @@ export function IdentityPanel() {
                 onClick={() => loadFile(file.name)}
               >
                 <span className="identity-panel__file-name">{file.name}</span>
-                {file.readonly ? <span className="identity-panel__readonly-pill">只读</span> : null}
+                {file.readonly ? <UiStatusPill tone="warning" className="identity-panel__readonly-pill">只读</UiStatusPill> : null}
               </button>
             ))}
           </div>
@@ -174,17 +177,18 @@ export function IdentityPanel() {
             <div className="identity-panel__editor-name">{activeFile || '未选择文件'}</div>
           </div>
 
-          <div className="identity-panel__editor-actions">
-            {isReadonly ? <span className="identity-panel__readonly-banner">只读视图</span> : null}
-            <button
+          <UiActionTray className="identity-panel__editor-actions">
+            {isReadonly ? <UiStatusPill tone="warning" className="identity-panel__readonly-banner">只读视图</UiStatusPill> : null}
+            <UiButton
               type="button"
-              className="identity-panel__accent-btn"
+              variant="primary"
+              className="identity-panel__action-btn identity-panel__action-btn--primary"
               onClick={saveFile}
               disabled={!activeFile || saving || isReadonly}
             >
               {saving ? '保存中...' : isReadonly ? '只读' : '保存更改'}
-            </button>
-          </div>
+            </UiButton>
+          </UiActionTray>
         </header>
 
         <div className="identity-panel__editor-body">

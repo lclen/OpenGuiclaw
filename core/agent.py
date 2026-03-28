@@ -26,6 +26,7 @@ from core.knowledge_graph import KnowledgeGraph
 from core.user_profile import UserProfileManager
 from core.identity_manager import IdentityManager
 from core.daily_consolidator import DailyConsolidator
+from core.chat_runtime import ChatRuntime, ToolRuntime
 from core.automation_context import (
     get_automation_source_context,
     reset_automation_source_context,
@@ -117,6 +118,8 @@ class Agent:
         self.auto_evolve = auto_evolve
         self._local_skill_state_path = Path(data_dir) / "local_skills_state.json"
         self._last_stream_stats: dict[str, Any] = {}
+        self.tool_runtime = ToolRuntime(self)
+        self.chat_runtime = ChatRuntime(self)
 
         # Load main API config from active chat endpoint first
         api_cfg = None
@@ -628,73 +631,13 @@ class Agent:
         skills_mode: str = "inclusive",
         workspace_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        query_text = self._normalize_query_text(user_query)
-        visible_skills = self.skills.list_visible(allowed_skills=allowed_skills, skills_mode=skills_mode)
-        if not query_text or not visible_skills:
-            return {"preferred_skills": [], "note": ""}
-        resolved_workspace_context = self._resolve_workspace_context(workspace_context)
-
-        normalized_query = query_text.lower()
-        scores: dict[str, int] = {}
-        reasons: dict[str, list[str]] = {}
-
-        def _add_score(skill_name: str, score: int, reason: str) -> None:
-            scores[skill_name] = scores.get(skill_name, 0) + score
-            reasons.setdefault(skill_name, []).append(reason)
-
-        local_skill_hits = set(self._find_relevant_skills(query_text))
-        for skill in visible_skills:
-            skill_name = str(skill.name or "")
-            keys = {
-                skill_name.lower(),
-                str(skill.category or "").lower(),
-                str(skill.plugin_name or "").lower(),
-            }
-            keys = {key for key in keys if len(key) >= 3}
-            if skill_name in local_skill_hits:
-                _add_score(skill_name, 3, "命中本地技能目录")
-            for key in keys:
-                if key and key in normalized_query:
-                    _add_score(skill_name, 2, f"查询文本命中 {key}")
-
-        memory_layer_weights = {"preference": 3, "experience": 4}
-        for usage_layer, layer_weight in memory_layer_weights.items():
-            for memory in self.memory.search(
-                query_text,
-                top_k=4,
-                usage_layer=usage_layer,
-                workspace_id=(resolved_workspace_context or {}).get("workspace_id"),
-                workspace_name=(resolved_workspace_context or {}).get("workspace_name"),
-            ):
-                memory_text = f"{memory.content} {' '.join(memory.tags or [])}".lower()
-                for skill in visible_skills:
-                    skill_name = str(skill.name or "")
-                    candidate_tokens = {
-                        skill_name.lower(),
-                        str(skill.category or "").lower(),
-                        str(skill.plugin_name or "").lower(),
-                    }
-                    candidate_tokens = {token for token in candidate_tokens if len(token) >= 3}
-                    if any(token in memory_text for token in candidate_tokens):
-                        _add_score(skill_name, layer_weight, f"{usage_layer} 记忆推荐")
-
-        preferred_skills = [
-            skill_name
-            for skill_name, _score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-            if _score > 0
-        ]
-        if not preferred_skills:
-            return {"preferred_skills": [], "note": ""}
-
-        summary_lines = []
-        for skill_name in preferred_skills[:3]:
-            skill_reasons = "、".join(dict.fromkeys(reasons.get(skill_name, []))[:2])
-            summary_lines.append(f"- `{skill_name}`：{skill_reasons}")
-
-        return {
-            "preferred_skills": preferred_skills,
-            "note": "# 工具路由提示\n以下工具更适合作为本轮首选：\n" + "\n".join(summary_lines),
-        }
+        self._ensure_runtime_helpers()
+        return self.tool_runtime.build_routing_plan(
+            user_query,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            workspace_context=workspace_context,
+        )
 
     def _get_tool_definitions(
         self,
@@ -702,23 +645,24 @@ class Agent:
         skills_mode: str = "inclusive",
         preferred_skills: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        try:
-            return self.skills.get_tool_definitions(
-                allowed_skills=allowed_skills,
-                skills_mode=skills_mode,
-                preferred_skills=preferred_skills,
-            )
-        except TypeError:
-            return self.skills.get_tool_definitions(
-                allowed_skills=allowed_skills,
-                skills_mode=skills_mode,
-            )
+        self._ensure_runtime_helpers()
+        return self.tool_runtime.get_tool_definitions(
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            preferred_skills=preferred_skills,
+        )
 
     def _load_persona(self, path: str) -> str:
         p = Path(path)
         if p.exists():
             return p.read_text(encoding="utf-8")
         return "你是一个有帮助的 AI 助理。"
+
+    def _ensure_runtime_helpers(self) -> None:
+        if getattr(self, "tool_runtime", None) is None:
+            self.tool_runtime = ToolRuntime(self)
+        if getattr(self, "chat_runtime", None) is None:
+            self.chat_runtime = ChatRuntime(self)
 
     def _resolve_workspace_context(
         self,
@@ -826,44 +770,16 @@ class Agent:
         workspace_context: dict[str, Any] | None = None,
         history_limit: int = 40,
     ) -> dict[str, Any]:
-        resolved_workspace_context = self._resolve_workspace_context(workspace_context, session=session)
-        query_text = self._normalize_query_text(user_query)
-
-        memory_sections: dict[str, str] = {}
-        if query_text:
-            try:
-                memory_sections = self.memory.build_prompt_sections(
-                    query_text,
-                    top_k_by_layer={"preference": 2, "context": 3, "experience": 2},
-                    workspace_id=(resolved_workspace_context or {}).get("workspace_id"),
-                    workspace_name=(resolved_workspace_context or {}).get("workspace_name"),
-                )
-            except Exception:
-                memory_sections = {}
-
-        tool_routing_plan = self._build_tool_routing_plan(
+        self._ensure_runtime_helpers()
+        return self.chat_runtime.assemble_runtime_context(
             user_query,
+            session=session,
+            system_prompt_override=system_prompt_override,
             allowed_skills=allowed_skills,
             skills_mode=skills_mode,
-            workspace_context=resolved_workspace_context,
+            workspace_context=workspace_context,
+            history_limit=history_limit,
         )
-
-        history_messages = session.get_history(max_messages=history_limit, include_summary=False)
-        runtime_context = {
-            "query_text": query_text,
-            "session": session,
-            "session_summary": getattr(session, "summary", "") or "",
-            "history_messages": history_messages,
-            "resolved_workspace_context": resolved_workspace_context,
-            "memory_sections": memory_sections,
-            "recent_visual_context": self._build_recent_visual_context(session),
-            "recent_tool_context": self._build_recent_tool_context(session),
-            "tool_routing_plan": tool_routing_plan,
-            "system_prompt_override": system_prompt_override,
-            "allowed_skills": allowed_skills,
-            "skills_mode": skills_mode,
-        }
-        return runtime_context
     
     def _load_habits(self) -> None:
         # 优先从 IdentityManager 读取（新架构）

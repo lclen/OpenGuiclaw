@@ -752,9 +752,9 @@ def _build_selfcheck_im_advice(result: dict[str, Any]) -> list[str]:
     return advice
 
 
-def _deliver_selfcheck_subscription_fanout(im_summary: str) -> None:
-    subscriptions = list_active_selfcheck_subscriptions()
-    delivered: set[str] = set()
+def _deliver_selfcheck_subscription_fanout(im_summary: str, *, exclude_session_ids: set[str] | None = None) -> None:
+    subscriptions = list_active_selfcheck_subscriptions(base_path=_APP_BASE)
+    delivered: set[str] = set(exclude_session_ids or set())
 
     for item in subscriptions:
         session_id = str(item.get("session_id") or "")
@@ -768,7 +768,7 @@ def _deliver_selfcheck_subscription_fanout(im_summary: str) -> None:
         adapter = gateway.adapters.get(channel_name) if gateway else None
         if not adapter or not getattr(adapter, "_running", False):
             logger.warning("[SelfCheck] Skip subscribed IM selfcheck delivery for offline channel=%s chat=%s", channel_name, chat_id)
-            record_selfcheck_delivery_status(session_id, status="skipped", error="channel offline")
+            record_selfcheck_delivery_status(session_id, status="skipped", error="channel offline", base_path=_APP_BASE)
             continue
 
         try:
@@ -780,7 +780,7 @@ def _deliver_selfcheck_subscription_fanout(im_summary: str) -> None:
                 target_channel=channel_name,
                 target_chat_id=chat_id,
             )
-            record_selfcheck_delivery_status(session_id, status="sent")
+            record_selfcheck_delivery_status(session_id, status="sent", base_path=_APP_BASE)
         except Exception as exc:
             logger.warning(
                 "[SelfCheck] Failed to fanout subscribed IM selfcheck channel=%s chat=%s: %s",
@@ -788,7 +788,7 @@ def _deliver_selfcheck_subscription_fanout(im_summary: str) -> None:
                 chat_id,
                 exc,
             )
-            record_selfcheck_delivery_status(session_id, status="failed", error=str(exc))
+            record_selfcheck_delivery_status(session_id, status="failed", error=str(exc), base_path=_APP_BASE)
 
 
 def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str) -> None:
@@ -812,11 +812,14 @@ def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str
             target_chat_id=target["target_chat_id"],
         )
 
-    _deliver_selfcheck_subscription_fanout(im_summary)
-
     if im_targets and not non_im_targets:
         deliver_automation_event("assistant", report, target_kind="workspace_inbox")
 
+    delivered_im_sessions = {
+        str(target.get("target_session_id") or "")
+        for target in im_targets
+        if target.get("target_session_id")
+    }
     for target in im_targets:
         deliver_automation_event(
             "assistant",
@@ -827,6 +830,8 @@ def _deliver_selfcheck_reports(task: Optional[Any], report: str, im_summary: str
             target_channel=target["target_channel"],
             target_chat_id=target["target_chat_id"],
         )
+
+    _deliver_selfcheck_subscription_fanout(im_summary, exclude_session_ids=delivered_im_sessions)
 
 
 async def _system_daily_selfcheck(push_fn: Callable, task: Optional[Any] = None) -> tuple[bool, str]:

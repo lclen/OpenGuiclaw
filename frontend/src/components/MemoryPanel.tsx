@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { emitShellUpdate } from '../bridge/openGuiclaw';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type UsageLayer = 'all' | 'context' | 'preference' | 'experience';
 
@@ -349,24 +352,26 @@ export function MemoryPanel() {
           </div>
         </div>
 
-        <div className="memory-react-panel__actions">
-          <button
+        <UiActionTray className="memory-react-panel__actions">
+          <UiButton
             type="button"
-            className="memory-react-panel__ghost-btn"
+            variant="secondary"
+            className="memory-react-panel__action-btn"
             onClick={loadMemories}
             disabled={loadState.loading}
           >
             刷新
-          </button>
-          <button
+          </UiButton>
+          <UiButton
             type="button"
-            className="memory-react-panel__danger-btn"
+            variant="danger"
+            className="memory-react-panel__action-btn memory-react-panel__action-btn--danger"
             onClick={batchDeleteSelected}
             disabled={selectedCount === 0 || busyKey === 'batch-delete'}
           >
             {busyKey === 'batch-delete' ? '删除中...' : '批量删除'}
-          </button>
-        </div>
+          </UiButton>
+        </UiActionTray>
       </header>
 
       <div className="memory-react-panel__summary">
@@ -427,51 +432,53 @@ export function MemoryPanel() {
                   <div className="memory-react-panel__content-wrap">
                     <div className="memory-react-panel__card-top">
                       <div className="memory-react-panel__badges">
-                        <span className={`memory-react-panel__layer-pill is-${normalizedLayer}`}>
+                        <UiStatusPill tone={normalizedLayer === 'context' ? 'brand' : normalizedLayer === 'preference' ? 'warning' : 'success'} className={`memory-react-panel__layer-pill is-${normalizedLayer}`}>
                           {LAYER_LABELS[normalizedLayer]}
-                        </span>
-                        <span className={`memory-react-panel__type-pill is-${normalizedType}`}>
+                        </UiStatusPill>
+                        <UiStatusPill tone={normalizedType === 'error' ? 'danger' : normalizedType === 'preference' ? 'warning' : normalizedType === 'experience' ? 'success' : 'neutral'} className={`memory-react-panel__type-pill is-${normalizedType}`}>
                           {TYPE_LABELS[normalizedType] || normalizedType}
-                        </span>
-                        <span className="memory-react-panel__id">{item.id}</span>
+                        </UiStatusPill>
+                        <UiStatusPill tone="disabled" className="memory-react-panel__id">{item.id}</UiStatusPill>
                         {(item.tags || []).map((tag) => (
-                          <span key={`${item.id}-${tag}`} className="memory-react-panel__tag-pill">
+                          <UiStatusPill key={`${item.id}-${tag}`} tone="neutral" className="memory-react-panel__tag-pill">
                             {tag}
-                          </span>
+                          </UiStatusPill>
                         ))}
                       </div>
 
-                      <div className="memory-react-panel__card-actions">
+                      <UiActionTray className="memory-react-panel__card-actions">
                         {!item._editing ? (
-                          <button type="button" className="memory-react-panel__soft-btn" onClick={() => startEdit(item.id)}>
+                          <UiButton type="button" variant="secondary" className="memory-react-panel__action-btn memory-react-panel__action-btn--small" onClick={() => startEdit(item.id)}>
                             编辑
-                          </button>
+                          </UiButton>
                         ) : (
-                          <button type="button" className="memory-react-panel__soft-btn" onClick={() => cancelEdit(item.id)}>
+                          <UiButton type="button" variant="secondary" className="memory-react-panel__action-btn memory-react-panel__action-btn--small" onClick={() => cancelEdit(item.id)}>
                             取消
-                          </button>
+                          </UiButton>
                         )}
 
                         {item._editing ? (
-                          <button
+                          <UiButton
                             type="button"
-                            className="memory-react-panel__accent-btn"
+                            variant="primary"
+                            className="memory-react-panel__action-btn memory-react-panel__action-btn--small memory-react-panel__action-btn--primary"
                             onClick={() => saveEdit(item)}
                             disabled={saveBusy}
                           >
                             {saveBusy ? '保存中...' : '保存'}
-                          </button>
+                          </UiButton>
                         ) : null}
 
-                        <button
+                        <UiButton
                           type="button"
-                          className="memory-react-panel__soft-danger-btn"
+                          variant="danger"
+                          className="memory-react-panel__action-btn memory-react-panel__action-btn--small memory-react-panel__action-btn--danger"
                           onClick={() => deleteMemory(item.id)}
                           disabled={deleteBusy}
                         >
                           {deleteBusy ? '删除中...' : '删除'}
-                        </button>
-                      </div>
+                        </UiButton>
+                      </UiActionTray>
                     </div>
 
                     {!item._editing ? (

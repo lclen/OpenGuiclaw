@@ -500,7 +500,7 @@ async def list_im_sessions(
     )
     subscribed_ids = {
         item["session_id"]
-        for item in list_selfcheck_subscriptions(session_entries=sessions)
+        for item in list_selfcheck_subscriptions(base_path=_APP_BASE, session_entries=sessions)
     }
     return {
         "sessions": [
@@ -516,7 +516,7 @@ async def list_im_sessions(
 @router.get("/api/im/selfcheck-subscriptions")
 async def list_im_selfcheck_subscriptions():
     sessions = _collect_session_entries()
-    return {"subscriptions": list_selfcheck_subscriptions(session_entries=sessions)}
+    return {"subscriptions": list_selfcheck_subscriptions(base_path=_APP_BASE, session_entries=sessions)}
 
 
 @router.post("/api/im/selfcheck-subscriptions")
@@ -534,6 +534,7 @@ async def create_im_selfcheck_subscription(body: IMSelfcheckSubscriptionRequest)
             chat_name=body.chat_name,
             bot_id=body.bot_id,
             platform=body.platform,
+            base_path=_APP_BASE,
             session_entries=sessions,
         )
     except ValueError as exc:
@@ -558,6 +559,7 @@ async def delete_im_selfcheck_subscription(
             session_id=session_id,
             channel_name=resolved_channel_name,
             chat_id=chat_id,
+            base_path=_APP_BASE,
             session_entries=sessions,
         )
     except ValueError as exc:
@@ -565,7 +567,7 @@ async def delete_im_selfcheck_subscription(
     return {
         "status": "ok",
         "deleted": deleted,
-        "subscriptions": list_selfcheck_subscriptions(session_entries=sessions),
+        "subscriptions": list_selfcheck_subscriptions(base_path=_APP_BASE, session_entries=sessions),
     }
 
 
