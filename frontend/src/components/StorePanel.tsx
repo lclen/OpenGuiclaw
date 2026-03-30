@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiButton } from './ui/UiButton';
+import { UiStatusPill } from './ui/UiStatusPill';
 
 type StoreItem = {
   id: string;
@@ -200,9 +202,9 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
             <h4 className="store-panel__title">VRM 资源商店</h4>
             <p className="store-panel__meta">浏览模型与动作资源，并直接下载安装到本地库。</p>
           </div>
-          <button type="button" className="store-panel__ghost-btn" onClick={() => void loadAll()}>
+          <UiButton type="button" variant="secondary" className="store-panel__action-btn" onClick={() => void loadAll()}>
             刷新
-          </button>
+          </UiButton>
         </header>
       ) : (
         <header className="persona-panel__section-head">
@@ -211,22 +213,25 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
             <h4 className="persona-panel__title">VRM 资源商店</h4>
             <p className="persona-panel__meta">浏览模型与动作资源，并直接下载安装到本地库。</p>
           </div>
-          <button type="button" className="persona-panel__ghost-btn" onClick={() => void loadAll()}>
+          <UiButton type="button" variant="secondary" className="persona-panel__action-btn" onClick={() => void loadAll()}>
             刷新
-          </button>
+          </UiButton>
         </header>
       )}
 
       <div className="store-panel__category-row">
         {categories.map((category) => (
-          <button
+          <UiButton
             key={category}
             type="button"
-            className={`store-panel__category-btn${selectedCategory === category ? ' is-active' : ''}`}
+            variant="secondary"
+            size="sm"
+            active={selectedCategory === category}
+            className="store-panel__category-btn"
             onClick={() => setSelectedCategory(category)}
           >
             {category}
-          </button>
+          </UiButton>
         ))}
       </div>
 
@@ -238,7 +243,9 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
           <section className="store-panel__section">
             <div className="store-panel__section-head">
               <h5>模型资源</h5>
-              <span>{filteredModels.length} 项</span>
+              <UiStatusPill tone="disabled" className="store-panel__count-pill">
+                {filteredModels.length} 项
+              </UiStatusPill>
             </div>
             <div className="store-panel__grid is-models">
               {filteredModels.length > 0 ? (
@@ -258,9 +265,14 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
                       <div className="store-panel__card-body">
                         <strong>{item.name}</strong>
                         <span>Creator: @{item.author || 'Anonymous'}</span>
-                        <button
+                        <UiStatusPill tone="disabled" className="store-panel__category-pill">
+                          {item.category || 'Uncategorized'}
+                        </UiStatusPill>
+                        <UiButton
                           type="button"
-                          className={`store-panel__action-btn${downloaded ? ' is-disabled' : ''}`}
+                          variant={!item.url ? 'secondary' : 'primary'}
+                          size="sm"
+                          className="store-panel__action-btn"
                           disabled={busy || downloaded}
                           onClick={() => {
                             if (!item.url && item.homepage) {
@@ -271,7 +283,7 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
                           }}
                         >
                           {!item.url ? '外部资源查看' : busy ? '加载中...' : downloaded ? '已部署' : '下载模型'}
-                        </button>
+                        </UiButton>
                       </div>
                     </article>
                   );
@@ -285,7 +297,9 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
           <section className="store-panel__section">
             <div className="store-panel__section-head">
               <h5>动作资源</h5>
-              <span>{filteredAnimations.length} 项</span>
+              <UiStatusPill tone="disabled" className="store-panel__count-pill">
+                {filteredAnimations.length} 项
+              </UiStatusPill>
             </div>
             <div className="store-panel__grid is-animations">
               {filteredAnimations.length > 0 ? (
@@ -298,9 +312,11 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
                         <strong>{item.name}</strong>
                         <span>{item.category || 'Uncategorized'}</span>
                       </div>
-                      <button
+                      <UiButton
                         type="button"
-                        className={`store-panel__action-btn is-small${downloaded ? ' is-disabled' : ''}`}
+                        variant={!item.url ? 'secondary' : 'primary'}
+                        size="sm"
+                        className="store-panel__action-btn"
                         disabled={busy || downloaded}
                         onClick={() => {
                           if (!item.url && item.homepage) {
@@ -311,7 +327,7 @@ export function StorePanel({ embedded = false }: StorePanelProps) {
                         }}
                       >
                         {!item.url ? '外部查看' : busy ? '加载中...' : downloaded ? '已就绪' : '下载动作'}
-                      </button>
+                      </UiButton>
                     </article>
                   );
                 })

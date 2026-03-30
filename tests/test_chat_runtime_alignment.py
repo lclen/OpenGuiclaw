@@ -229,3 +229,42 @@ def test_agent_runtime_context_assembles_summary_tools_and_memory():
     assert "# 最近工具调用脉络" in prompt
     assert "# 用户偏好与行为约束" in prompt
     assert "# 工具路由提示" in prompt
+
+
+def test_tool_runtime_build_routing_plan_dedupes_reasons_without_slice_error():
+    from core.chat_runtime import ToolRuntime
+
+    class FakeSkills:
+        @staticmethod
+        def list_visible(allowed_skills=None, skills_mode="inclusive"):
+            return [SimpleNamespace(name="file-manager", category="files", plugin_name="file-manager")]
+
+    class FakeMemory:
+        @staticmethod
+        def search(*args, **kwargs):
+            return [
+                SimpleNamespace(content="file-manager is useful", tags=["file-manager"]),
+                SimpleNamespace(content="file-manager again", tags=["files"]),
+            ]
+
+    class FakeAgent:
+        def __init__(self):
+            self.skills = FakeSkills()
+            self.memory = FakeMemory()
+
+        @staticmethod
+        def _normalize_query_text(user_query):
+            return str(user_query or "")
+
+        @staticmethod
+        def _resolve_workspace_context(workspace_context=None):
+            return workspace_context
+
+        @staticmethod
+        def _find_relevant_skills(query_text):
+            return ["file-manager"]
+
+    plan = ToolRuntime(FakeAgent()).build_routing_plan("please help with file-manager cleanup")
+
+    assert plan["preferred_skills"] == ["file-manager"]
+    assert "file-manager" in plan["note"]

@@ -163,6 +163,36 @@
 
 ---
 
+## 7. `ChatRuntime / ToolRuntime` 已拆出独立模块
+
+这轮没有激进地把整段 `chat_stream()` 全部搬走，而是先做了**兼容性拆分**：
+
+- 新增：`core/chat_runtime.py`
+  - `ToolRuntime`
+  - `ChatRuntime`
+
+当前职责划分：
+
+- `ToolRuntime`
+  - 负责工具路由打分
+  - 负责工具定义排序与选择
+- `ChatRuntime`
+  - 负责运行时上下文装配
+  - 负责同步聊天对流式结果的聚合
+  - 负责同步桥接
+- `Agent`
+  - 继续保留外部兼容方法名
+  - 内部改为委托给 `ChatRuntime / ToolRuntime`
+  - 暂时仍保留 `chat_stream()` 主循环
+
+这样做的价值是：
+
+- 外部接口不变，现有路由和测试不需要大改
+- 运行时职责已经开始从超大 `Agent` 中剥离
+- 后续如果继续拆 `ToolLoopRuntime`，改造面会小很多
+
+---
+
 ## 为什么这一步很重要
 
 OpenAkita 的强项不只是模块多，而是：
@@ -186,7 +216,7 @@ OpenAkita 的强项不只是模块多，而是：
 
 下一步最值得做的是：
 
-1. 抽出独立的 `ChatRuntime / ToolRuntime` 类，彻底从 `Agent` 中解耦
+1. 把 `chat_stream()` 里的工具循环再拆成独立 `ToolLoopRuntime`
 2. 让 workspace fallback 路径完全复用同一执行器，而不是保留半套旧流程
 3. 给运行时上下文增加“任务阶段 / 当前目标 / 最近失败原因”字段，增强多轮自修复
 4. 把工作区经验记忆继续细化为“全局偏好 + 工作区经验 + 当前任务上下文”

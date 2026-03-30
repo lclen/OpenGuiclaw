@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StorePanel } from './StorePanel';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiActionTray } from './ui/UiActionTray';
+import { UiButton } from './ui/UiButton';
 
 type LoadState = {
   loading: boolean;
@@ -152,6 +154,7 @@ const EXPRESSION_OPTIONS = [
 
 export function PersonaPanel() {
   const { snapshot } = useWorkspaceShellBridge();
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [activeTab, setActiveTab] = useState<'local' | 'store'>('local');
   const [personas, setPersonas] = useState<PersonaMap>({});
   const [models, setModels] = useState<VrmModelRecord[]>([]);
@@ -381,20 +384,24 @@ export function PersonaPanel() {
   return (
     <div className="persona-panel">
       <div className="persona-panel__tab-row">
-        <button
+        <UiButton
           type="button"
-          className={`persona-panel__tab-btn${activeTab === 'local' ? ' is-active' : ''}`}
+          variant="secondary"
+          active={activeTab === 'local'}
+          className="persona-panel__tab-btn"
           onClick={() => setActiveTab('local')}
         >
           本地配置
-        </button>
-        <button
+        </UiButton>
+        <UiButton
           type="button"
-          className={`persona-panel__tab-btn${activeTab === 'store' ? ' is-active' : ''}`}
+          variant="secondary"
+          active={activeTab === 'store'}
+          className="persona-panel__tab-btn"
           onClick={() => setActiveTab('store')}
         >
           VRM 商店
-        </button>
+        </UiButton>
       </div>
 
       {activeTab === 'local' ? (
@@ -406,9 +413,9 @@ export function PersonaPanel() {
                 <h4 className="persona-panel__title">角色资料</h4>
                 <p className="persona-panel__meta">查看当前启用的人格文本与角色底层设定。</p>
               </div>
-              <button type="button" className="persona-panel__ghost-btn" onClick={() => void loadAll()}>
+              <UiButton type="button" variant="secondary" className="persona-panel__action-btn" onClick={() => void loadAll()}>
                 刷新
-              </button>
+              </UiButton>
             </header>
 
             {loadState.errorText ? <div className="persona-panel__notice persona-panel__notice--error">{loadState.errorText}</div> : null}
@@ -432,29 +439,37 @@ export function PersonaPanel() {
 
           <section className="persona-panel__section">
             <header className="persona-panel__section-head">
-                <div>
+              <div>
                 <div className="persona-panel__eyebrow">模型资产</div>
                 <h4 className="persona-panel__title">VRM 模型库</h4>
                 <p className="persona-panel__meta">上传、切换、删除本地模型，并可单独保存当前视角。</p>
               </div>
-              <div className="persona-panel__actions">
-                <button type="button" className="persona-panel__accent-btn" onClick={() => void saveVrmConfig()}>
+              <UiActionTray className="persona-panel__actions">
+                <UiButton type="button" variant="primary" className="persona-panel__action-btn" onClick={() => void saveVrmConfig()}>
                   {saveState === 'saving' ? '保存中...' : saveState === 'ok' ? '已保存' : saveState === 'error' ? '异常' : '保存视角'}
-                </button>
-                <label className="persona-panel__upload-btn">
-                  <span>{uploading ? '上传中...' : '上传 .vrm'}</span>
-                  <input
-                    type="file"
-                    accept=".vrm"
-                    disabled={uploading}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] || null;
-                      void handleUpload(file);
-                      event.currentTarget.value = '';
-                    }}
-                  />
-                </label>
-              </div>
+                </UiButton>
+                <UiButton
+                  type="button"
+                  variant="secondary"
+                  className="persona-panel__action-btn"
+                  disabled={uploading}
+                  onClick={() => uploadInputRef.current?.click()}
+                >
+                  {uploading ? '上传中...' : '上传 .vrm'}
+                </UiButton>
+                <input
+                  ref={uploadInputRef}
+                  className="persona-panel__upload-input"
+                  type="file"
+                  accept=".vrm"
+                  disabled={uploading}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    void handleUpload(file);
+                    event.currentTarget.value = '';
+                  }}
+                />
+              </UiActionTray>
             </header>
 
             <div className="persona-panel__model-list">
@@ -468,24 +483,26 @@ export function PersonaPanel() {
                         <strong>{model.name}</strong>
                         <span>{model.path}</span>
                       </div>
-                      <div className="persona-panel__actions">
-                        <button
+                      <UiActionTray className="persona-panel__actions">
+                        <UiButton
                           type="button"
-                          className="persona-panel__soft-btn"
+                          variant="secondary"
+                          className="persona-panel__action-btn persona-panel__action-btn--small"
                           disabled={busyKey === switchKey}
                           onClick={() => void switchVrmModel(model.path)}
                         >
                           {busyKey === switchKey ? '切换中...' : '载入'}
-                        </button>
-                        <button
+                        </UiButton>
+                        <UiButton
                           type="button"
-                          className="persona-panel__danger-btn"
+                          variant="danger"
+                          className="persona-panel__action-btn persona-panel__action-btn--small persona-panel__action-btn--danger"
                           disabled={busyKey === deleteKey}
                           onClick={() => void deleteModel(model.name)}
                         >
                           {busyKey === deleteKey ? '删除中...' : '删除'}
-                        </button>
-                      </div>
+                        </UiButton>
+                      </UiActionTray>
                     </article>
                   );
                 })
@@ -506,13 +523,26 @@ export function PersonaPanel() {
 
             <div className="persona-panel__expression-grid">
               {EXPRESSION_OPTIONS.map((option) => (
-                <button key={option.key} type="button" className="persona-panel__chip-btn" onClick={() => triggerExpression(option.key)}>
+                <UiButton
+                  key={option.key}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="persona-panel__chip-btn"
+                  onClick={() => triggerExpression(option.key)}
+                >
                   {option.label}
-                </button>
+                </UiButton>
               ))}
-              <button type="button" className="persona-panel__chip-btn is-accent" onClick={() => triggerExpression('neutral')}>
+              <UiButton
+                type="button"
+                variant="primary"
+                size="sm"
+                className="persona-panel__chip-btn"
+                onClick={() => triggerExpression('neutral')}
+              >
                 重置表情
-              </button>
+              </UiButton>
             </div>
 
             <div className="persona-panel__animation-grid">

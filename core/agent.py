@@ -1327,57 +1327,19 @@ class Agent:
         session_override=None,
         workspace_context: dict[str, Any] | None = None,
     ) -> str:
-        import json
-
-        chunks: list[str] = []
-        waiting_for_user = False
-        async for raw_event in self.chat_stream(
+        self._ensure_runtime_helpers()
+        return await self.chat_runtime.collect_stream_response(
             user_input,
             system_prompt_override=system_prompt_override,
             allowed_skills=allowed_skills,
             skills_mode=skills_mode,
             session_override=session_override,
             workspace_context=workspace_context,
-        ):
-            event = json.loads(raw_event) if isinstance(raw_event, str) else raw_event
-            event_type = event.get("type")
-            if event_type in {"text_delta", "message_chunk"}:
-                chunks.append(str(event.get("content", "")))
-            elif event_type == "message":
-                chunks.append(str(event.get("content", "")))
-            elif event_type == "ask_user_interrupt":
-                waiting_for_user = True
-            elif event_type == "error":
-                raise RuntimeError(str(event.get("content", "Unknown stream error")))
-
-        response = "".join(chunks).strip()
-        if waiting_for_user and not response:
-            return "（正在等待您做出选择...）"
-        return response or "（已完成工具操作，无额外回复。）"
+        )
 
     def _run_chat_stream_sync(self, coroutine) -> str:
-        import asyncio
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coroutine)
-
-        result_box: dict[str, str] = {}
-        error_box: dict[str, Exception] = {}
-
-        def _runner() -> None:
-            try:
-                result_box["value"] = asyncio.run(coroutine)
-            except Exception as error:
-                error_box["error"] = error
-
-        thread = threading.Thread(target=_runner, name="ChatStreamSyncBridge", daemon=True)
-        thread.start()
-        thread.join()
-        if "error" in error_box:
-            raise error_box["error"]
-        return result_box.get("value", "（已完成工具操作，无额外回复。）")
+        self._ensure_runtime_helpers()
+        return self.chat_runtime.run_chat_stream_sync(coroutine)
 
     def chat(
         self,
@@ -1392,15 +1354,14 @@ class Agent:
         Process a single user turn.
         Sync chat now reuses the streaming runtime to keep execution consistent.
         """
-        return self._run_chat_stream_sync(
-            self._collect_chat_stream_response(
-                user_input,
-                system_prompt_override=system_prompt_override,
-                allowed_skills=allowed_skills,
-                skills_mode=skills_mode,
-                session_override=session_override,
-                workspace_context=workspace_context,
-            )
+        self._ensure_runtime_helpers()
+        return self.chat_runtime.chat(
+            user_input,
+            system_prompt_override=system_prompt_override,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            session_override=session_override,
+            workspace_context=workspace_context,
         )
 
     def _extract_stream_text(self, content: Any) -> str:
@@ -1756,12 +1717,19 @@ class Agent:
                 session.add_message("user", user_input)
             persist_session()
 
-        tool_routing_plan = runtime_context.get("tool_routing_plan") or {}
-        tools = self._get_tool_definitions(
+        self._ensure_runtime_helpers()
+        tool_routing_plan = runtime_context.get("tool_routing_plan") or self.tool_runtime.build_routing_plan(
+            user_input,
+            allowed_skills=allowed_skills,
+            skills_mode=skills_mode,
+            workspace_context=resolved_workspace_context,
+        )
+        tools = self.tool_runtime.get_tool_definitions(
             allowed_skills=allowed_skills,
             skills_mode=skills_mode,
             preferred_skills=tool_routing_plan.get("preferred_skills"),
         )
+        runtime_context["tool_routing_plan"] = tool_routing_plan
         
         max_tool_rounds = 15
         try:

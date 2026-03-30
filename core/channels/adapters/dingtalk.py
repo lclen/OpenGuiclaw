@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ..base import ChannelAdapter
-from ..markdown import contains_markdown
+from ..markdown import contains_markdown, normalize_markdown_for_channel
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -417,6 +417,11 @@ class DingTalkAdapter(ChannelAdapter):
         if self._stream_state != state:
             logger.info("DingTalk Stream state: %s -> %s", self._stream_state.value, state.value)
             self._stream_state = state
+
+    def _normalize_outgoing_text(self, text: str) -> str:
+        if not text:
+            return ""
+        return normalize_markdown_for_channel(text, self.channel_name)
 
     def _make_session_key(self, chat_id: str, thread_id: str | None = None) -> str:
         return f"{chat_id}:{thread_id or ''}"
@@ -962,7 +967,7 @@ class DingTalkAdapter(ChannelAdapter):
         if not card_state:
             return False
         try:
-            content = final_text + footer
+            content = self._normalize_outgoing_text(final_text) + footer
             if card_state.is_ai_card:
                 await self._stream_ai_card(card_state.card_id, content, finished=True)
             else:
@@ -1208,6 +1213,7 @@ class DingTalkAdapter(ChannelAdapter):
         # 解析文本中的本地路径图片并上传 (钉钉不支持直接发本地路径，且公网不可见)
         if message.content.text:
             message.content.text = await self._resolve_local_images(message.content.text)
+            message.content.text = self._normalize_outgoing_text(message.content.text)
 
         card_state = None if sk in self._streaming_buffers else self._thinking_cards.pop(sk, None)
         if card_state and message.content.text and not message.content.has_media:
@@ -1408,6 +1414,7 @@ class DingTalkAdapter(ChannelAdapter):
 
         # 纯文本 / Markdown
         text = message.content.text or ""
+        text = self._normalize_outgoing_text(text)
         if message.parse_mode == "markdown" or contains_markdown(text):
             return "sampleMarkdown", {"title": text[:20], "text": text}
         return "sampleText", {"content": text}
@@ -1422,6 +1429,7 @@ class DingTalkAdapter(ChannelAdapter):
         参考: https://open.dingtalk.com/document/robots/custom-robot-access/
         """
         text = message.content.text or ""
+        text = self._normalize_outgoing_text(text)
 
         is_markdown = message.parse_mode == "markdown" or contains_markdown(text)
         chunks = self._chunk_markdown_text(text, self._MARKDOWN_MAX_LENGTH) if text else [text]

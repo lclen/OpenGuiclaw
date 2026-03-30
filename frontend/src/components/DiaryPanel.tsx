@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useWorkspaceShellBridge } from '../hooks/useWorkspaceShellBridge';
+import { UiButton } from './ui/UiButton';
 
 declare global {
   interface Window {
@@ -115,9 +116,9 @@ export function DiaryPanel() {
             <h4 className="diary-panel__title">日记回溯</h4>
             <p className="diary-panel__meta">{dates.length} 份已生成记录</p>
           </div>
-          <button type="button" className="diary-panel__ghost-btn" onClick={() => void loadDiaryDates(true)}>
+          <UiButton type="button" variant="secondary" className="diary-panel__action-btn" onClick={() => void loadDiaryDates(true)}>
             刷新
-          </button>
+          </UiButton>
         </header>
 
         {loadState.errorText ? <div className="diary-panel__notice diary-panel__notice--error">{loadState.errorText}</div> : null}
@@ -154,9 +155,10 @@ export function DiaryPanel() {
             <h4 className="diary-panel__title">{selectedDate || '尚未选择日记'}</h4>
           </div>
           {selectedDate ? (
-            <button
+            <UiButton
               type="button"
-              className="diary-panel__ghost-btn"
+              variant="secondary"
+              className="diary-panel__action-btn"
               onClick={() => {
                 setSelectedDate('');
                 setContent('');
@@ -165,7 +167,7 @@ export function DiaryPanel() {
               }}
             >
               返回列表
-            </button>
+            </UiButton>
           ) : null}
         </header>
 

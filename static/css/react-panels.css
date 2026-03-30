@@ -1,5 +1,34 @@
 /* React pilot panels */
 
+.archived-panel,
+.mcp-panel,
+.memory-react-panel,
+.diagnostics-panel,
+.models-panel,
+.react-scheduler-panel,
+.integrations-panel--im-bots {
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at top right, rgba(182, 240, 89, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(12, 16, 24, 0.96), rgba(8, 12, 18, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 48px rgba(0, 0, 0, 0.26);
+}
+
+.archived-panel__empty,
+.mcp-panel__empty,
+.memory-react-panel__empty,
+.diagnostics-panel__empty,
+.models-panel__empty,
+.integrations-panel--im-bots .integrations-panel__empty {
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  color: rgba(203, 213, 225, 0.7);
+}
+
 .react-skills-panel {
   display: flex;
   flex-direction: column;
@@ -994,14 +1023,9 @@
   height: 100%;
   min-height: 0;
   padding: 18px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 20px;
   background:
-    radial-gradient(circle at top right, rgba(182, 240, 89, 0.08), transparent 32%),
     linear-gradient(180deg, rgba(16, 21, 30, 0.96), rgba(10, 14, 21, 0.98));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    0 18px 46px rgba(0, 0, 0, 0.26);
 }
 
 .react-scheduler-panel__header {
@@ -4715,67 +4739,19 @@
   color: rgba(203, 213, 225, 0.72);
 }
 
-.diary-panel__ghost-btn,
-.persona-panel__ghost-btn,
-.persona-panel__soft-btn,
-.persona-panel__danger-btn,
-.persona-panel__accent-btn,
-.store-panel__ghost-btn,
+.diary-panel__action-btn,
+.persona-panel__action-btn,
 .store-panel__action-btn,
 .store-panel__category-btn,
 .persona-panel__chip-btn,
-.persona-panel__upload-btn {
-  min-height: 36px;
-  padding: 0 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  font-size: 12px;
-  font-weight: 700;
-  transition: all 0.16s ease;
+.persona-panel__tab-btn {
+  white-space: nowrap;
 }
 
-.diary-panel__ghost-btn,
-.persona-panel__ghost-btn,
-.persona-panel__soft-btn,
-.persona-panel__upload-btn,
-.store-panel__ghost-btn,
-.store-panel__category-btn {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(226, 232, 240, 0.84);
-}
-
-.persona-panel__accent-btn,
-.store-panel__action-btn,
-.persona-panel__chip-btn.is-accent {
-  background: rgba(182, 240, 89, 0.14);
-  border-color: rgba(182, 240, 89, 0.24);
-  color: rgba(215, 255, 156, 0.98);
-}
-
-.persona-panel__danger-btn {
-  background: rgba(251, 113, 133, 0.1);
-  border-color: rgba(251, 113, 133, 0.18);
-  color: #fda4af;
-}
-
-.diary-panel__ghost-btn:hover,
-.persona-panel__ghost-btn:hover,
-.persona-panel__soft-btn:hover,
-.store-panel__ghost-btn:hover,
-.store-panel__category-btn:hover,
-.persona-panel__chip-btn:hover,
-.persona-panel__upload-btn:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #f8fafc;
-}
-
-.persona-panel__accent-btn:hover,
-.store-panel__action-btn:hover {
-  background: rgba(182, 240, 89, 0.2);
-}
-
-.persona-panel__danger-btn:hover {
-  background: rgba(251, 113, 133, 0.16);
+.store-panel__header > .store-panel__action-btn,
+.diary-panel__header > .diary-panel__action-btn,
+.persona-panel__section-head > .persona-panel__action-btn {
+  flex-shrink: 0;
 }
 
 .diary-panel__list {
@@ -4930,20 +4906,8 @@
   gap: 16px;
 }
 
-.persona-panel__upload-btn {
-  position: relative;
-  overflow: hidden;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.persona-panel__upload-btn input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
+.persona-panel__upload-input {
+  display: none;
 }
 
 .persona-panel__model-card {
@@ -4984,7 +4948,6 @@
   gap: 10px;
 }
 
-.persona-panel__chip-btn,
 .persona-panel__animation-card {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(226, 232, 240, 0.84);
@@ -5011,12 +4974,6 @@
   padding: 0 0 2px;
 }
 
-.store-panel__category-btn.is-active {
-  background: rgba(182, 240, 89, 0.14);
-  border-color: rgba(182, 240, 89, 0.22);
-  color: rgba(215, 255, 156, 0.98);
-}
-
 .store-panel__section-head h5 {
   margin: 0;
   font-size: 14px;
@@ -5024,9 +4981,9 @@
   color: #f8fafc;
 }
 
-.store-panel__section-head span {
-  color: rgba(203, 213, 225, 0.68);
-  font-size: 11px;
+.store-panel__count-pill,
+.store-panel__category-pill {
+  width: fit-content;
 }
 
 .store-panel__grid {
@@ -5088,14 +5045,8 @@
   padding: 14px;
 }
 
-.store-panel__action-btn.is-small {
-  min-height: 32px;
-  padding: 0 12px;
-}
-
-.store-panel__action-btn.is-disabled {
-  opacity: 0.56;
-  cursor: default;
+.persona-panel__action-btn--small {
+  min-width: 0;
 }
 
 .diary-panel__notice,
@@ -5161,14 +5112,6 @@
 /* ── IM Setup Center ───────────────────────────────────────────────────────── */
 .integrations-panel--im-bots {
   gap: 20px;
-  padding: 18px;
-  border-radius: 22px;
-  border: 1px solid rgba(182, 240, 89, 0.12);
-  background:
-    radial-gradient(circle at top right, rgba(56, 189, 248, 0.08), transparent 24%),
-    radial-gradient(circle at top left, rgba(182, 240, 89, 0.08), transparent 30%),
-    linear-gradient(180deg, rgba(11, 16, 24, 0.96), rgba(7, 11, 17, 0.98));
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
 }
 
 .integrations-panel--im-bots .integrations-panel__header {

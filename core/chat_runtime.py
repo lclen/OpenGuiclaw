@@ -82,7 +82,8 @@ class ToolRuntime:
 
         summary_lines = []
         for skill_name in preferred_skills[:3]:
-            skill_reasons = "、".join(dict.fromkeys(reasons.get(skill_name, []))[:2])
+            deduped_reasons = list(dict.fromkeys(reasons.get(skill_name, [])))
+            skill_reasons = "、".join(deduped_reasons[:2])
             summary_lines.append(f"- `{skill_name}`：{skill_reasons}")
 
         return {

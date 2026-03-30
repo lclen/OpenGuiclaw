@@ -31,7 +31,7 @@ def contains_markdown(text: str) -> bool:
 def normalize_markdown_for_channel(text: str, channel_name: str | None = None) -> str:
     if not text:
         return ""
-    normalized = _normalize_markdown_tables(text)
+    normalized = _normalize_markdown_tables(text, channel_name=channel_name)
     return normalized.strip()
 
 
@@ -45,7 +45,7 @@ def _contains_markdown_table(text: str) -> bool:
     return False
 
 
-def _normalize_markdown_tables(text: str) -> str:
+def _normalize_markdown_tables(text: str, channel_name: str | None = None) -> str:
     lines = text.splitlines()
     result: list[str] = []
     index = 0
@@ -57,7 +57,7 @@ def _normalize_markdown_tables(text: str) -> str:
             continue
         if result and result[-1].strip():
             result.append("")
-        result.extend(_render_table_block(table_block))
+        result.extend(_render_table_block(table_block, channel_name=channel_name))
         if next_index < len(lines) and lines[next_index].strip():
             result.append("")
         index = next_index
@@ -92,11 +92,13 @@ def _split_table_row(line: str) -> list[str]:
     return [cell.strip() for cell in working.split("|")]
 
 
-def _render_table_block(lines: list[str]) -> list[str]:
+def _render_table_block(lines: list[str], channel_name: str | None = None) -> list[str]:
     headers = _split_table_row(lines[0])
     data_rows = [_split_table_row(line) for line in lines[2:]]
     if not headers or not data_rows:
         return lines
+    if _is_dingtalk_channel(channel_name):
+        return _render_table_block_for_dingtalk(headers, data_rows)
 
     rendered: list[str] = []
     for row_index, row in enumerate(data_rows, start=1):
@@ -110,3 +112,27 @@ def _render_table_block(lines: list[str]) -> list[str]:
             continue
         rendered.append(f"{row_index}. " + " | ".join(cells))
     return rendered or lines
+
+
+def _is_dingtalk_channel(channel_name: str | None) -> bool:
+    return str(channel_name or "").lower().startswith("dingtalk")
+
+
+def _render_table_block_for_dingtalk(headers: list[str], data_rows: list[list[str]]) -> list[str]:
+    rendered: list[str] = []
+    for row_index, row in enumerate(data_rows, start=1):
+        cells: list[str] = []
+        for column_index, header in enumerate(headers):
+            value = row[column_index] if column_index < len(row) else ""
+            value = value.strip()
+            if not value:
+                continue
+            cells.append(f"- {header}：{value}")
+        if not cells:
+            continue
+        rendered.append(f"{row_index}.")
+        rendered.extend(cells)
+        rendered.append("")
+    while rendered and not rendered[-1].strip():
+        rendered.pop()
+    return rendered or data_rows
